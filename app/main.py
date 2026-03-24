@@ -8,6 +8,7 @@ from app.routers.documents import router as documents_router
 
 # Import models to register them with Base.metadata before create_all
 import app.models.document  # noqa: F401
+import app.models.registry  # noqa: F401
 
 
 @asynccontextmanager

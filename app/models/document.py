@@ -45,6 +45,7 @@ class Feature(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="detected")
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     extracted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    overview_md: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     document: Mapped["Document"] = relationship("Document", back_populates="features")
 
