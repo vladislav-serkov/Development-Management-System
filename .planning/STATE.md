@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 ## Current Position
 
 Phase: 3 of 4 (Test Case Review UI)
-Plan: 2 of 3 in current phase (03-02 complete)
-Status: Executing Phase 3
-Last activity: 2026-03-25 -- Completed 03-02 (Frontend Scaffold: Types, API Layer, Hooks)
+Plan: 3 of 3 in current phase (03-03 complete — pending human-verify checkpoint)
+Status: Checkpoint — awaiting human verification of UI
+Last activity: 2026-03-25 -- Completed 03-03 (Complete Viewing UI — all components built)
 
-Progress: [████████░░] 69%
+Progress: [█████████░] 85%
 
 ## Performance Metrics
 
@@ -29,10 +29,10 @@ Progress: [████████░░] 69%
 |-------|-------|-------|----------|
 | 01 | 2 | 7.6 min | 3.8 min |
 | 02 | 2 | 7 min | 3.5 min |
-| 03 | 2 | 10 min | 5 min |
+| 03 | 3 | 30 min | 10 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (4.0 min), 02-01 (3 min), 02-02 (4 min), 03-01 (3 min), 03-02 (7 min)
+- Last 5 plans: 02-01 (3 min), 02-02 (4 min), 03-01 (3 min), 03-02 (7 min), 03-03 (20 min)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -62,6 +62,9 @@ Recent decisions affecting current work:
 - 03-02: SSE EventSource closes on 'done' or 'error' event type — prevents zombie connections after extraction completes
 - 03-02: API base is /api (Vite proxy prefix) — no hardcoded localhost ports in hooks or API layer
 - 03-02: ProgressEvent invalidates both ['documents', id] and ['documents'] queries — ensures home page cards update in real-time
+- 03-03: App.tsx uses Zustand selectedDocumentId for page routing — no react-router needed for this two-page SPA
+- 03-03: ContentArea uses activeSidebarItem string + selectedFeatureId for routing without URL state
+- 03-03: ExtractionProgress shows full feature list during active extraction; compact status for done/error/partial
 
 ### Pending Todos
 
@@ -76,5 +79,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-03-25
-Stopped at: Completed 03-02 (Frontend Scaffold: Types, API Layer, Hooks)
-Resume file: .planning/phases/03-test-case-review-ui/03-03-PLAN.md
+Stopped at: Checkpoint — 03-03 Task 4 human-verify (all components built, awaiting UI verification)
+Resume file: .planning/phases/03-test-case-review-ui/03-03-PLAN.md (Task 4 checkpoint)
