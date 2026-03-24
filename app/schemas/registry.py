@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DependencyItem(BaseModel):
@@ -23,3 +23,28 @@ class DeduplicationResult(BaseModel):
     dependencies: dict[str, list[dict]]  # {"db": [...], "external_api": [...], "cache": [...]}
     overviews: dict[str, str]  # {"feature-name": "## overview markdown..."}
     gaps: list[GapItem] = Field(default_factory=list)
+
+
+class DependencyResponse(BaseModel):
+    id: int
+    registry_type: str
+    name: str
+    data: dict  # parsed from data_json
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RegistryResponse(BaseModel):
+    db: list[dict]
+    external_api: list[dict]
+    cache: list[dict]
+
+
+class GapResponse(BaseModel):
+    id: int
+    category: str
+    name: str
+    affected_features: list[str]
+    what_missing: str
+    priority: str
+    suggestion: dict | None = None
+    model_config = ConfigDict(from_attributes=True)

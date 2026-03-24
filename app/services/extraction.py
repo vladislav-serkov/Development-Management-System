@@ -97,8 +97,12 @@ async def _detect_features(
                             "This is a technical specification for a microservice. "
                             "Identify every distinct feature defined in this document. "
                             "Each Kafka topic consumer, REST endpoint path, and scheduled task "
-                            "is a separate feature. Extract name, type, confidence (0.0-1.0), "
-                            "one-line summary, and dependency names for each feature."
+                            "is a separate feature.\n\n"
+                            "For each feature extract:\n"
+                            "- name, type (kafka_consumer/rest_endpoint/scheduled_task/unknown), confidence (0.0-1.0), one-line summary, dependency names\n"
+                            "- structured_logic with: processing_steps (list of {step, action, description}), "
+                            "input_schema, output_schema, error_handling, external_api_calls, "
+                            "database_operations, cache_operations, business_rules"
                         ),
                     },
                 ],
@@ -141,15 +145,8 @@ async def _extract_single_feature_logic(
                             f"Focus on the feature '{feature.name}' (type: {feature.type.value}).\n\n"
                             "Return a JSON object with the complete business logic for this feature, "
                             "optimized for an LLM coding agent to generate implementation code.\n\n"
-                            "Include these aspects where applicable:\n"
-                            "- processing_steps: ordered list of what the feature does\n"
-                            "- input_schema: message/request format\n"
-                            "- output_schema: response format (if any)\n"
-                            "- error_handling: rules for different error scenarios\n"
-                            "- external_api_calls: any HTTP calls to other services\n"
-                            "- database_operations: tables read/written\n"
-                            "- cache_operations: Redis/cache interactions\n"
-                            "- business_rules: validation, conditions, edge cases\n\n"
+                            "Use whatever JSON structure you think is most useful for a developer or AI agent "
+                            "to understand and implement this feature. Be thorough and precise.\n\n"
                             "Return ONLY the raw JSON object. No markdown fencing, no explanation text."
                         ),
                     },
@@ -331,6 +328,7 @@ async def run_extraction_pipeline(
                 confidence=detected.confidence,
                 summary=detected.summary,
                 dependencies_json=json.dumps(detected.dependencies, ensure_ascii=False),
+                structured_logic_json=detected.structured_logic.model_dump_json(),
                 status="detected",
             )
             session.add(feature_orm)

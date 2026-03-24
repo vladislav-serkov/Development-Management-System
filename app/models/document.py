@@ -42,6 +42,7 @@ class Feature(Base):
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     dependencies_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     business_logic: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    structured_logic_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="detected")
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     extracted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

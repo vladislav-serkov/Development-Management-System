@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect as sa_inspect, text
 
 from app.database import Base, engine
 from app.routers.documents import router as documents_router
@@ -13,8 +14,23 @@ import app.models.registry  # noqa: F401
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    # Create all tables on startup
     async with engine.begin() as conn:
+        # Migrate: add structured_logic_json column if missing
+        def _migrate(sync_conn):
+            inspector = sa_inspect(sync_conn)
+            try:
+                columns = [c["name"] for c in inspector.get_columns("features")]
+                if "structured_logic_json" not in columns:
+                    sync_conn.execute(text("ALTER TABLE features ADD COLUMN structured_logic_json TEXT"))
+            except Exception:
+                pass  # Table doesn't exist yet, create_all will handle it
+
+        try:
+            await conn.run_sync(_migrate)
+        except Exception:
+            pass  # Table doesn't exist yet, create_all will handle it
+
+        # Create all tables on startup
         await conn.run_sync(Base.metadata.create_all)
     yield
 

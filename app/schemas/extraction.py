@@ -12,6 +12,27 @@ class FeatureType(str, Enum):
     unknown = "unknown"
 
 
+class ProcessingStep(BaseModel):
+    step: int
+    action: str
+    description: str
+
+
+class StructuredBusinessLogic(BaseModel):
+    processing_steps: list[ProcessingStep] = Field(default_factory=list)
+    input_schema: dict | None = None
+    output_schema: dict | None = None
+    error_handling: dict | None = None
+    external_api_calls: list[dict] = Field(default_factory=list)
+    database_operations: list[dict] = Field(default_factory=list)
+    cache_operations: list[dict] = Field(default_factory=list)
+    business_rules: list[str] = Field(default_factory=list)
+
+
+class DocumentPatchRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+
+
 class DetectedFeature(BaseModel):
     """Feature detected from PDF by the 1st Claude call (tool_use schema)."""
 
@@ -20,6 +41,7 @@ class DetectedFeature(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     summary: str
     dependencies: list[str] = Field(default_factory=list)
+    structured_logic: StructuredBusinessLogic = Field(default_factory=StructuredBusinessLogic)
 
 
 class FeatureDetectionResult(BaseModel):
@@ -54,6 +76,8 @@ class FeatureResponse(BaseModel):
     summary: str | None = None
     status: str
     business_logic: dict | None = None
+    structured_logic: dict | None = None  # from structured_logic_json column
+    overview_md: str | None = None        # from overview_md column
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -74,13 +98,19 @@ class DocumentResponse(BaseModel):
 
 
 def feature_to_response(feature) -> FeatureResponse:
-    """Convert Feature ORM to FeatureResponse, parsing business_logic JSON."""
+    """Convert Feature ORM to FeatureResponse, parsing business_logic and structured_logic JSON."""
     bl = None
     if feature.business_logic:
         try:
             bl = json.loads(feature.business_logic)
         except json.JSONDecodeError:
             bl = {"_raw": feature.business_logic}
+    sl = None
+    if feature.structured_logic_json:
+        try:
+            sl = json.loads(feature.structured_logic_json)
+        except json.JSONDecodeError:
+            sl = None
     return FeatureResponse(
         id=feature.id,
         name=feature.name,
@@ -89,4 +119,6 @@ def feature_to_response(feature) -> FeatureResponse:
         summary=feature.summary,
         status=feature.status,
         business_logic=bl,
+        structured_logic=sl,
+        overview_md=feature.overview_md,
     )
