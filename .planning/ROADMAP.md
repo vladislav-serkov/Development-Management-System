@@ -45,11 +45,11 @@ Plans:
   3. System identifies and documents gaps (missing table schemas, API contracts, Redis structures) in gaps.md
   4. User can export a complete .context/ folder to a specified filesystem path
   5. Multi-pass pipeline uses prompt caching to reduce token costs on passes 2+
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
+- [ ] 02-01-PLAN.md — 3rd Claude call (dedup + gaps + overviews) with ORM models, Pydantic schemas, and pipeline integration
+- [ ] 02-02-PLAN.md — .context/ export service with additive registry merging and POST endpoint
 
 ### Phase 3: Web UI - Viewing
 **Goal**: Users can browse extracted context through a web interface with real-time extraction progress and one-click export
