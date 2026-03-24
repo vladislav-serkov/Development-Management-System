@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
+from app.routers.documents import router as documents_router
 
 # Import models to register them with Base.metadata before create_all
 import app.models.document  # noqa: F401
@@ -26,6 +27,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(documents_router)
 
 
 @app.get("/")
