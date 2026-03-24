@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 ## Current Position
 
 Phase: 1 of 4 (Foundation + PDF Processing)
-Plan: 1 of 2 in current phase
-Status: Executing
-Last activity: 2026-03-24 -- Completed 01-01 (Project Scaffold + Models)
+Plan: 2 of 2 in current phase (PHASE COMPLETE)
+Status: Phase 1 Complete
+Last activity: 2026-03-24 -- Completed 01-02 (Claude Extraction Pipeline)
 
-Progress: [██░░░░░░░░] 10%
+Progress: [████░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 3.6 min
-- Total execution time: 0.06 hours
+- Total plans completed: 2
+- Average duration: 3.8 min
+- Total execution time: 0.13 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 1 | 3.6 min | 3.6 min |
+| 01 | 2 | 7.6 min | 3.8 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (3.6 min)
-- Trend: baseline
+- Last 5 plans: 01-01 (3.6 min), 01-02 (4.0 min)
+- Trend: stable
 
 *Updated after each plan completion*
 
@@ -44,10 +44,13 @@ Recent decisions affecting current work:
 
 - 01-01: Added [build-system] section to pyproject.toml (setuptools) for editable install support
 - 01-01: anthropic_api_key given placeholder default to avoid import-time crash without .env
+- 01-02: tool_use with manual Pydantic validation instead of client.messages.parse() for reliability
+- 01-02: asyncio.gather for parallel business logic extraction across features
+- 01-02: Three-state document status (done/error/partial) with per-feature error tracking
 
 ### Pending Todos
 
-None yet.
+- Add greenlet to pyproject.toml dependencies for reproducibility
 
 ### Blockers/Concerns
 
@@ -58,5 +61,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-24
-Stopped at: Completed 01-01-PLAN.md
-Resume file: .planning/phases/01-foundation-spec-management/01-01-SUMMARY.md
+Stopped at: Completed 01-02-PLAN.md (Phase 1 complete)
+Resume file: .planning/phases/01-foundation-spec-management/01-02-SUMMARY.md
