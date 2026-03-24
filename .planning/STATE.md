@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 
 ## Current Position
 
-Phase: 2 of 4 (Extraction Pipeline)
-Plan: 2 of 3 in current phase (02-02 complete)
-Status: Executing Phase 2
-Last activity: 2026-03-24 -- Completed 02-02 (.context/ Export Endpoint)
+Phase: 3 of 4 (Test Case Review UI)
+Plan: 2 of 3 in current phase (03-02 complete)
+Status: Executing Phase 3
+Last activity: 2026-03-25 -- Completed 03-02 (Frontend Scaffold: Types, API Layer, Hooks)
 
-Progress: [██████░░░░] 53%
+Progress: [████████░░] 69%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 3.9 min
-- Total execution time: 0.26 hours
+- Total plans completed: 6
+- Average duration: 4.0 min
+- Total execution time: 0.40 hours
 
 **By Phase:**
 
@@ -29,9 +29,10 @@ Progress: [██████░░░░] 53%
 |-------|-------|-------|----------|
 | 01 | 2 | 7.6 min | 3.8 min |
 | 02 | 2 | 7 min | 3.5 min |
+| 03 | 2 | 10 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (3.6 min), 01-02 (4.0 min), 02-01 (3 min), 02-02 (4 min)
+- Last 5 plans: 01-02 (4.0 min), 02-01 (3 min), 02-02 (4 min), 03-01 (3 min), 03-02 (7 min)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -54,6 +55,13 @@ Recent decisions affecting current work:
 - 02-02: All DependencyEntry rows passed to export (not filtered by feature) — file-level additive merge handles cross-feature dedup
 - 02-02: gaps.md regenerated from ALL GapEntry rows on every per-feature export (document-level artifact)
 - 02-02: Synchronous export response — file count small enough, polling adds unnecessary complexity
+- 03-01: Free-form 2nd Claude call — Claude decides JSON structure, no field enumeration (D-10). Better for diverse feature types.
+- 03-01: SSE via Starlette StreamingResponse + asyncio.sleep(1) polling — simple, no EventSourceResponse dependency
+- 03-01: Startup migration via sa_inspect + ALTER TABLE ADD COLUMN for backward compatibility
+- 03-01: Two-tier structured data: structured_logic (schema-validated, 1st call) for UI; business_logic (free-form, 2nd call) for coding agent
+- 03-02: SSE EventSource closes on 'done' or 'error' event type — prevents zombie connections after extraction completes
+- 03-02: API base is /api (Vite proxy prefix) — no hardcoded localhost ports in hooks or API layer
+- 03-02: ProgressEvent invalidates both ['documents', id] and ['documents'] queries — ensures home page cards update in real-time
 
 ### Pending Todos
 
@@ -68,5 +76,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-03-25
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-test-case-review-ui/03-CONTEXT.md
+Stopped at: Completed 03-02 (Frontend Scaffold: Types, API Layer, Hooks)
+Resume file: .planning/phases/03-test-case-review-ui/03-03-PLAN.md
