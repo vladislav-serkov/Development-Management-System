@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.document import Document, Feature
+from app.models.registry import DependencyEntry, GapEntry
 from app.schemas.extraction import (
     DetectedFeature,
     DocumentResponse,
@@ -17,6 +18,7 @@ from app.schemas.extraction import (
     FeatureResponse,
     feature_to_response,
 )
+from app.schemas.registry import DeduplicationResult
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +183,126 @@ async def _extract_all_business_logic(
     return await asyncio.gather(*tasks)
 
 
+DEDUP_GAPS_PROMPT = """Analyze the business logic JSON for all features above and return a single JSON object with these three top-level keys:
+
+1. "dependencies": A dict with keys "db", "external_api", and "cache". Each value is a list of deduplicated dependency objects. Merge mentions of the same dependency from different features into one entry.
+   - For "db" entries include: name, type ("db_table"), columns (list of {name, type, nullable}), used_by_features (list of feature names), known_operations (list like ["SELECT", "UPDATE"])
+   - For "external_api" entries include: name, type ("rest_api"), base_url, endpoints (list of {method, path, description}), used_by_features
+   - For "cache" entries include: name, type ("redis_cache"), structure, used_by_features, known_operations
+
+2. "overviews": A dict mapping each feature name to a markdown string overview. Each overview must include: feature type, one-line summary, list of dependencies with their roles, brief business logic description, and references to any relevant gaps.
+
+3. "gaps": A list of gap objects for missing information. Each gap must have: category ("DB", "API", or "Cache"), name (short identifier), affected_features (list of feature names), what_missing (specific description of missing info), priority ("critical", "medium", or "low"), suggestion (nullable dict with proposed schema/structure or null).
+
+Return ONLY the raw JSON object. No markdown fencing, no explanation text."""
+
+KNOWN_REGISTRY_TYPES = frozenset(["db", "external_api", "cache"])
+
+
+async def _run_dedup_and_gaps(
+    features: list[tuple[str, dict]],
+    client: anthropic.AsyncAnthropic,
+    model: str,
+) -> DeduplicationResult:
+    """Third Claude call: dependency deduplication + gap detection + overview generation.
+
+    Args:
+        features: list of (feature_name, business_logic_dict) tuples for successful extractions
+        client: Anthropic async client
+        model: Claude model name
+
+    Returns:
+        DeduplicationResult with merged dependencies, overviews, and gaps
+    """
+    context_blob = json.dumps(
+        {name: bl for name, bl in features},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    response = await client.messages.create(
+        model=model,
+        max_tokens=8192,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": context_blob,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": DEDUP_GAPS_PROMPT,
+                    },
+                ],
+            }
+        ],
+    )
+
+    raw = _extract_json_from_text(response.content[0].text)
+    result = DeduplicationResult.model_validate(raw)
+    _log_cache_stats(response.usage, "dedup_and_gaps")
+    return result
+
+
+async def _store_dedup_results(
+    result: DeduplicationResult,
+    doc: Document,
+    feature_orm_map: dict[str, Feature],
+    session: AsyncSession,
+) -> None:
+    """Persist deduplication results: dependency entries, gap entries, and feature overviews.
+
+    Args:
+        result: parsed DeduplicationResult from 3rd Claude call
+        doc: Document ORM object
+        feature_orm_map: mapping of feature name -> Feature ORM object
+        session: async database session
+    """
+    # Store dependency entries
+    for registry_type, entries in result.dependencies.items():
+        if registry_type not in KNOWN_REGISTRY_TYPES:
+            logger.warning(
+                "Unknown registry_type '%s' from dedup call for document %d, skipping",
+                registry_type,
+                doc.id,
+            )
+            continue
+        for entry in entries:
+            dep = DependencyEntry(
+                document_id=doc.id,
+                registry_type=registry_type,
+                name=entry.get("name", "unknown"),
+                data_json=json.dumps(entry, ensure_ascii=False),
+            )
+            session.add(dep)
+
+    # Store gap entries
+    for gap in result.gaps:
+        gap_entry = GapEntry(
+            document_id=doc.id,
+            category=gap.category,
+            name=gap.name,
+            affected_features=json.dumps(gap.affected_features, ensure_ascii=False),
+            what_missing=gap.what_missing,
+            priority=gap.priority,
+            suggestion_json=json.dumps(gap.suggestion, ensure_ascii=False) if gap.suggestion else None,
+        )
+        session.add(gap_entry)
+
+    # Set feature overviews (with fallback for missing overviews)
+    for feature_name, feature_orm in feature_orm_map.items():
+        if feature_name in result.overviews:
+            feature_orm.overview_md = result.overviews[feature_name]
+        else:
+            # Fallback: generate minimal overview from stored summary
+            feature_orm.overview_md = (
+                f"## {feature_name}\n\n{feature_orm.summary or 'No overview available.'}"
+            )
+
+
 async def run_extraction_pipeline(
     filename: str,
     pdf_bytes: bytes,
@@ -235,6 +357,27 @@ async def run_extraction_pipeline(
                 orm.status = "error"
                 orm.error_message = error
                 error_count += 1
+
+        # Phase 3: Dependency deduplication + gap detection + overview generation
+        successful_features = [
+            (f_schema.name, bl_dict)
+            for f_schema, bl_dict, err in results
+            if bl_dict is not None
+        ]
+
+        if successful_features:
+            try:
+                dedup_result = await _run_dedup_and_gaps(successful_features, client, model)
+                await _store_dedup_results(dedup_result, doc, feature_orm_map, session)
+            except Exception as dedup_exc:
+                logger.error(
+                    "Dedup+gaps pipeline failed for %s: %s", filename, dedup_exc
+                )
+                # Don't fail the whole pipeline for dedup failure
+                if doc.error_message:
+                    doc.error_message += " (dedup failed)"
+                else:
+                    doc.error_message = "Dedup+gaps pipeline failed"
 
         # Final status
         total = len(results)

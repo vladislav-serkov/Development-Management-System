@@ -58,6 +58,7 @@ def make_mock_claude_client(
     features_response: dict,
     business_logic_responses: list[dict] | dict | None = None,
     business_logic_error: Exception | None = None,
+    dedup_response: dict | None = None,
 ) -> MagicMock:
     """Create a mock AsyncAnthropic client.
 
@@ -65,9 +66,11 @@ def make_mock_claude_client(
         features_response: dict matching FeatureDetectionResult schema
         business_logic_responses: list of dicts (one per feature) or single dict (same for all)
         business_logic_error: if set, business logic calls raise this error
+        dedup_response: dict for the 3rd call (dedup+gaps+overviews). If None, returns empty result.
     """
     mock_client = MagicMock()
     call_count = {"n": 0}
+    num_features = len(features_response.get("features", []))
 
     async def mock_create(**kwargs):
         # First call (has tools) = feature detection
@@ -84,12 +87,31 @@ def make_mock_claude_client(
             )
             return response
 
-        # Subsequent calls = business logic extraction
-        if business_logic_error:
-            raise business_logic_error
-
         idx = call_count["n"]
         call_count["n"] += 1
+
+        # After all business logic calls, the next call is the dedup+gaps call
+        if idx >= num_features:
+            # This is the 3rd call (dedup+gaps+overviews)
+            effective_dedup = dedup_response if dedup_response is not None else {
+                "dependencies": {"db": [], "external_api": [], "cache": []},
+                "overviews": {},
+                "gaps": [],
+            }
+            response = MagicMock()
+            text_block = MagicMock()
+            text_block.text = json.dumps(effective_dedup, ensure_ascii=False)
+            response.content = [text_block]
+            response.usage = MagicMock(
+                input_tokens=500,
+                cache_creation_input_tokens=800,
+                cache_read_input_tokens=0,
+            )
+            return response
+
+        # Business logic calls
+        if business_logic_error:
+            raise business_logic_error
 
         bl = None
         if isinstance(business_logic_responses, list):
