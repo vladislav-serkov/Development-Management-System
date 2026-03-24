@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 import anthropic
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -229,7 +229,7 @@ async def run_extraction_pipeline(
             if bl_dict is not None:
                 orm.business_logic = json.dumps(bl_dict, ensure_ascii=False)
                 orm.status = "done"
-                orm.extracted_at = datetime.utcnow()
+                orm.extracted_at = datetime.now(UTC)
                 done_count += 1
             elif error is not None:
                 orm.status = "error"
