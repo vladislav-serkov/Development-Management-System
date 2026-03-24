@@ -61,5 +61,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-03-24
-Stopped at: Completed 01-02-PLAN.md (Phase 1 complete)
-Resume file: .planning/phases/01-foundation-spec-management/01-02-SUMMARY.md
+Stopped at: Phase 2 context gathered
+Resume file: .planning/phases/02-extraction-pipeline/02-CONTEXT.md
