@@ -38,8 +38,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFR-01**: FastAPI бэкенд с async обработкой
-- [ ] **INFR-02**: SQLite для хранения извлечённых данных (source of truth, .context/ генерируется из БД)
+- [x] **INFR-01**: FastAPI бэкенд с async обработкой
+- [x] **INFR-02**: SQLite для хранения извлечённых данных (source of truth, .context/ генерируется из БД)
 - [ ] **INFR-03**: Claude API интеграция с structured outputs (Pydantic models)
 - [ ] **INFR-04**: Multi-pass extraction pipeline (feature detection -> per-feature extraction -> dependency dedup -> gap detection)
 - [ ] **INFR-05**: Prompt caching для оптимизации токенов при multi-pass extraction
@@ -101,8 +101,8 @@ Deferred to future release. Tracked but not in current roadmap.
 | UI-07 | Phase 4 | Pending |
 | UI-08 | Phase 3 | Pending |
 | UI-09 | Phase 3 | Pending |
-| INFR-01 | Phase 1 | Pending |
-| INFR-02 | Phase 1 | Pending |
+| INFR-01 | Phase 1 | Complete (01-01) |
+| INFR-02 | Phase 1 | Complete (01-01) |
 | INFR-03 | Phase 1 | Pending |
 | INFR-04 | Phase 2 | Pending |
 | INFR-05 | Phase 2 | Pending |
