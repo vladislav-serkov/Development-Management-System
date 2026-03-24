@@ -29,11 +29,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. System handles multi-feature PDFs and returns all features separately
   4. Extracted data persists in SQLite and survives server restart
   5. Claude API returns structured outputs matching Pydantic schemas
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md — Project scaffold with FastAPI, SQLite, config, ORM models, and Pydantic schemas
+- [ ] 01-02-PLAN.md — Two-call Claude extraction pipeline, upload endpoint, and integration tests
 
 ### Phase 2: Extraction Pipeline
 **Goal**: For any uploaded PDF, the system produces a complete and correct .context/ folder with business logic, shared dependency registries, and identified gaps
