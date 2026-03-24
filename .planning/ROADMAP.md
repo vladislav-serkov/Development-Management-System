@@ -60,11 +60,12 @@ Plans:
   2. User can view rendered overview.md and structured business-logic.json for any feature
   3. User sees real-time progress during PDF extraction (SSE streaming updates)
   4. User can specify target microservice path and trigger .context/ export from the UI
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md — Backend: expand extraction pipeline (structured logic + free-form), SSE progress, registry/gaps endpoints
+- [ ] 03-02-PLAN.md — Frontend scaffold: Vite + React + shadcn/ui, TypeScript types, API layer, stores, hooks
+- [ ] 03-03-PLAN.md — Frontend pages: home (project grid + upload + progress), project detail (sidebar + artifacts + export)
 
 ### Phase 4: Web UI - Editing
 **Goal**: Users can refine all extracted artifacts inline without leaving the browser
@@ -89,5 +90,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 |-------|----------------|--------|-----------|
 | 1. Foundation + PDF Processing | 2/2 | Complete | 2026-03-24 |
 | 2. Extraction Pipeline | 2/2 | Complete | 2026-03-24 |
-| 3. Web UI - Viewing | 0/2 | Not started | - |
+| 3. Web UI - Viewing | 0/3 | Not started | - |
 | 4. Web UI - Editing | 0/1 | Not started | - |
