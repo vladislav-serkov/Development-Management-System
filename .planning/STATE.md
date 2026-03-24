@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 ## Current Position
 
 Phase: 2 of 4 (Extraction Pipeline)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase (02-02 complete)
 Status: Executing Phase 2
-Last activity: 2026-03-24 -- Completed 02-01 (Dedup+Gaps+Overviews Pipeline)
+Last activity: 2026-03-24 -- Completed 02-02 (.context/ Export Endpoint)
 
-Progress: [█████░░░░░] 40%
+Progress: [██████░░░░] 53%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: 3.8 min
-- Total execution time: 0.13 hours
+- Total plans completed: 4
+- Average duration: 3.9 min
+- Total execution time: 0.26 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 2 | 7.6 min | 3.8 min |
-| 02 | 1 | 3 min | 3 min |
+| 02 | 2 | 7 min | 3.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (3.6 min), 01-02 (4.0 min)
+- Last 5 plans: 01-01 (3.6 min), 01-02 (4.0 min), 02-01 (3 min), 02-02 (4 min)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -51,6 +51,9 @@ Recent decisions affecting current work:
 - 02-01: Free-text response for 3rd Claude call (not tool_use) — complex nested output more reliable as free text
 - 02-01: Prompt caching on concatenated business-logic context block (cache_control: ephemeral)
 - 02-01: DependencyEntry rows are per-document in SQLite; cross-document dedup at export time (Plan 02)
+- 02-02: All DependencyEntry rows passed to export (not filtered by feature) — file-level additive merge handles cross-feature dedup
+- 02-02: gaps.md regenerated from ALL GapEntry rows on every per-feature export (document-level artifact)
+- 02-02: Synchronous export response — file count small enough, polling adds unnecessary complexity
 
 ### Pending Todos
 
@@ -65,5 +68,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-03-24
-Stopped at: Completed 02-01-PLAN.md (Dedup+Gaps+Overviews Pipeline)
-Resume file: .planning/phases/02-extraction-pipeline/02-02-PLAN.md
+Stopped at: Completed 02-02-PLAN.md (.context/ Export Endpoint)
+Resume file: .planning/phases/02-extraction-pipeline/02-03-PLAN.md

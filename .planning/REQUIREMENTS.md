@@ -22,7 +22,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **EXTR-04**: Извлечённые таблицы БД сохраняются в общий реестр db/ (без дублей между фичами)
 - [ ] **EXTR-05**: Извлечённые структуры Redis-кеша сохраняются в общий реестр cache/ (без дублей между фичами)
 - [ ] **EXTR-06**: Система выявляет gaps — недостающую информацию (структуры таблиц, схемы API запросов/ответов, структуры Redis) и сохраняет в gaps.md
-- [ ] **EXTR-07**: Экспорт .context/ папки на диск в корень указанного микросервиса
+- [x] **EXTR-07**: Экспорт .context/ папки на диск в корень указанного микросервиса
 
 ### Web UI
 
@@ -91,7 +91,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | EXTR-04 | Phase 2 | Pending |
 | EXTR-05 | Phase 2 | Pending |
 | EXTR-06 | Phase 2 | Pending |
-| EXTR-07 | Phase 2 | Pending |
+| EXTR-07 | Phase 2 | Complete |
 | UI-01 | Phase 3 | Pending |
 | UI-02 | Phase 3 | Pending |
 | UI-03 | Phase 3 | Pending |

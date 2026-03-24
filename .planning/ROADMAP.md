@@ -49,7 +49,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — 3rd Claude call (dedup + gaps + overviews) with ORM models, Pydantic schemas, and pipeline integration
-- [ ] 02-02-PLAN.md — .context/ export service with additive registry merging and POST endpoint
+- [x] 02-02-PLAN.md — .context/ export service with additive registry merging and POST endpoint
 
 ### Phase 3: Web UI - Viewing
 **Goal**: Users can browse extracted context through a web interface with real-time extraction progress and one-click export
@@ -88,6 +88,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + PDF Processing | 2/2 | Complete | 2026-03-24 |
-| 2. Extraction Pipeline | 1/2 | In progress | - |
+| 2. Extraction Pipeline | 2/2 | Complete | 2026-03-24 |
 | 3. Web UI - Viewing | 0/2 | Not started | - |
 | 4. Web UI - Editing | 0/1 | Not started | - |
