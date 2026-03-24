@@ -1,9 +1,12 @@
-"""Tests for .context/ export service (Plan 02-02)."""
+"""Tests for .context/ export service and export endpoint (Plan 02-02)."""
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from app.models.document import Document, Feature
+from app.models.registry import DependencyEntry, GapEntry
 from app.services.export import (
     _merge_registry_data,
     _write_gaps_md,
@@ -280,3 +283,135 @@ async def test_export_returns_files_written_list(tmp_path):
     for p in files_written:
         assert isinstance(p, str)
         assert not p.startswith("/")  # relative paths
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: POST /documents/{id}/export endpoint
+# ---------------------------------------------------------------------------
+
+
+async def _create_test_document_with_features(session, tmp_path_for_export=None):
+    """Helper: create a Document with one Feature, DependencyEntry, and GapEntry in DB."""
+    doc = Document(
+        filename="test-spec.pdf",
+        pdf_size_bytes=1024,
+        status="done",
+        feature_count=1,
+    )
+    session.add(doc)
+    await session.flush()
+
+    feature = Feature(
+        document_id=doc.id,
+        name="product-schedule-consumer",
+        type="kafka_consumer",
+        confidence=0.95,
+        summary="Processes product schedule Kafka messages",
+        status="done",
+        business_logic=json.dumps({"processing_steps": ["read", "validate", "save"]}),
+        overview_md="## product-schedule-consumer\n\nKafka consumer for product schedules.",
+        extracted_at=datetime.utcnow(),
+    )
+    session.add(feature)
+
+    dep = DependencyEntry(
+        document_id=doc.id,
+        registry_type="db",
+        name="product_table",
+        data_json=json.dumps({
+            "name": "product_table",
+            "type": "db_table",
+            "columns": [{"name": "id", "type": "BIGINT"}],
+            "used_by_features": [],
+        }),
+    )
+    session.add(dep)
+
+    gap = GapEntry(
+        document_id=doc.id,
+        category="API",
+        name="rbo-adapter request schema",
+        affected_features=json.dumps(["product-schedule-consumer"]),
+        what_missing="Request body structure not documented",
+        priority="critical",
+        suggestion_json=json.dumps({"product_id": "Long"}),
+    )
+    session.add(gap)
+
+    await session.flush()
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_export_endpoint_success(client, async_session, tmp_path):
+    """POST /documents/{id}/export returns 200 with exported_features and files_written."""
+    doc = await _create_test_document_with_features(async_session)
+    await async_session.commit()
+
+    target_dir = tmp_path / "myservice"
+    target_dir.mkdir()
+
+    response = await client.post(
+        f"/documents/{doc.id}/export",
+        json={"target_path": str(target_dir)},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "product-schedule-consumer" in data["exported_features"]
+    assert len(data["files_written"]) > 0
+    assert data["target_path"] == str(target_dir)
+
+    # Verify files exist on disk
+    overview_path = target_dir / ".context" / "features" / "product-schedule-consumer" / "overview.md"
+    assert overview_path.exists()
+
+    bl_path = target_dir / ".context" / "features" / "product-schedule-consumer" / "business-logic.json"
+    assert bl_path.exists()
+
+    gaps_path = target_dir / ".context" / "gaps.md"
+    assert gaps_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_export_endpoint_404_document_not_found(client):
+    """POST /documents/{id}/export returns 404 for non-existent document."""
+    response = await client.post(
+        "/documents/9999/export",
+        json={"target_path": "/tmp/myservice"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_endpoint_400_document_not_done(client, async_session, tmp_path):
+    """POST /documents/{id}/export returns 400 when document status is 'processing'."""
+    doc = Document(
+        filename="test.pdf",
+        pdf_size_bytes=512,
+        status="processing",
+        feature_count=0,
+    )
+    async_session.add(doc)
+    await async_session.commit()
+
+    response = await client.post(
+        f"/documents/{doc.id}/export",
+        json={"target_path": str(tmp_path)},
+    )
+    assert response.status_code == 400
+    assert "processing" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_export_endpoint_400_relative_path(client, async_session, tmp_path):
+    """POST /documents/{id}/export returns 400 for relative target_path."""
+    doc = await _create_test_document_with_features(async_session)
+    await async_session.commit()
+
+    response = await client.post(
+        f"/documents/{doc.id}/export",
+        json={"target_path": "relative/path/to/service"},
+    )
+    assert response.status_code == 400
+    assert "absolute" in response.json()["detail"].lower()

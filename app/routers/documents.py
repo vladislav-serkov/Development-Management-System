@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +8,9 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_session
 from app.models.document import Document
+from app.schemas.export import ExportRequest, ExportResponse
 from app.schemas.extraction import DocumentResponse, feature_to_response
+from app.services.export import export_document_context
 from app.services.extraction import run_extraction_pipeline
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -93,3 +97,41 @@ async def get_document(
         uploaded_at=doc.uploaded_at,
         error_message=doc.error_message,
     )
+
+
+@router.post("/{document_id}/export", response_model=ExportResponse)
+async def export_document(
+    document_id: int,
+    request: ExportRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Export .context/ for a document (all features or one) to filesystem."""
+    # Verify document exists
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+    if doc.status not in ("done", "partial"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document status is '{doc.status}', extraction must complete first",
+        )
+
+    # Validate target path
+    target = Path(request.target_path)
+    if not target.is_absolute():
+        raise HTTPException(status_code=400, detail="target_path must be an absolute path")
+    if not target.parent.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Parent directory does not exist: {target.parent}",
+        )
+
+    response = await export_document_context(
+        document_id=document_id,
+        target_path=request.target_path,
+        feature_name=request.feature_name,
+        session=session,
+    )
+    return response
