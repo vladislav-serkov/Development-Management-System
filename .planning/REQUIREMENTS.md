@@ -41,7 +41,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **INFR-01**: FastAPI бэкенд с async обработкой
 - [ ] **INFR-02**: SQLite для хранения извлечённых данных (source of truth, .context/ генерируется из БД)
 - [ ] **INFR-03**: Claude API интеграция с structured outputs (Pydantic models)
-- [ ] **INFR-04**: Multi-pass extraction pipeline (feature detection → per-feature extraction → dependency dedup → gap detection)
+- [ ] **INFR-04**: Multi-pass extraction pipeline (feature detection -> per-feature extraction -> dependency dedup -> gap detection)
 - [ ] **INFR-05**: Prompt caching для оптимизации токенов при multi-pass extraction
 
 ## v2 Requirements
@@ -81,37 +81,37 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PDF-01 | — | Pending |
-| PDF-02 | — | Pending |
-| PDF-03 | — | Pending |
-| PDF-04 | — | Pending |
-| EXTR-01 | — | Pending |
-| EXTR-02 | — | Pending |
-| EXTR-03 | — | Pending |
-| EXTR-04 | — | Pending |
-| EXTR-05 | — | Pending |
-| EXTR-06 | — | Pending |
-| EXTR-07 | — | Pending |
-| UI-01 | — | Pending |
-| UI-02 | — | Pending |
-| UI-03 | — | Pending |
-| UI-04 | — | Pending |
-| UI-05 | — | Pending |
-| UI-06 | — | Pending |
-| UI-07 | — | Pending |
-| UI-08 | — | Pending |
-| UI-09 | — | Pending |
-| INFR-01 | — | Pending |
-| INFR-02 | — | Pending |
-| INFR-03 | — | Pending |
-| INFR-04 | — | Pending |
-| INFR-05 | — | Pending |
+| PDF-01 | Phase 1 | Pending |
+| PDF-02 | Phase 1 | Pending |
+| PDF-03 | Phase 1 | Pending |
+| PDF-04 | Phase 1 | Pending |
+| EXTR-01 | Phase 2 | Pending |
+| EXTR-02 | Phase 2 | Pending |
+| EXTR-03 | Phase 2 | Pending |
+| EXTR-04 | Phase 2 | Pending |
+| EXTR-05 | Phase 2 | Pending |
+| EXTR-06 | Phase 2 | Pending |
+| EXTR-07 | Phase 2 | Pending |
+| UI-01 | Phase 3 | Pending |
+| UI-02 | Phase 3 | Pending |
+| UI-03 | Phase 3 | Pending |
+| UI-04 | Phase 4 | Pending |
+| UI-05 | Phase 4 | Pending |
+| UI-06 | Phase 4 | Pending |
+| UI-07 | Phase 4 | Pending |
+| UI-08 | Phase 3 | Pending |
+| UI-09 | Phase 3 | Pending |
+| INFR-01 | Phase 1 | Pending |
+| INFR-02 | Phase 1 | Pending |
+| INFR-03 | Phase 1 | Pending |
+| INFR-04 | Phase 2 | Pending |
+| INFR-05 | Phase 2 | Pending |
 
 **Coverage:**
 - v1 requirements: 25 total
-- Mapped to phases: 0
-- Unmapped: 25 ⚠️
+- Mapped to phases: 25
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-24*
-*Last updated: 2026-03-24 after initial definition*
+*Last updated: 2026-03-24 after roadmap creation*
