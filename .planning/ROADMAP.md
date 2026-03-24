@@ -32,8 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Project scaffold with FastAPI, SQLite, config, ORM models, and Pydantic schemas
-- [ ] 01-02-PLAN.md — Two-call Claude extraction pipeline, upload endpoint, and integration tests
+- [ ] 01-01-PLAN.md — Project scaffold with FastAPI, SQLite, config, ORM models with constraints, and Pydantic schemas with status enums
+- [ ] 01-02-PLAN.md — Two-call Claude extraction pipeline with parallel extraction, partial failure handling, and integration tests
 
 ### Phase 2: Extraction Pipeline
 **Goal**: For any uploaded PDF, the system produces a complete and correct .context/ folder with business logic, shared dependency registries, and identified gaps
