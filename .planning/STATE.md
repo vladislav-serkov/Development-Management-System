@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 
 ## Current Position
 
-Phase: 1 of 4 (Foundation + PDF Processing)
-Plan: 2 of 2 in current phase (PHASE COMPLETE)
-Status: Phase 1 Complete
-Last activity: 2026-03-24 -- Completed 01-02 (Claude Extraction Pipeline)
+Phase: 2 of 4 (Extraction Pipeline)
+Plan: 1 of 3 in current phase
+Status: Executing Phase 2
+Last activity: 2026-03-24 -- Completed 02-01 (Dedup+Gaps+Overviews Pipeline)
 
-Progress: [████░░░░░░] 20%
+Progress: [█████░░░░░] 40%
 
 ## Performance Metrics
 
@@ -28,6 +28,7 @@ Progress: [████░░░░░░] 20%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 2 | 7.6 min | 3.8 min |
+| 02 | 1 | 3 min | 3 min |
 
 **Recent Trend:**
 - Last 5 plans: 01-01 (3.6 min), 01-02 (4.0 min)
@@ -47,6 +48,9 @@ Recent decisions affecting current work:
 - 01-02: tool_use with manual Pydantic validation instead of client.messages.parse() for reliability
 - 01-02: asyncio.gather for parallel business logic extraction across features
 - 01-02: Three-state document status (done/error/partial) with per-feature error tracking
+- 02-01: Free-text response for 3rd Claude call (not tool_use) — complex nested output more reliable as free text
+- 02-01: Prompt caching on concatenated business-logic context block (cache_control: ephemeral)
+- 02-01: DependencyEntry rows are per-document in SQLite; cross-document dedup at export time (Plan 02)
 
 ### Pending Todos
 
@@ -61,5 +65,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-03-24
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-extraction-pipeline/02-CONTEXT.md
+Stopped at: Completed 02-01-PLAN.md (Dedup+Gaps+Overviews Pipeline)
+Resume file: .planning/phases/02-extraction-pipeline/02-02-PLAN.md
