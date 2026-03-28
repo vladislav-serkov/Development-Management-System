@@ -13,8 +13,8 @@ from app.database import get_session
 from app.models.document import Document
 from app.models.registry import DependencyEntry, GapEntry
 from app.schemas.export import ExportRequest, ExportResponse
-from app.schemas.extraction import DocumentPatchRequest, DocumentResponse, feature_to_response
-from app.schemas.registry import GapResponse, RegistryResponse
+from app.schemas.extraction import DocumentPatchRequest, DocumentResponse, FeaturePatchRequest, feature_to_response
+from app.schemas.registry import DependencyEntryPatchRequest, GapEntryPatchRequest, GapResponse, RegistryResponse
 from app.services.export import export_document_context
 from app.services.extraction import run_extraction_pipeline
 
@@ -23,9 +23,16 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
+    project_id: int,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ):
+    # Verify project exists
+    from app.models.document import Project
+    proj = await session.get(Project, project_id)
+    if proj is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
     contents = await file.read()
 
     if file.content_type != "application/pdf":
@@ -47,6 +54,7 @@ async def upload_document(
         filename=file.filename or "unnamed.pdf",
         pdf_bytes=contents,
         session=session,
+        project_id=project_id,
     )
     return result
 
@@ -64,6 +72,7 @@ async def list_documents(session: AsyncSession = Depends(get_session)):
     return [
         DocumentResponse(
             id=doc.id,
+            project_id=doc.project_id,
             filename=doc.filename,
             status=doc.status,
             pdf_size_bytes=doc.pdf_size_bytes,
@@ -132,11 +141,11 @@ async def get_document_registry(
     result = await session.execute(stmt)
     entries = result.scalars().all()
 
-    grouped: dict[str, list[dict]] = {"db": [], "external_api": [], "cache": []}
+    grouped: dict[str, list] = {"db": [], "external_api": [], "cache": []}
     for entry in entries:
         data = json.loads(entry.data_json)
         if entry.registry_type in grouped:
-            grouped[entry.registry_type].append(data)
+            grouped[entry.registry_type].append({"id": entry.id, "name": entry.name, "data": data})
 
     return RegistryResponse(**grouped)
 
@@ -165,6 +174,79 @@ async def get_document_gaps(
     ]
 
 
+@router.patch("/{document_id}/features/{feature_id}", response_model=None)
+async def patch_feature(
+    document_id: int,
+    feature_id: int,
+    patch: FeaturePatchRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update editable fields of a feature."""
+    from app.models.document import Feature
+    stmt = select(Feature).where(Feature.id == feature_id, Feature.document_id == document_id)
+    result = await session.execute(stmt)
+    feature = result.scalar_one_or_none()
+    if feature is None:
+        raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found in document {document_id}")
+    if patch.overview_md is not None:
+        feature.overview_md = patch.overview_md
+    if patch.business_logic is not None:
+        feature.business_logic = json.dumps(patch.business_logic)
+    if patch.structured_logic_json is not None:
+        feature.structured_logic_json = json.dumps(patch.structured_logic_json)
+    await session.commit()
+    await session.refresh(feature)
+    return feature_to_response(feature)
+
+
+@router.patch("/{document_id}/registry/entries/{entry_id}")
+async def patch_dependency_entry(
+    document_id: int,
+    entry_id: int,
+    patch: DependencyEntryPatchRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Replace the data blob of a dependency registry entry."""
+    entry = await session.get(DependencyEntry, entry_id)
+    if entry is None or entry.document_id != document_id:
+        raise HTTPException(status_code=404, detail=f"Registry entry {entry_id} not found in document {document_id}")
+    entry.data_json = json.dumps(patch.data)
+    await session.commit()
+    return {"ok": True}
+
+
+@router.patch("/{document_id}/gaps/{entry_id}")
+async def patch_gap_entry(
+    document_id: int,
+    entry_id: int,
+    patch: GapEntryPatchRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update editable fields of a gap entry."""
+    entry = await session.get(GapEntry, entry_id)
+    if entry is None or entry.document_id != document_id:
+        raise HTTPException(status_code=404, detail=f"Gap entry {entry_id} not found in document {document_id}")
+    if patch.what_missing is not None:
+        entry.what_missing = patch.what_missing
+    if patch.priority is not None:
+        entry.priority = patch.priority
+    if patch.affected_features is not None:
+        entry.affected_features = json.dumps(patch.affected_features)
+    if patch.suggestion is not None:
+        entry.suggestion_json = json.dumps(patch.suggestion)
+    await session.commit()
+    await session.refresh(entry)
+    return GapResponse(
+        id=entry.id,
+        category=entry.category,
+        name=entry.name,
+        affected_features=json.loads(entry.affected_features),
+        what_missing=entry.what_missing,
+        priority=entry.priority,
+        suggestion=json.loads(entry.suggestion_json) if entry.suggestion_json else None,
+    )
+
+
 @router.patch("/{document_id}", response_model=DocumentResponse)
 async def patch_document(
     document_id: int,
@@ -189,6 +271,7 @@ async def patch_document(
 
     return DocumentResponse(
         id=doc.id,
+        project_id=doc.project_id,
         filename=doc.filename,
         status=doc.status,
         pdf_size_bytes=doc.pdf_size_bytes,
@@ -217,6 +300,7 @@ async def get_document(
 
     return DocumentResponse(
         id=doc.id,
+        project_id=doc.project_id,
         filename=doc.filename,
         status=doc.status,
         pdf_size_bytes=doc.pdf_size_bytes,

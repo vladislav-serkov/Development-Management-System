@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 class FeatureType(str, Enum):
     kafka_consumer = "kafka_consumer"
     rest_endpoint = "rest_endpoint"
-    scheduled_task = "scheduled_task"
     unknown = "unknown"
 
 
@@ -50,6 +49,20 @@ class FeatureDetectionResult(BaseModel):
     features: list[DetectedFeature]
 
 
+class SingleFeatureExtraction(BaseModel):
+    """Combined schema: feature metadata + business logic in one call."""
+
+    name: str = Field(description="Feature name in Latin")
+    type: FeatureType = Field(description="kafka_consumer or rest_endpoint")
+    summary: str = Field(description="Brief description in Russian")
+    dependencies: list[str] = Field(default_factory=list)
+    structured_logic: StructuredBusinessLogic = Field(default_factory=StructuredBusinessLogic)
+    business_logic: dict | None = Field(
+        default=None,
+        description="Full business logic as free-form JSON, optimized for LLM coding agent",
+    )
+
+
 class DocumentStatus(str, Enum):
     pending = "pending"
     processing = "processing"
@@ -66,10 +79,17 @@ class FeatureStatus(str, Enum):
     error = "error"
 
 
+class FeaturePatchRequest(BaseModel):
+    overview_md: str | None = None
+    business_logic: dict | None = None
+    structured_logic_json: dict | None = None
+
+
 class FeatureResponse(BaseModel):
     """HTTP response model for a single feature."""
 
     id: int
+    document_id: int
     name: str
     type: str
     confidence: float
@@ -86,6 +106,7 @@ class DocumentResponse(BaseModel):
     """HTTP response model for a document with its features."""
 
     id: int
+    project_id: int
     filename: str
     status: str
     pdf_size_bytes: int
@@ -93,6 +114,19 @@ class DocumentResponse(BaseModel):
     features: list[FeatureResponse]
     uploaded_at: datetime
     error_message: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectResponse(BaseModel):
+    """HTTP response model for a project."""
+
+    id: int
+    name: str
+    created_at: datetime
+    document_count: int
+    feature_count: int = 0
+    status: str = "empty"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -113,6 +147,7 @@ def feature_to_response(feature) -> FeatureResponse:
             sl = None
     return FeatureResponse(
         id=feature.id,
+        document_id=feature.document_id,
         name=feature.name,
         type=feature.type,
         confidence=feature.confidence,

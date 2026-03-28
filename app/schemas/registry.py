@@ -33,10 +33,27 @@ class DependencyResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RegistryEntry(BaseModel):
+    id: int
+    name: str
+    data: dict
+
+
 class RegistryResponse(BaseModel):
-    db: list[dict]
-    external_api: list[dict]
-    cache: list[dict]
+    db: list[RegistryEntry]
+    external_api: list[RegistryEntry]
+    cache: list[RegistryEntry]
+
+
+class DependencyEntryPatchRequest(BaseModel):
+    data: dict  # full replacement of data_json blob
+
+
+class GapEntryPatchRequest(BaseModel):
+    what_missing: str | None = None
+    priority: str | None = None
+    affected_features: list[str] | None = None
+    suggestion: dict | None = None
 
 
 class GapResponse(BaseModel):
