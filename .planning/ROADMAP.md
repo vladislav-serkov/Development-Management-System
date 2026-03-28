@@ -76,10 +76,11 @@ Plans:
   2. User can view and edit gaps.md with changes persisted
   3. User can inline-edit JSON artifacts (business-logic.json, dependency files) with syntax validation
   4. User can inline-edit Markdown artifacts (overview.md, gaps.md) with preview
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 04-01: TBD
+- [ ] 04-01-PLAN.md — Backend PATCH endpoints, registry response schema update (expose entry IDs), frontend types/API/hooks
+- [ ] 04-02-PLAN.md — JSONEditor + MarkdownEditor components, DependencyTable/GapCard editing, ProjectPage edit toggles
 
 ## Progress
 
@@ -91,4 +92,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 1. Foundation + PDF Processing | 2/2 | Complete | 2026-03-24 |
 | 2. Extraction Pipeline | 2/2 | Complete | 2026-03-24 |
 | 3. Web UI - Viewing | 3/3 | Complete (pending UI verify) | 2026-03-25 |
-| 4. Web UI - Editing | 0/1 | Not started | - |
+| 4. Web UI - Editing | 0/2 | Planning complete | - |
