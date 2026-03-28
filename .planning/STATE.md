@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 ## Current Position
 
 Phase: 4 of 4 (Web UI Editing)
-Plan: 1 of 2 in current phase (04-01 complete)
-Status: In progress
-Last activity: 2026-03-28 -- Completed 04-01 (Backend PATCH endpoints and frontend editing infrastructure)
+Plan: 2 of 2 in current phase (04-02 complete)
+Status: Complete
+Last activity: 2026-03-28 -- Completed 04-02 (Frontend inline editing components — JSONEditor, MarkdownEditor, DependencyTable, GapCard, ProjectPage)
 
-Progress: [█████████░] 90%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -30,7 +30,7 @@ Progress: [█████████░] 90%
 | 01 | 2 | 7.6 min | 3.8 min |
 | 02 | 2 | 7 min | 3.5 min |
 | 03 | 3 | 30 min | 10 min |
-| 04 | 1 | 3 min | 3 min |
+| 04 | 2 | ~18 min | 9 min |
 
 **Recent Trend:**
 - Last 5 plans: 02-01 (3 min), 02-02 (4 min), 03-01 (3 min), 03-02 (7 min), 03-03 (20 min)
@@ -69,6 +69,9 @@ Recent decisions affecting current work:
 - 04-01: RegistryResponse updated to list[RegistryEntry] (not list[dict]) — exposes id for PATCH targeting
 - 04-01: PATCH endpoints use partial update (only non-None fields applied) for features and gaps
 - 04-01: invalidateQueries(['projects']) used broadly in mutation onSuccess — covers project-level registry/feature queries
+- 04-02: EditCell extracted as helper component in DependencyTable — avoids repeating Dialog/JSONEditor markup for 3 registry types
+- 04-02: editingTab state lives in ProjectContentArea (not ProjectPage) — scoped to content area, resets on React key change
+- 04-02: onSaveEntry/onSave guarded by documentId !== null check — edit disabled when no document loaded
 
 ### Pending Todos
 
@@ -83,5 +86,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-03-28
-Stopped at: Completed 04-01 — backend PATCH endpoints and frontend editing infrastructure done
-Resume file: .planning/phases/04-web-ui-editing/04-02-PLAN.md
+Stopped at: Completed 04-02 — all phases complete, full inline editing UI delivered
+Resume file: None — all phases complete

@@ -29,10 +29,10 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **UI-01**: Пользователь видит дерево .context/ структуры с навигацией по фичам, зависимостям, gaps
 - [ ] **UI-02**: Пользователь может просматривать overview.md в отрендеренном виде
 - [ ] **UI-03**: Пользователь может просматривать business-logic.json в структурированном виде
-- [ ] **UI-04**: Пользователь может просматривать и редактировать зависимости (external_api, db, cache)
-- [ ] **UI-05**: Пользователь может просматривать и редактировать gaps.md
-- [ ] **UI-06**: Пользователь может inline-редактировать JSON-артефакты (business-logic, зависимости)
-- [ ] **UI-07**: Пользователь может inline-редактировать MD-артефакты (overview, gaps)
+- [x] **UI-04**: Пользователь может просматривать и редактировать зависимости (external_api, db, cache)
+- [x] **UI-05**: Пользователь может просматривать и редактировать gaps.md
+- [x] **UI-06**: Пользователь может inline-редактировать JSON-артефакты (business-logic, зависимости)
+- [x] **UI-07**: Пользователь может inline-редактировать MD-артефакты (overview, gaps)
 - [ ] **UI-08**: Пользователь видит прогресс извлечения в реальном времени (SSE)
 - [ ] **UI-09**: Пользователь указывает путь к целевому микросервису для экспорта .context/
 
@@ -95,10 +95,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | UI-01 | Phase 3 | Pending |
 | UI-02 | Phase 3 | Pending |
 | UI-03 | Phase 3 | Pending |
-| UI-04 | Phase 4 | Pending |
-| UI-05 | Phase 4 | Pending |
-| UI-06 | Phase 4 | Pending |
-| UI-07 | Phase 4 | Pending |
+| UI-04 | Phase 4 | Complete |
+| UI-05 | Phase 4 | Complete |
+| UI-06 | Phase 4 | Complete |
+| UI-07 | Phase 4 | Complete |
 | UI-08 | Phase 3 | Pending |
 | UI-09 | Phase 3 | Pending |
 | INFR-01 | Phase 1 | Complete (01-01) |
