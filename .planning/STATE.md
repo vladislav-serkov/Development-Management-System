@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 
 ## Current Position
 
-Phase: 3 of 4 (Test Case Review UI)
-Plan: 3 of 3 in current phase (03-03 complete — pending human-verify checkpoint)
-Status: Checkpoint — awaiting human verification of UI
-Last activity: 2026-03-25 -- Completed 03-03 (Complete Viewing UI — all components built)
+Phase: 4 of 4 (Web UI Editing)
+Plan: 1 of 2 in current phase (04-01 complete)
+Status: In progress
+Last activity: 2026-03-28 -- Completed 04-01 (Backend PATCH endpoints and frontend editing infrastructure)
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -30,6 +30,7 @@ Progress: [█████████░] 85%
 | 01 | 2 | 7.6 min | 3.8 min |
 | 02 | 2 | 7 min | 3.5 min |
 | 03 | 3 | 30 min | 10 min |
+| 04 | 1 | 3 min | 3 min |
 
 **Recent Trend:**
 - Last 5 plans: 02-01 (3 min), 02-02 (4 min), 03-01 (3 min), 03-02 (7 min), 03-03 (20 min)
@@ -65,6 +66,9 @@ Recent decisions affecting current work:
 - 03-03: App.tsx uses Zustand selectedDocumentId for page routing — no react-router needed for this two-page SPA
 - 03-03: ContentArea uses activeSidebarItem string + selectedFeatureId for routing without URL state
 - 03-03: ExtractionProgress shows full feature list during active extraction; compact status for done/error/partial
+- 04-01: RegistryResponse updated to list[RegistryEntry] (not list[dict]) — exposes id for PATCH targeting
+- 04-01: PATCH endpoints use partial update (only non-None fields applied) for features and gaps
+- 04-01: invalidateQueries(['projects']) used broadly in mutation onSuccess — covers project-level registry/feature queries
 
 ### Pending Todos
 
@@ -78,6 +82,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-25
-Stopped at: Checkpoint — 03-03 Task 4 human-verify (all components built, awaiting UI verification)
-Resume file: .planning/phases/03-test-case-review-ui/03-03-PLAN.md (Task 4 checkpoint)
+Last session: 2026-03-28
+Stopped at: Completed 04-01 — backend PATCH endpoints and frontend editing infrastructure done
+Resume file: .planning/phases/04-web-ui-editing/04-02-PLAN.md
