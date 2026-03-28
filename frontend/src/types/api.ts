@@ -24,6 +24,7 @@ export interface StructuredBusinessLogic {
 // Feature response
 export interface FeatureResponse {
   id: number
+  document_id: number
   name: string
   type: FeatureType
   confidence: number
@@ -34,9 +35,23 @@ export interface FeatureResponse {
   overview_md: string | null
 }
 
+export interface FeaturePatchRequest {
+  overview_md?: string
+  business_logic?: Record<string, unknown>
+  structured_logic_json?: Record<string, unknown>
+}
+
+export interface GapPatchRequest {
+  what_missing?: string
+  priority?: string
+  affected_features?: string[]
+  suggestion?: Record<string, unknown> | null
+}
+
 // Document response
 export interface DocumentResponse {
   id: number
+  project_id: number
   filename: string
   status: DocumentStatus
   pdf_size_bytes: number
@@ -46,16 +61,40 @@ export interface DocumentResponse {
   error_message: string | null
 }
 
-// Document patch (D-03/D-15 — editable project name)
+// Document patch
 export interface DocumentPatchRequest {
   filename: string
 }
 
+// Project
+export interface ProjectResponse {
+  id: number
+  name: string
+  created_at: string
+  document_count: number
+  feature_count: number
+  status: "empty" | "pending" | "processing" | "done" | "partial"
+}
+
+export interface CreateProjectRequest {
+  name: string
+}
+
+export interface PatchProjectRequest {
+  name: string
+}
+
 // Registry (dependencies)
+export interface RegistryEntry {
+  id: number
+  name: string
+  data: Record<string, unknown>
+}
+
 export interface RegistryResponse {
-  db: Record<string, unknown>[]
-  external_api: Record<string, unknown>[]
-  cache: Record<string, unknown>[]
+  db: RegistryEntry[]
+  external_api: RegistryEntry[]
+  cache: RegistryEntry[]
 }
 
 // Gap
