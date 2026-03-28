@@ -2,26 +2,24 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-24)
+See: .planning/PROJECT.md (updated 2026-03-28)
 
 **Core value:** Turning unstructured PDF specs into perfectly organized context for LLM coding agents with automatic gap detection
-**Current focus:** Phase 1 - Foundation + PDF Processing
+**Current focus:** v1.0 shipped — planning next milestone
 
 ## Current Position
 
-Phase: 4 of 4 (Web UI Editing)
-Plan: 2 of 2 in current phase (04-02 complete)
+Milestone: v1.0 MVP — SHIPPED 2026-03-28
 Status: Complete
-Last activity: 2026-03-28 -- Completed 04-02 (Frontend inline editing components — JSONEditor, MarkdownEditor, DependencyTable, GapCard, ProjectPage)
+Last activity: 2026-03-28 -- Milestone v1.0 archived
 
 Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 4.0 min
-- Total execution time: 0.40 hours
+- Total plans completed: 9
+- Timeline: 5 days (2026-03-24 → 2026-03-28)
 
 **By Phase:**
 
@@ -32,46 +30,11 @@ Progress: [██████████] 100%
 | 03 | 3 | 30 min | 10 min |
 | 04 | 2 | ~18 min | 9 min |
 
-**Recent Trend:**
-- Last 5 plans: 02-01 (3 min), 02-02 (4 min), 03-01 (3 min), 03-02 (7 min), 03-03 (20 min)
-- Trend: stable
-
-*Updated after each plan completion*
-
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- 01-01: Added [build-system] section to pyproject.toml (setuptools) for editable install support
-- 01-01: anthropic_api_key given placeholder default to avoid import-time crash without .env
-- 01-02: tool_use with manual Pydantic validation instead of client.messages.parse() for reliability
-- 01-02: asyncio.gather for parallel business logic extraction across features
-- 01-02: Three-state document status (done/error/partial) with per-feature error tracking
-- 02-01: Free-text response for 3rd Claude call (not tool_use) — complex nested output more reliable as free text
-- 02-01: Prompt caching on concatenated business-logic context block (cache_control: ephemeral)
-- 02-01: DependencyEntry rows are per-document in SQLite; cross-document dedup at export time (Plan 02)
-- 02-02: All DependencyEntry rows passed to export (not filtered by feature) — file-level additive merge handles cross-feature dedup
-- 02-02: gaps.md regenerated from ALL GapEntry rows on every per-feature export (document-level artifact)
-- 02-02: Synchronous export response — file count small enough, polling adds unnecessary complexity
-- 03-01: Free-form 2nd Claude call — Claude decides JSON structure, no field enumeration (D-10). Better for diverse feature types.
-- 03-01: SSE via Starlette StreamingResponse + asyncio.sleep(1) polling — simple, no EventSourceResponse dependency
-- 03-01: Startup migration via sa_inspect + ALTER TABLE ADD COLUMN for backward compatibility
-- 03-01: Two-tier structured data: structured_logic (schema-validated, 1st call) for UI; business_logic (free-form, 2nd call) for coding agent
-- 03-02: SSE EventSource closes on 'done' or 'error' event type — prevents zombie connections after extraction completes
-- 03-02: API base is /api (Vite proxy prefix) — no hardcoded localhost ports in hooks or API layer
-- 03-02: ProgressEvent invalidates both ['documents', id] and ['documents'] queries — ensures home page cards update in real-time
-- 03-03: App.tsx uses Zustand selectedDocumentId for page routing — no react-router needed for this two-page SPA
-- 03-03: ContentArea uses activeSidebarItem string + selectedFeatureId for routing without URL state
-- 03-03: ExtractionProgress shows full feature list during active extraction; compact status for done/error/partial
-- 04-01: RegistryResponse updated to list[RegistryEntry] (not list[dict]) — exposes id for PATCH targeting
-- 04-01: PATCH endpoints use partial update (only non-None fields applied) for features and gaps
-- 04-01: invalidateQueries(['projects']) used broadly in mutation onSuccess — covers project-level registry/feature queries
-- 04-02: EditCell extracted as helper component in DependencyTable — avoids repeating Dialog/JSONEditor markup for 3 registry types
-- 04-02: editingTab state lives in ProjectContentArea (not ProjectPage) — scoped to content area, resets on React key change
-- 04-02: onSaveEntry/onSave guarded by documentId !== null check — edit disabled when no document loaded
+Full decision log in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
@@ -79,12 +42,10 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-- Research flag: Validate Claude's handling of Russian-language PDFs from Confluence export in Phase 1
-- Research flag: Extraction prompts will need tuning on sample PDFs in Phase 2
-- Research flag: json-edit-react vs Monaco editor decision needed in Phase 4
+None — v1.0 shipped successfully.
 
 ## Session Continuity
 
 Last session: 2026-03-28
-Stopped at: Completed 04-02 — all phases complete, full inline editing UI delivered
-Resume file: None — all phases complete
+Stopped at: Milestone v1.0 complete and archived
+Resume file: None — start next milestone with /gsd:new-milestone
