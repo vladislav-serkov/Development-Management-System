@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
+import { Database, Globe, HardDrive, AlertTriangle, type LucideIcon } from "lucide-react"
 import { useUIStore } from "@/stores/uiStore"
 import { useProject, useRenameProject, useUploadDocument, useProjectFeatures, useProjectRegistry, useProjectGaps, useSaveFeature, useSaveDependencyEntry, useSaveGapEntry } from "@/hooks/useDocuments"
 import { Badge } from "@/components/ui/badge"
@@ -20,7 +21,25 @@ import type { FeatureResponse, FeatureStatus, RegistryResponse, GapResponse } fr
 export default function ProjectPage() {
   const projectId = useUIStore((s) => s.selectedProjectId)
   const goHome = useUIStore((s) => s.goHome)
-  const { selectedFeatureId, activeSidebarItem, setSelectedFeature, setActiveSidebarItem } = useUIStore()
+  const { selectedFeatureId, activeSidebarItem, setSelectedFeature, setActiveSidebarItem, sidebarWidth, setSidebarWidth } = useUIStore()
+
+  const isDragging = useRef(false)
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!isDragging.current) return
+      setSidebarWidth(e.clientX)
+    }
+    function onMouseUp() {
+      isDragging.current = false
+    }
+    document.addEventListener("mousemove", onMouseMove)
+    document.addEventListener("mouseup", onMouseUp)
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove)
+      document.removeEventListener("mouseup", onMouseUp)
+    }
+  }, [setSidebarWidth])
 
   const { data: project, isLoading: projectLoading } = useProject(projectId)
   const { data: features } = useProjectFeatures(projectId)
@@ -82,7 +101,7 @@ export default function ProjectPage() {
   return (
     <div className="flex h-screen">
       {/* Sidebar */}
-      <aside className="w-64 border-r bg-muted/30 h-screen flex flex-col shrink-0">
+      <aside className="relative border-r bg-muted/30 h-screen flex flex-col shrink-0" style={{ width: sidebarWidth }}>
         <div className="p-3 border-b">
           <Button variant="ghost" size="sm" className="w-full justify-start text-xs" onClick={goHome}>
             &larr; Все проекты
@@ -131,6 +150,7 @@ export default function ProjectPage() {
                   <button
                     key={feature.id}
                     onClick={() => handleFeatureClick(feature.id)}
+                    title={feature.name}
                     className={cn(
                       "w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
                       isFeatureActive(feature.id) ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
@@ -146,14 +166,14 @@ export default function ProjectPage() {
               </div>
             </div>
 
-            {/* db/ */}
-            <SidebarCategory name="db/" count={dbCount} active={isCategoryActive("db")} onClick={() => handleCategoryClick("db")} />
-            {/* external_api/ */}
-            <SidebarCategory name="external_api/" count={apiCount} active={isCategoryActive("external_api")} onClick={() => handleCategoryClick("external_api")} />
-            {/* cache/ */}
-            <SidebarCategory name="cache/" count={cacheCount} active={isCategoryActive("cache")} onClick={() => handleCategoryClick("cache")} />
+            {/* db */}
+            <SidebarCategory name="db" icon={Database} count={dbCount} active={isCategoryActive("db")} onClick={() => handleCategoryClick("db")} />
+            {/* external_api */}
+            <SidebarCategory name="external_api" icon={Globe} count={apiCount} active={isCategoryActive("external_api")} onClick={() => handleCategoryClick("external_api")} />
+            {/* cache */}
+            <SidebarCategory name="cache" icon={HardDrive} count={cacheCount} active={isCategoryActive("cache")} onClick={() => handleCategoryClick("cache")} />
             {/* gaps */}
-            <SidebarCategory name="gaps" count={gapsCount} active={isCategoryActive("gaps")} onClick={() => handleCategoryClick("gaps")} />
+            <SidebarCategory name="gaps" icon={AlertTriangle} count={gapsCount} active={isCategoryActive("gaps")} onClick={() => handleCategoryClick("gaps")} />
           </div>
         </ScrollArea>
 
@@ -161,6 +181,12 @@ export default function ProjectPage() {
         <div className="p-3 border-t">
           <ExportDialog documentId={projectId!} />
         </div>
+
+        {/* Drag handle */}
+        <div
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-border transition-colors"
+          onMouseDown={() => { isDragging.current = true }}
+        />
       </aside>
 
       {/* Content */}
@@ -191,7 +217,7 @@ function FeatureStatusDot({ status }: { status: FeatureStatus }) {
   return <span className={cn("inline-block h-2 w-2 rounded-full shrink-0", colors[status] ?? "bg-muted-foreground/40")} />
 }
 
-function SidebarCategory({ name, count, active, onClick }: { name: string; count: number; active: boolean; onClick: () => void }) {
+function SidebarCategory({ name, icon: Icon, count, active, onClick }: { name: string; icon?: LucideIcon; count: number; active: boolean; onClick: () => void }) {
   return (
     <div>
       <button
@@ -201,7 +227,10 @@ function SidebarCategory({ name, count, active, onClick }: { name: string; count
           active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
         )}
       >
-        <span className="font-medium">{name}</span>
+        <span className="flex items-center gap-1.5 font-medium">
+          {Icon && <Icon size={14} className="shrink-0" />}
+          {name}
+        </span>
         {count > 0 && <Badge variant="secondary" className="text-xs h-4 px-1">{count}</Badge>}
       </button>
     </div>
