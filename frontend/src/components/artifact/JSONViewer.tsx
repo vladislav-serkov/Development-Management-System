@@ -11,7 +11,8 @@ export function JSONViewer({ value }: JSONViewerProps) {
       value={JSON.stringify(value, null, 2)}
       extensions={[json()]}
       readOnly
-      height="500px"
+      height="auto"
+      maxHeight="500px"
       theme="light"
       className="border rounded-md overflow-hidden"
     />

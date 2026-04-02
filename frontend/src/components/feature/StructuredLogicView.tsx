@@ -254,7 +254,15 @@ export function StructuredLogicView({
               {hasErrorHandling ? (
                 <div>
                   <h3 className="text-sm font-medium mb-2">Обработка ошибок</h3>
-                  <JSONViewer value={logic.error_handling!} />
+                  <ul className="list-disc pl-4 space-y-1">
+                    {Object.entries(logic.error_handling!).map(([key, value]) => (
+                      <li key={key} className="text-sm">
+                        <span className="font-mono text-xs text-muted-foreground">{key}</span>
+                        {" — "}
+                        {String(value)}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">Нет данных об обработке ошибок</p>
