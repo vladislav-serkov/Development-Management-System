@@ -1,4 +1,5 @@
 """Bug report generation service: single Claude call to create structured bug report from test case."""
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -84,6 +85,19 @@ async def generate_bug_report(
     ]:
         val = tc.get(artifact_key)
         if val:
+            if isinstance(val, dict):
+                # KafkaMessage dict: {key, value}
+                key_str = val.get("key", "")
+                value_str = val.get("value", "")
+                # Pretty-print value if it's JSON
+                if isinstance(value_str, str):
+                    stripped = value_str.strip()
+                    if stripped.startswith(("{", "[")):
+                        try:
+                            value_str = json.dumps(json.loads(stripped), indent=2, ensure_ascii=False)
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                val = f"key: {key_str}\nvalue: {value_str}"
             parts += ["", f"{artifact_label}:", val]
 
     user_message = "\n".join(parts)

@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Dependency Enrichment
 status: executing
-stopped_at: "Merged quick/260401-tzo: Confluence-style inline edit mode for feature page"
-last_updated: "2026-04-01T18:00:00.000Z"
-last_activity: 2026-04-01
+stopped_at: "Merged quick/260402-nuo: Refactor kafka_message from string to structured KafkaMessage"
+last_updated: "2026-04-02T14:15:00.000Z"
+last_activity: 2026-04-02
 progress:
   total_phases: 3
   completed_phases: 3
@@ -29,7 +29,7 @@ Milestone: v1.1 Dependency Enrichment
 Phase: 5 of 5 (Dependency Enrichment)
 Plan: 3 of 3 in current phase
 Status: In progress
-Last activity: 2026-04-01
+Last activity: 2026-04-02
 
 Progress: [███░░░░░░░] 33% (v1.1)
 
@@ -149,9 +149,11 @@ Key decisions from 260328-wcd:
 | 260401-sjg | Full CRUD for features (extended PATCH + rename + DELETE) and dependencies (POST + extended PATCH with rename + DELETE) | 2026-04-01 | 8044ea9 | [260401-sjg-backend-crud-features-extended-patch-del](./quick/260401-sjg-backend-crud-features-extended-patch-del/) |
 | 260401-sro | Frontend inline CRUD: edit feature name/method/endpoint/summary, delete feature, create/edit/delete dependencies | 2026-04-01 | acae29b | [260401-sro-frontend-crud-inline-edit-features-deps-](./quick/260401-sro-frontend-crud-inline-edit-features-deps-/) |
 | 260401-tzo | Confluence-style inline edit mode for entire feature page: all 5 tabs + header in single edit session, Save via PATCH structured_logic_json | 2026-04-01 | 4fc425c | [260401-tzo-confluence-style-inline-edit-mode-for-fe](./quick/260401-tzo-confluence-style-inline-edit-mode-for-fe/) |
+| 260402-nuo | Refactor kafka_message from string to structured KafkaMessage(key, value): backend schemas, LLM prompts, frontend types, separate Copy buttons | 2026-04-02 | 3ace7cf | [260402-nuo-refactor-kafka-message-from-string-to-st](./quick/260402-nuo-refactor-kafka-message-from-string-to-st/) |
+| 260402-rky | BugsView: fix truncation, copy-for-jira, pretty XML/JSON | 2026-04-02 | 9342814 | [260402-rky-bugsview-fix-truncation-copy-for-jira-pr](./quick/260402-rky-bugsview-fix-truncation-copy-for-jira-pr/) |
 
 ## Session Continuity
 
-Last session: 2026-04-01T18:35:36Z
-Stopped at: Completed quick/260401-tzo: Confluence-style inline edit mode for feature page
+Last session: 2026-04-02T16:55:00Z
+Stopped at: Completed quick/260402-rky: BugsView fix truncation, copy-for-jira, pretty XML/JSON
 Resume file: None

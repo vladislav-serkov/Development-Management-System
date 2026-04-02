@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useFeatureBugs, usePatchBug, useDeleteBug } from "@/hooks/useBugs"
-import { Check, Loader2 } from "lucide-react"
+import { Check, Copy, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { BugItem, BugSeverity } from "@/types/api"
 
@@ -35,6 +35,95 @@ function RichText({ text }: { text: string }) {
   )
 }
 
+/** Simple regex-based XML pretty-printer. Returns as-is if not XML. */
+function formatXml(xml: string): string {
+  if (!xml.includes("<")) return xml
+  const PADDING = "  "
+  let indent = 0
+  const lines: string[] = []
+  // Split on tag boundaries
+  const tokens = xml.replace(/>\s*</g, "><").split(/(?<=>)(?=<)|(?<=[^>])(?=<)/)
+  for (const token of tokens) {
+    const trimmed = token.trim()
+    if (!trimmed) continue
+    if (trimmed.startsWith("</")) {
+      // Closing tag — decrease indent before
+      indent = Math.max(0, indent - 1)
+      lines.push(PADDING.repeat(indent) + trimmed)
+    } else if (trimmed.startsWith("<") && !trimmed.startsWith("<?") && !trimmed.endsWith("/>") && !trimmed.includes("</")) {
+      // Opening tag
+      lines.push(PADDING.repeat(indent) + trimmed)
+      indent++
+    } else {
+      // Self-closing, processing instruction, or text node
+      lines.push(PADDING.repeat(indent) + trimmed)
+    }
+  }
+  return lines.join("\n")
+}
+
+/** Format a raw string value: pretty-print JSON, indent XML, or return as-is. */
+function formatValue(raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2)
+    } catch { /* not JSON */ }
+  }
+  if (trimmed.includes("<") && trimmed.includes(">")) {
+    return formatXml(trimmed)
+  }
+  return raw
+}
+
+/** Format bug report as Jira wiki markup plain text. */
+function formatBugForJira(bug: BugItem): string {
+  const lines: string[] = []
+
+  lines.push(`*${bug.severity}* | ${bug.test_case_name}`)
+  lines.push("")
+  lines.push(bug.title)
+  lines.push("")
+  lines.push("*Шаги воспроизведения:*")
+
+  bug.steps.forEach((step, i) => {
+    lines.push(`${i + 1}. ${step.action}`)
+    lines.push(`   Результат: ${step.result}`)
+    if (step.curl_command) {
+      lines.push(`   {code:bash}`)
+      lines.push(`   ${step.curl_command}`)
+      lines.push(`   {code}`)
+    }
+    if (step.sql_query) {
+      lines.push(`   {code:sql}`)
+      lines.push(`   ${step.sql_query}`)
+      lines.push(`   {code}`)
+    }
+    if (step.kafka_message) {
+      let kafkaText = step.kafka_message
+      try {
+        const parsed = JSON.parse(step.kafka_message)
+        if (parsed && typeof parsed === "object" && "key" in parsed && "value" in parsed) {
+          const valStr = typeof parsed.value === "string" ? parsed.value : JSON.stringify(parsed.value, null, 2)
+          kafkaText = `key: ${parsed.key}\nvalue: ${formatValue(valStr)}`
+        }
+      } catch { /* use raw */ }
+      lines.push(`   {code}`)
+      lines.push(`   ${kafkaText}`)
+      lines.push(`   {code}`)
+    }
+  })
+
+  lines.push("")
+  lines.push("*Ожидаемый результат:*")
+  lines.push(bug.expected_result)
+  lines.push("")
+  lines.push("*Фактический результат:*")
+  lines.push(bug.actual_result)
+
+  return lines.join("\n")
+}
+
 function BugCard({
   bug,
   index,
@@ -49,6 +138,7 @@ function BugCard({
   const patchMut = usePatchBug(projectSlug, featureName)
   const deleteMut = useDeleteBug(projectSlug, featureName)
   const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const isBusy = patchMut.isPending || deleteMut.isPending
   const isFixed = bug.status === "fixed"
@@ -64,6 +154,14 @@ function BugCard({
     } else {
       patchMut.mutate({ bugIndex: index, status: "fixed" })
     }
+  }
+
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation()
+    navigator.clipboard.writeText(formatBugForJira(bug)).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
   }
 
   return (
@@ -116,7 +214,7 @@ function BugCard({
               <p className="text-[11px] text-muted-foreground/60 mt-0.5">{bug.test_case_name}</p>
             </div>
 
-            {/* Severity + Status */}
+            {/* Severity + Status + Copy */}
             <div className="shrink-0 flex items-center gap-2">
               {bug.severity && (
                 <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", SEVERITY_STYLE[bug.severity])}>
@@ -128,6 +226,21 @@ function BugCard({
               )}
               {bug.status === "verified" && (
                 <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">проверен</span>
+              )}
+              {open && (
+                <button
+                  className={cn(
+                    "transition-colors",
+                    copied ? "text-emerald-500" : "text-muted-foreground/50 hover:text-foreground",
+                  )}
+                  onClick={handleCopy}
+                  title="Copy for Jira"
+                >
+                  {copied
+                    ? <Check className="h-4 w-4" />
+                    : <Copy className="h-4 w-4" />
+                  }
+                </button>
               )}
             </div>
           </div>
@@ -151,7 +264,7 @@ function BugCard({
                           {step.curl_command && (
                             <div>
                               <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wider">curl</span>
-                              <pre className="mt-0.5 text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto font-mono text-foreground/70">
+                              <pre className="mt-0.5 text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/70">
                                 <code>{step.curl_command}</code>
                               </pre>
                             </div>
@@ -159,7 +272,7 @@ function BugCard({
                           {step.sql_query && (
                             <div>
                               <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wider">SQL</span>
-                              <pre className="mt-0.5 text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto font-mono text-foreground/70">
+                              <pre className="mt-0.5 text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/70">
                                 <code>{step.sql_query}</code>
                               </pre>
                             </div>
@@ -171,21 +284,24 @@ function BugCard({
                                 try {
                                   const parsed = JSON.parse(step.kafka_message)
                                   if (parsed && typeof parsed === "object" && "key" in parsed && "value" in parsed) {
+                                    const valStr = typeof parsed.value === "string"
+                                      ? formatValue(parsed.value)
+                                      : JSON.stringify(parsed.value, null, 2)
                                     return (
                                       <div className="mt-0.5 space-y-1">
                                         <div className="text-[12px] bg-muted/60 rounded px-2.5 py-1.5 font-mono text-foreground/70">
                                           <span className="text-muted-foreground/50">key:</span> {typeof parsed.key === "string" ? parsed.key : JSON.stringify(parsed.key)}
                                         </div>
-                                        <pre className="text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto font-mono text-foreground/70">
-                                          <code>{JSON.stringify(parsed.value, null, 2)}</code>
+                                        <pre className="text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/70">
+                                          <code>{valStr}</code>
                                         </pre>
                                       </div>
                                     )
                                   }
                                 } catch { /* not JSON, fall through */ }
                                 return (
-                                  <pre className="mt-0.5 text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto font-mono text-foreground/70">
-                                    <code>{step.kafka_message}</code>
+                                  <pre className="mt-0.5 text-[12px] bg-muted/60 rounded px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/70">
+                                    <code>{formatValue(step.kafka_message)}</code>
                                   </pre>
                                 )
                               })()}

@@ -51,7 +51,9 @@ _FEW_SHOT_KAFKA = """\
 1. Опубликовать сообщение с `creditLineId`=`a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0`, `amount`=`2000.00` → Сообщение успешно обработано.
 2. SELECT `amount` FROM `credit_line_info` WHERE `credit_line_id`=`a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0` → `2000.00`.
 Результат: Лимит обновлён в БД. Запись в `credit_line_info` содержит новое значение `amount`=`2000.00`.
-kafka_message: {"key":"a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0","value":{"creditLineId":"a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0","amount":2000.00,"currency":"RUB","operationType":"SCHEDULE"}}
+kafka_message:
+  key: a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0
+  value: {"creditLineId":"a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0","amount":2000.00,"currency":"RUB","operationType":"SCHEDULE"}
 sql_setup: DELETE FROM credit_line_info WHERE credit_line_id = 'a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0';
 INSERT INTO credit_line_info (credit_line_id, status, amount) VALUES ('a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0', 'ACTIVE', 1000.00);
 
@@ -64,7 +66,9 @@ INSERT INTO credit_line_info (credit_line_id, status, amount) VALUES ('a1b2c3d4-
 2. Проверить логи сервиса → ERROR с описанием ошибки валидации.
 3. SELECT COUNT(*) FROM `credit_line_info` WHERE `amount`=0 → 0 записей.
 Результат: Сообщение отклонено на этапе валидации. Бизнес-логика не выполнялась.
-kafka_message: {"key":"a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0","value":{"creditLineId":"a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0","amount":0,"currency":"RUB","operationType":"SCHEDULE"}}
+kafka_message:
+  key: a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0
+  value: {"creditLineId":"a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0","amount":0,"currency":"RUB","operationType":"SCHEDULE"}
 
 """ + _FEW_SHOT_COMMON + """\
 - kafka_message — обязателен для Kafka-консюмеров

@@ -21,6 +21,14 @@ const CATEGORY_LABEL: Record<TestCaseCategory, string> = {
   edge_case: "Граничный",
 }
 
+function formatJsonOrRaw(s: string): string {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2)
+  } catch {
+    return s
+  }
+}
+
 function RichText({ text }: { text: string }) {
   const parts = text.split(/(`[^`]+`)/)
   return (
@@ -58,7 +66,7 @@ function TestCaseCard({
   const [showBugForm, setShowBugForm] = useState(false)
   const [bugComment, setBugComment] = useState("")
   const [activeArtifact, setActiveArtifact] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [copiedField, setCopiedField] = useState<string | null>(null)
 
   const isBusy = patchMut.isPending || deleteMut.isPending || generateBugMut.isPending
   const resolved = tc.status === "approved" || tc.status === "edited"
@@ -176,7 +184,7 @@ function TestCaseCard({
                       {available.map(a => (
                         <button
                           key={a.key}
-                          onClick={(e) => { e.stopPropagation(); setActiveArtifact(activeArtifact === a.key ? null : a.key); setCopied(false) }}
+                          onClick={(e) => { e.stopPropagation(); setActiveArtifact(activeArtifact === a.key ? null : a.key); setCopiedField(null) }}
                           className={cn(
                             "px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors",
                             activeArtifact === a.key
@@ -189,44 +197,65 @@ function TestCaseCard({
                       ))}
                     </div>
                     {activeArtifact && tc[activeArtifact as keyof TestCaseItem] && (
-                      <div className="relative group mt-1.5">
-                        {(() => {
-                          const raw = tc[activeArtifact as keyof TestCaseItem] as string
-                          if (activeArtifact === "kafka_message") {
-                            try {
-                              const parsed = JSON.parse(raw)
-                              if (parsed && typeof parsed === "object" && "key" in parsed && "value" in parsed) {
-                                return (
-                                  <div className="space-y-1">
-                                    <div className="p-3.5 rounded-md bg-slate-900 text-slate-100 text-xs font-mono dark:bg-slate-950">
-                                      <span className="text-slate-400">key:</span> {typeof parsed.key === "string" ? parsed.key : JSON.stringify(parsed.key)}
-                                    </div>
-                                    <pre className="p-3.5 rounded-md bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto whitespace-pre-wrap dark:bg-slate-950">
-                                      <code>{JSON.stringify(parsed.value, null, 2)}</code>
-                                    </pre>
-                                  </div>
-                                )
-                              }
-                            } catch { /* not JSON */ }
-                          }
-                          return (
+                      <div className="mt-1.5">
+                        {activeArtifact === "kafka_message" && tc.kafka_message ? (
+                          <div className="space-y-1.5">
+                            {/* Key block */}
+                            <div className="relative group/key">
+                              <div className="p-3.5 rounded-md bg-slate-900 text-slate-100 text-xs font-mono dark:bg-slate-950">
+                                <span className="text-slate-400">key: </span>{tc.kafka_message.key}
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  navigator.clipboard.writeText(tc.kafka_message!.key)
+                                  setCopiedField("key")
+                                  setTimeout(() => setCopiedField(null), 1500)
+                                }}
+                                className="absolute top-2 right-2 p-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 opacity-100 sm:opacity-0 sm:group-hover/key:opacity-100 transition-opacity"
+                                title="Копировать key"
+                              >
+                                {copiedField === "key" ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                            {/* Value block */}
+                            <div className="relative group/value">
+                              <pre className="p-3.5 rounded-md bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto whitespace-pre-wrap dark:bg-slate-950">
+                                <code>{formatJsonOrRaw(tc.kafka_message.value)}</code>
+                              </pre>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  navigator.clipboard.writeText(tc.kafka_message!.value)
+                                  setCopiedField("value")
+                                  setTimeout(() => setCopiedField(null), 1500)
+                                }}
+                                className="absolute top-2 right-2 p-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 opacity-100 sm:opacity-0 sm:group-hover/value:opacity-100 transition-opacity"
+                                title="Копировать value"
+                              >
+                                {copiedField === "value" ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="relative group">
                             <pre className="p-3.5 rounded-md bg-slate-900 text-slate-100 text-xs font-mono overflow-x-auto whitespace-pre-wrap dark:bg-slate-950">
-                              {raw}
+                              {tc[activeArtifact as keyof TestCaseItem] as string}
                             </pre>
-                          )
-                        })()}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            navigator.clipboard.writeText(tc[activeArtifact as keyof TestCaseItem] as string)
-                            setCopied(true)
-                            setTimeout(() => setCopied(false), 1500)
-                          }}
-                          className="absolute top-2 right-2 p-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Копировать"
-                        >
-                          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                        </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                navigator.clipboard.writeText(tc[activeArtifact as keyof TestCaseItem] as string)
+                                setCopiedField(activeArtifact)
+                                setTimeout(() => setCopiedField(null), 1500)
+                              }}
+                              className="absolute top-2 right-2 p-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Копировать"
+                            >
+                              {copiedField === activeArtifact ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

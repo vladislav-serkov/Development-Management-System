@@ -1,6 +1,11 @@
 from pydantic import BaseModel, Field
 
 
+class KafkaMessage(BaseModel):
+    key: str = Field(description="Kafka message key")
+    value: str = Field(description="JSON-строка значения Kafka-сообщения")
+
+
 class TestStep(BaseModel):
     action: str = Field(description="Действие: REST-запрос, Kafka-сообщение или SQL-запрос для проверки БД")
     expected: str = Field(description="Ожидаемый результат: HTTP-код, значения полей, состояние в БД")
@@ -28,7 +33,7 @@ class SingleTestCaseResult(BaseModel):
     expected_result: str = Field(description="Итоговый ожидаемый результат после выполнения всех шагов")
     priority: str = Field(pattern="^(high|medium|low)$", description="Приоритет из плана: high | medium | low")
     curl_command: str | None = Field(default=None, description="curl-команда для REST-эндпоинта")
-    kafka_message: str | None = Field(default=None, description="JSON сообщения для Kafka-топика (key + value)")
+    kafka_message: KafkaMessage | None = Field(default=None, description="Kafka-сообщение (key + value)")
     sql_setup: str | None = Field(default=None, description="SQL-скрипт подготовки данных. DELETE затем INSERT. Без backticks")
     mock_config: str | None = Field(default=None, description="WireMock JSON mapping для мока зависимости")
 
@@ -49,7 +54,7 @@ class TestCaseItem(BaseModel):
     status: str = "pending"  # "pending" | "approved" | "edited"
     analyst_text: str | None = None
     curl_command: str | None = None
-    kafka_message: str | None = None
+    kafka_message: KafkaMessage | None = None
     sql_setup: str | None = None
     mock_config: str | None = None
 

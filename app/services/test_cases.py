@@ -395,7 +395,7 @@ async def _call_detail_phase(
             "status": "pending",
             "analyst_text": None,
             "curl_command": tc.curl_command,
-            "kafka_message": tc.kafka_message,
+            "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,
             "sql_setup": tc.sql_setup,
             "mock_config": tc.mock_config,
         }

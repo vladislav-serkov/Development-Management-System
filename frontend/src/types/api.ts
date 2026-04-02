@@ -313,7 +313,7 @@ export interface TestCaseItem {
   status: TestCaseStatus
   analyst_text: string | null
   curl_command: string | null
-  kafka_message: string | null
+  kafka_message: { key: string; value: string } | null
   sql_setup: string | null
   mock_config: string | null
 }
