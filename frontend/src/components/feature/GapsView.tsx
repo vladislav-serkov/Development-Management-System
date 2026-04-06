@@ -4,7 +4,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
 import { Check, Play, Loader2, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { GapItem, GapType, GapSeverity, StructuredBusinessLogic, LogicStep, MessageField, ParameterField, UsedDependency } from "@/types/api"
+import type { GapItem, GapType, GapSeverity, StructuredBusinessLogic, LogicStep, MessageField, ParameterField, UsedDependency, ProjectDependency } from "@/types/api"
 
 const SEVERITY_STYLE: Record<string, string> = {
   critical: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400",
@@ -588,7 +588,12 @@ function DiffPreviewModal({
   )
 }
 
-export function GapsView({ projectSlug, featureName }: { projectSlug: string; featureName: string }) {
+export function GapsView({ projectSlug, featureName, usedDependencies, projectDependencies }: {
+  projectSlug: string
+  featureName: string
+  usedDependencies?: UsedDependency[]
+  projectDependencies?: ProjectDependency[]
+}) {
   const { data: gapsData, isLoading } = useFeatureGaps(projectSlug, featureName)
   const runGaps = useRunGaps(projectSlug, featureName)
   const runApplyMut = useRunApplyPreview(projectSlug, featureName)
@@ -599,6 +604,25 @@ export function GapsView({ projectSlug, featureName }: { projectSlug: string; fe
   const isRunning = runGaps.isPending || gapsData?.gaps_status === "running"
   const alreadyDone = gapsData?.gaps_status === "done"
   const isOverloaded = gapsData?.gaps_status === "overloaded"
+  const isError = gapsData?.gaps_status === "error"
+
+  // Enrichment gate: check all used dependencies are enriched
+  const unenrichedDeps = (() => {
+    if (!usedDependencies?.length || !projectDependencies?.length) return []
+    const norm = (n: string) => n.toLowerCase().replace(/[ -]/g, "_")
+    const enrichedSet = new Set(
+      projectDependencies
+        .filter(d => d.enrichment_status === "enriched")
+        .map(d => norm(d.name))
+    )
+    return usedDependencies.filter(d => {
+      const name = d.type === "external_api" && d.service_name && d.path
+        ? `${d.service_name}/${d.path.replace(/^\//, "")}`
+        : d.name
+      return !enrichedSet.has(norm(name))
+    })
+  })()
+  const depsReady = unenrichedDeps.length === 0
 
   const applyRunning = runApplyMut.isPending || applyData?.status === "running"
   const applyReady = applyData?.status === "done" && applyData.original && applyData.proposed
@@ -638,10 +662,13 @@ export function GapsView({ projectSlug, featureName }: { projectSlug: string; fe
               "text-[12px] font-medium px-3.5 py-1.5 rounded-md transition-colors",
               isRunning
                 ? "text-muted-foreground"
-                : "border border-emerald-500 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30",
+                : !depsReady
+                  ? "border border-border text-muted-foreground cursor-not-allowed opacity-60"
+                  : "border border-emerald-500 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30",
             )}
             onClick={() => runGaps.mutate()}
-            disabled={isRunning}
+            disabled={isRunning || !depsReady}
+            title={!depsReady ? `Не обогащены: ${unenrichedDeps.map(d => d.name).join(", ")}` : undefined}
           >
             {isRunning ? (
               <span className="flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Анализ<AnimatedDots /></span>
@@ -666,9 +693,19 @@ export function GapsView({ projectSlug, featureName }: { projectSlug: string; fe
         </div>
       )}
 
+      {/* Unenriched deps warning */}
+      {!depsReady && !alreadyDone && (
+        <p className="text-[13px] text-amber-600 dark:text-amber-400">
+          Не все зависимости обогащены: {unenrichedDeps.map(d => d.name).join(", ")}
+        </p>
+      )}
+
       {/* Error */}
       {isOverloaded && (
         <p className="text-[13px] text-amber-600 dark:text-amber-400">Claude API перегружен. Попробуйте через 5 минут.</p>
+      )}
+      {isError && (
+        <p className="text-[13px] text-destructive">Анализ завершился с ошибкой. Попробуйте запустить снова.</p>
       )}
       {runGaps.error && (
         <p className="text-[13px] text-destructive">{(runGaps.error as Error).message}</p>

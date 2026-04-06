@@ -16,7 +16,7 @@ import { BugsView } from "@/components/feature/BugsView"
 import { DependencyDetail } from "@/components/dependency/DependencyDetail"
 import { EnrichUploadZone } from "@/components/dependency/EnrichUploadZone"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
-import { Database, Globe, HardDrive, MessageSquare, ChevronRight, Layers, Trash2, Plus, Pencil, Check, X } from "lucide-react"
+import { Database, Globe, HardDrive, MessageSquare, ChevronRight, Layers, Trash2, Plus, Pencil, Check, X, FileJson2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { FeatureResponse, FeatureStatus, ProjectDependency, DependencyStatus, DependencyType, CreateDependencyRequest, StructuredBusinessLogic } from "@/types/api"
 
@@ -273,6 +273,17 @@ export default function ProjectPage() {
               isDepActive={isDepActive}
               onDepClick={handleDepClick}
             />
+
+            {/* Swagger — coming soon */}
+            <div className="flex items-center gap-2 px-1">
+              <FileJson2 className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Swagger
+              </span>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 leading-4 text-muted-foreground">
+                coming soon
+              </Badge>
+            </div>
 
           </div>
         </ScrollArea>
@@ -591,7 +602,12 @@ function ProjectContentArea({
             }
           </TabsContent>
           <TabsContent value="gaps">
-            <GapsView projectSlug={projectSlug} featureName={selectedFeature.name} />
+            <GapsView
+              projectSlug={projectSlug}
+              featureName={selectedFeature.name}
+              usedDependencies={selectedFeature.structured_logic?.used_dependencies}
+              projectDependencies={projectDependencies}
+            />
           </TabsContent>
           <TabsContent value="tests">
             <TestCasesView

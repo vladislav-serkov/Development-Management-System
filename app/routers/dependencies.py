@@ -94,7 +94,7 @@ async def create_dependency(project_slug: str, req: CreateDependencyRequest):
     return _dep_to_response(dep, project_slug)
 
 
-@router.patch("/{dep_name}", response_model=DependencyResponse)
+@router.patch("/{dep_name:path}", response_model=DependencyResponse)
 async def patch_dependency(
     project_slug: str,
     dep_name: str,
@@ -137,7 +137,7 @@ async def patch_dependency(
     return _dep_to_response(dep, project_slug)
 
 
-@router.delete("/{dep_name}")
+@router.delete("/{dep_name:path}")
 async def delete_dependency(
     project_slug: str,
     dep_name: str,

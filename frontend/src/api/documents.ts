@@ -87,7 +87,7 @@ export async function patchFeature(
   featureName: string,
   patch: FeaturePatchRequest
 ): Promise<FeatureResponse> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/features/${encodeURIComponent(featureName)}`, {
+  const res = await fetch(`${API_BASE}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -97,7 +97,7 @@ export async function patchFeature(
 }
 
 export async function deleteFeature(projectSlug: string, featureName: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/features/${encodeURIComponent(featureName)}`, {
+  const res = await fetch(`${API_BASE}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}`, {
     method: "DELETE",
   })
   if (!res.ok) throw new Error(`Failed to delete feature: ${res.status}`)
