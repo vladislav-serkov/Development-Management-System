@@ -153,8 +153,19 @@ def _strip_fields(raw_bytes: bytes, fields: set[str], nested: bool = False) -> b
 def create_project_zip(project_dir: Path) -> bytes:
     """Create an in-memory zip with .context/ as root, excluding documents/.
 
+    Directory structure in zip:
+        .context/
+            project.json
+            features/{name}/feature.json
+            gaps/{name}.json
+            test-cases/{name}.json
+            bugs/{name}.json
+            dependencies/*.json
+
     Feature and dependency JSONs have UI-only metadata fields stripped.
     Feature _json suffix keys are renamed to canonical names.
+    Old feature-nested analysis files (gaps.json, test-cases.json, bugs.json)
+    are excluded as they should have been migrated to top-level directories.
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -166,6 +177,13 @@ def create_project_zip(project_dir: Path) -> bytes:
                     continue
                 arcname = Path(".context") / rel
                 rel_parts = rel.parts
+                # Skip old feature-nested analysis files (stale, migrated to top-level)
+                if (
+                    len(rel_parts) == 3
+                    and rel_parts[0] == "features"
+                    and rel_parts[2] in ("gaps.json", "test-cases.json", "bugs.json")
+                ):
+                    continue
                 # Strip UI-only fields from feature JSONs (folder-based: features/{name}/feature.json)
                 if (
                     len(rel_parts) == 3
