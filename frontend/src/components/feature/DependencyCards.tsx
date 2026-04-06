@@ -25,9 +25,6 @@ function normalizeName(name: string) {
 }
 
 function effectiveName(dep: UsedDependency): string {
-  if (dep.type === "external_api" && dep.service_name && dep.path) {
-    return `${dep.service_name}/${dep.path.replace(/^\//, "")}`
-  }
   return dep.name
 }
 

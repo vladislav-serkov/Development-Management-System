@@ -447,10 +447,7 @@ function DiffRules({ oldRules, newRules }: { oldRules: string[]; newRules: strin
 }
 
 function DiffDeps({ oldDeps, newDeps }: { oldDeps: UsedDependency[]; newDeps: UsedDependency[] }) {
-  const depKey = (d: UsedDependency) =>
-    d.type === "external_api" && d.service_name && d.path
-      ? `${d.type}:${d.service_name}${d.path}`
-      : `${d.type}:${d.name}`
+  const depKey = (d: UsedDependency) => `${d.type}:${d.name}`
   const diffed = diffByKey(oldDeps, newDeps, depKey)
   return (
     <div className="space-y-1">
@@ -461,8 +458,8 @@ function DiffDeps({ oldDeps, newDeps }: { oldDeps: UsedDependency[]; newDeps: Us
               {d.type}
             </span>
             <span className="font-mono text-sm">
-              {d.type === "external_api" && d.service_name && d.path
-                ? `${d.method ?? ""} ${d.service_name}${d.path}`
+              {d.type === "external_api" && d.method
+                ? `${d.method} ${d.name}`
                 : d.name}
             </span>
             <span className="text-muted-foreground">— {d.description}</span>
