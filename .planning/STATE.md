@@ -29,7 +29,7 @@ Milestone: v1.1 Dependency Enrichment
 Phase: 5 of 5 (Dependency Enrichment)
 Plan: 3 of 3 in current phase
 Status: In progress
-Last activity: 2026-04-02
+Last activity: 2026-04-06 - Completed quick task 260406-dv0: Add Development Management System branding title to HomePage
 
 Progress: [███░░░░░░░] 33% (v1.1)
 
@@ -151,6 +151,7 @@ Key decisions from 260328-wcd:
 | 260401-tzo | Confluence-style inline edit mode for entire feature page: all 5 tabs + header in single edit session, Save via PATCH structured_logic_json | 2026-04-01 | 4fc425c | [260401-tzo-confluence-style-inline-edit-mode-for-fe](./quick/260401-tzo-confluence-style-inline-edit-mode-for-fe/) |
 | 260402-nuo | Refactor kafka_message from string to structured KafkaMessage(key, value): backend schemas, LLM prompts, frontend types, separate Copy buttons | 2026-04-02 | 3ace7cf | [260402-nuo-refactor-kafka-message-from-string-to-st](./quick/260402-nuo-refactor-kafka-message-from-string-to-st/) |
 | 260402-rky | BugsView: fix truncation, copy-for-jira, pretty XML/JSON | 2026-04-02 | 9342814 | [260402-rky-bugsview-fix-truncation-copy-for-jira-pr](./quick/260402-rky-bugsview-fix-truncation-copy-for-jira-pr/) |
+| 260406-dv0 | Add Development Management System branding title to HomePage | 2026-04-06 | 4d82a6a | [260406-dv0-add-development-management-system-brandi](./quick/260406-dv0-add-development-management-system-brandi/) |
 
 ## Session Continuity
 
