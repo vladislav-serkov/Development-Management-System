@@ -133,6 +133,19 @@ async def import_project_zip(file: UploadFile = File(...)):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(zf.read(member.filename))
 
+    # Inject 'name' into feature.json files that lack it (Context Collector format)
+    features_dir = target_dir / "features"
+    if features_dir.is_dir():
+        for feat_dir in features_dir.iterdir():
+            if not feat_dir.is_dir():
+                continue
+            feat_json = feat_dir / "feature.json"
+            if feat_json.exists():
+                fdata = json.loads(feat_json.read_text(encoding="utf-8"))
+                if "name" not in fdata:
+                    fdata["name"] = feat_dir.name
+                    feat_json.write_text(json.dumps(fdata, ensure_ascii=False, indent=2), encoding="utf-8")
+
     # Update project.json with new slug
     pjson_path = target_dir / "project.json"
     if pjson_path.exists():
