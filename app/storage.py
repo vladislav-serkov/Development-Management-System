@@ -8,9 +8,13 @@ Directory structure:
         features/
             {feature_name}/
                 feature.json      <- core feature data
-                gaps.json          <- { gaps: [], gaps_status, gaps_run_at }
-                test-cases.json    <- { test_cases: [], test_cases_status, test_cases_run_at }
-                bugs.json          <- { bugs: [] }
+                apply-preview.json <- temporary LLM diff preview
+        gaps/
+            {feature_name}.json   <- { gaps: [], gaps_status, gaps_run_at }
+        test-cases/
+            {feature_name}.json   <- { test_cases: [], test_cases_status, test_cases_run_at }
+        bugs/
+            {feature_name}.json   <- { bugs: [] }
         dependencies/
             db_tables.json
             external_apis.json
@@ -88,6 +92,15 @@ class ProjectStore:
     def _deps_dir(self, project_slug: str) -> Path:
         return self._project_dir(project_slug) / "dependencies"
 
+    def _gaps_dir(self, project_slug: str) -> Path:
+        return self._project_dir(project_slug) / "gaps"
+
+    def _test_cases_dir(self, project_slug: str) -> Path:
+        return self._project_dir(project_slug) / "test-cases"
+
+    def _bugs_dir(self, project_slug: str) -> Path:
+        return self._project_dir(project_slug) / "bugs"
+
     async def _read_json(self, path: Path) -> dict | list:
         async with aiofiles.open(path, "r", encoding="utf-8") as f:
             return json.loads(await f.read())
@@ -161,6 +174,9 @@ class ProjectStore:
         (project_dir / "documents").mkdir(exist_ok=True)
         (project_dir / "features").mkdir(exist_ok=True)
         (project_dir / "dependencies").mkdir(exist_ok=True)
+        (project_dir / "gaps").mkdir(exist_ok=True)
+        (project_dir / "test-cases").mkdir(exist_ok=True)
+        (project_dir / "bugs").mkdir(exist_ok=True)
 
         await self._write_json(self._project_json(slug), proj)
 
@@ -306,14 +322,15 @@ class ProjectStore:
         bugs = feature_to_write.pop("bugs", None)
 
         # Compute and store counts in feature.json
+        sanitized = self._sanitize_feature_name(name)
         if gaps is not None:
             feature_to_write["gap_count"] = len(gaps)
             feature_to_write["pending_gap_count"] = sum(
                 1 for g in gaps if g.get("status") == "pending"
             )
-            # Write gaps to gaps.json
+            # Write gaps to top-level gaps/ directory
             await self._write_json(
-                feature_dir / "gaps.json",
+                self._gaps_dir(project_slug) / f"{sanitized}.json",
                 {"gaps": gaps},
             )
         if test_cases is not None:
@@ -321,16 +338,16 @@ class ProjectStore:
             feature_to_write["pending_test_case_count"] = sum(
                 1 for t in test_cases if t.get("status") == "pending"
             )
-            # Write test_cases to test-cases.json
+            # Write test_cases to top-level test-cases/ directory
             await self._write_json(
-                feature_dir / "test-cases.json",
+                self._test_cases_dir(project_slug) / f"{sanitized}.json",
                 {"test_cases": test_cases},
             )
         if bugs is not None:
             feature_to_write["bug_count"] = len(bugs)
-            # Write bugs to bugs.json
+            # Write bugs to top-level bugs/ directory
             await self._write_json(
-                feature_dir / "bugs.json",
+                self._bugs_dir(project_slug) / f"{sanitized}.json",
                 {"bugs": bugs},
             )
 
@@ -365,11 +382,12 @@ class ProjectStore:
 
         updates_to_apply = dict(updates)
 
-        # Handle gaps update: redirect to gaps.json
+        # Handle gaps update: redirect to top-level gaps/ directory
+        sanitized = self._sanitize_feature_name(feature_name)
         if "gaps" in updates_to_apply:
             gaps = updates_to_apply.pop("gaps")
             await self._write_json(
-                feature_dir / "gaps.json",
+                self._gaps_dir(project_slug) / f"{sanitized}.json",
                 {"gaps": gaps},
             )
             # Update counts in feature.json
@@ -378,11 +396,11 @@ class ProjectStore:
                 1 for g in gaps if g.get("status") == "pending"
             )
 
-        # Handle test_cases update: redirect to test-cases.json
+        # Handle test_cases update: redirect to top-level test-cases/ directory
         if "test_cases" in updates_to_apply:
             test_cases = updates_to_apply.pop("test_cases")
             await self._write_json(
-                feature_dir / "test-cases.json",
+                self._test_cases_dir(project_slug) / f"{sanitized}.json",
                 {"test_cases": test_cases},
             )
             # Update counts in feature.json
@@ -391,11 +409,11 @@ class ProjectStore:
                 1 for t in test_cases if t.get("status") == "pending"
             )
 
-        # Handle bugs update: redirect to bugs.json
+        # Handle bugs update: redirect to top-level bugs/ directory
         if "bugs" in updates_to_apply:
             bugs = updates_to_apply.pop("bugs")
             await self._write_json(
-                feature_dir / "bugs.json",
+                self._bugs_dir(project_slug) / f"{sanitized}.json",
                 {"bugs": bugs},
             )
             # Update count in feature.json
@@ -410,19 +428,38 @@ class ProjectStore:
     # ------------------------------------------------------------------
 
     async def get_gaps(self, project_slug: str, feature_name: str) -> list[dict]:
-        """Read gaps array from features/{name}/gaps.json.
-        Falls back to reading from flat feature.json if gaps.json missing.
+        """Read gaps array from gaps/{name}.json (top-level).
+        Falls back to old features/{name}/gaps.json with migration.
+        Falls back to flat feature.json for oldest format.
         """
-        gaps_path = self._feature_dir(project_slug, feature_name) / "gaps.json"
-        if gaps_path.exists():
+        sanitized = self._sanitize_feature_name(feature_name)
+
+        # Primary: new top-level path
+        new_path = self._gaps_dir(project_slug) / f"{sanitized}.json"
+        if new_path.exists():
             try:
-                data = await self._read_json(gaps_path)
+                data = await self._read_json(new_path)
                 return data.get("gaps", [])
             except Exception as exc:
-                logger.warning("Could not read gaps.json for %s: %s", feature_name, exc)
+                logger.warning("Could not read gaps/%s.json: %s", sanitized, exc)
                 return []
 
-        # Fallback: old flat feature.json
+        # Fallback 1: old feature-nested gaps.json — migrate on read
+        old_path = self._feature_dir(project_slug, feature_name) / "gaps.json"
+        if old_path.exists():
+            try:
+                data = await self._read_json(old_path)
+                gaps = data.get("gaps", [])
+                # Migrate: copy to new location, delete old
+                await self._write_json(new_path, data)
+                old_path.unlink()
+                logger.info("Migrated gaps for %s to top-level gaps/ dir", feature_name)
+                return gaps
+            except Exception as exc:
+                logger.warning("Could not read/migrate old gaps.json for %s: %s", feature_name, exc)
+                return []
+
+        # Fallback 2: old flat feature.json
         flat_path = self._features_dir(project_slug) / f"{feature_name}.json"
         if flat_path.exists():
             try:
@@ -433,12 +470,11 @@ class ProjectStore:
         return []
 
     async def save_gaps(self, project_slug: str, feature_name: str, gaps: list[dict]) -> None:
-        """Write gaps to features/{name}/gaps.json. Also update gap counts in feature.json."""
-        feature_dir = self._feature_dir(project_slug, feature_name)
-        feature_dir.mkdir(parents=True, exist_ok=True)
+        """Write gaps to gaps/{name}.json (top-level). Also update gap counts in feature.json."""
+        sanitized = self._sanitize_feature_name(feature_name)
 
         await self._write_json(
-            feature_dir / "gaps.json",
+            self._gaps_dir(project_slug) / f"{sanitized}.json",
             {"gaps": gaps},
         )
 
@@ -446,7 +482,7 @@ class ProjectStore:
         gap_count = len(gaps)
         pending_gap_count = sum(1 for g in gaps if g.get("status") == "pending")
 
-        feature_json_path = feature_dir / "feature.json"
+        feature_json_path = self._feature_dir(project_slug, feature_name) / "feature.json"
         if feature_json_path.exists():
             feature = await self._read_json(feature_json_path)
             feature["gap_count"] = gap_count
@@ -481,19 +517,38 @@ class ProjectStore:
     # ------------------------------------------------------------------
 
     async def get_test_cases(self, project_slug: str, feature_name: str) -> list[dict]:
-        """Read test_cases array from features/{name}/test-cases.json.
-        Falls back to reading from flat feature.json if test-cases.json missing.
+        """Read test_cases array from test-cases/{name}.json (top-level).
+        Falls back to old features/{name}/test-cases.json with migration.
+        Falls back to flat feature.json for oldest format.
         """
-        tc_path = self._feature_dir(project_slug, feature_name) / "test-cases.json"
-        if tc_path.exists():
+        sanitized = self._sanitize_feature_name(feature_name)
+
+        # Primary: new top-level path
+        new_path = self._test_cases_dir(project_slug) / f"{sanitized}.json"
+        if new_path.exists():
             try:
-                data = await self._read_json(tc_path)
+                data = await self._read_json(new_path)
                 return data.get("test_cases", [])
             except Exception as exc:
-                logger.warning("Could not read test-cases.json for %s: %s", feature_name, exc)
+                logger.warning("Could not read test-cases/%s.json: %s", sanitized, exc)
                 return []
 
-        # Fallback: old flat feature.json
+        # Fallback 1: old feature-nested test-cases.json — migrate on read
+        old_path = self._feature_dir(project_slug, feature_name) / "test-cases.json"
+        if old_path.exists():
+            try:
+                data = await self._read_json(old_path)
+                test_cases = data.get("test_cases", [])
+                # Migrate: copy to new location, delete old
+                await self._write_json(new_path, data)
+                old_path.unlink()
+                logger.info("Migrated test-cases for %s to top-level test-cases/ dir", feature_name)
+                return test_cases
+            except Exception as exc:
+                logger.warning("Could not read/migrate old test-cases.json for %s: %s", feature_name, exc)
+                return []
+
+        # Fallback 2: old flat feature.json
         flat_path = self._features_dir(project_slug) / f"{feature_name}.json"
         if flat_path.exists():
             try:
@@ -504,12 +559,11 @@ class ProjectStore:
         return []
 
     async def save_test_cases(self, project_slug: str, feature_name: str, test_cases: list[dict]) -> None:
-        """Write test_cases to features/{name}/test-cases.json. Also update counts in feature.json."""
-        feature_dir = self._feature_dir(project_slug, feature_name)
-        feature_dir.mkdir(parents=True, exist_ok=True)
+        """Write test_cases to test-cases/{name}.json (top-level). Also update counts in feature.json."""
+        sanitized = self._sanitize_feature_name(feature_name)
 
         await self._write_json(
-            feature_dir / "test-cases.json",
+            self._test_cases_dir(project_slug) / f"{sanitized}.json",
             {"test_cases": test_cases},
         )
 
@@ -517,7 +571,7 @@ class ProjectStore:
         test_case_count = len(test_cases)
         pending_test_case_count = sum(1 for t in test_cases if t.get("status") == "pending")
 
-        feature_json_path = feature_dir / "feature.json"
+        feature_json_path = self._feature_dir(project_slug, feature_name) / "feature.json"
         if feature_json_path.exists():
             feature = await self._read_json(feature_json_path)
             feature["test_case_count"] = test_case_count
@@ -529,31 +583,51 @@ class ProjectStore:
     # ------------------------------------------------------------------
 
     async def get_bugs(self, project_slug: str, feature_name: str) -> list[dict]:
-        """Read bugs array from features/{name}/bugs.json."""
-        bugs_path = self._feature_dir(project_slug, feature_name) / "bugs.json"
-        if bugs_path.exists():
+        """Read bugs array from bugs/{name}.json (top-level).
+        Falls back to old features/{name}/bugs.json with migration.
+        """
+        sanitized = self._sanitize_feature_name(feature_name)
+
+        # Primary: new top-level path
+        new_path = self._bugs_dir(project_slug) / f"{sanitized}.json"
+        if new_path.exists():
             try:
-                data = await self._read_json(bugs_path)
+                data = await self._read_json(new_path)
                 return data.get("bugs", [])
             except Exception as exc:
-                logger.warning("Could not read bugs.json for %s: %s", feature_name, exc)
+                logger.warning("Could not read bugs/%s.json: %s", sanitized, exc)
                 return []
+
+        # Fallback: old feature-nested bugs.json — migrate on read
+        old_path = self._feature_dir(project_slug, feature_name) / "bugs.json"
+        if old_path.exists():
+            try:
+                data = await self._read_json(old_path)
+                bugs = data.get("bugs", [])
+                # Migrate: copy to new location, delete old
+                await self._write_json(new_path, data)
+                old_path.unlink()
+                logger.info("Migrated bugs for %s to top-level bugs/ dir", feature_name)
+                return bugs
+            except Exception as exc:
+                logger.warning("Could not read/migrate old bugs.json for %s: %s", feature_name, exc)
+                return []
+
         return []
 
     async def save_bugs(self, project_slug: str, feature_name: str, bugs: list[dict]) -> None:
-        """Write bugs to features/{name}/bugs.json. Also update bug_count in feature.json."""
-        feature_dir = self._feature_dir(project_slug, feature_name)
-        feature_dir.mkdir(parents=True, exist_ok=True)
+        """Write bugs to bugs/{name}.json (top-level). Also update bug_count in feature.json."""
+        sanitized = self._sanitize_feature_name(feature_name)
 
         await self._write_json(
-            feature_dir / "bugs.json",
+            self._bugs_dir(project_slug) / f"{sanitized}.json",
             {"bugs": bugs},
         )
 
         # Update count in feature.json
         bug_count = len(bugs)
 
-        feature_json_path = feature_dir / "feature.json"
+        feature_json_path = self._feature_dir(project_slug, feature_name) / "feature.json"
         if feature_json_path.exists():
             feature = await self._read_json(feature_json_path)
             feature["bug_count"] = bug_count
@@ -628,25 +702,37 @@ class ProjectStore:
         return data.get(name)
 
     async def delete_feature(self, project_slug: str, feature_name: str) -> bool:
-        """Delete entire feature directory (cascades gaps, test-cases, bugs, apply-preview).
+        """Delete feature directory and associated gaps/test-cases/bugs files.
         Falls back to flat file removal for backward compatibility.
         Returns True if deleted, False if not found.
         """
+        sanitized = self._sanitize_feature_name(feature_name)
+        found = False
+
         feature_dir = self._feature_dir(project_slug, feature_name)
         if feature_dir.exists():
             shutil.rmtree(feature_dir)
-            return True
+            found = True
+        else:
+            # Fallback: flat file format
+            flat_path = self._features_dir(project_slug) / f"{feature_name}.json"
+            if flat_path.exists():
+                flat_path.unlink()
+                found = True
 
-        # Fallback: flat file format
-        flat_path = self._features_dir(project_slug) / f"{feature_name}.json"
-        if flat_path.exists():
-            flat_path.unlink()
-            return True
+        # Clean up top-level analysis files
+        for analysis_path in [
+            self._gaps_dir(project_slug) / f"{sanitized}.json",
+            self._test_cases_dir(project_slug) / f"{sanitized}.json",
+            self._bugs_dir(project_slug) / f"{sanitized}.json",
+        ]:
+            if analysis_path.exists():
+                analysis_path.unlink()
 
-        return False
+        return found
 
     async def rename_feature(self, project_slug: str, old_name: str, new_name: str) -> dict | None:
-        """Rename feature directory and update name field in feature.json.
+        """Rename feature directory and associated analysis files.
         Returns updated feature dict or None if old_name not found.
         Raises ValueError if new_name already exists.
         """
@@ -659,6 +745,18 @@ class ProjectStore:
             raise ValueError(f"Feature with name '{new_name}' already exists")
 
         old_dir.rename(new_dir)
+
+        # Rename analysis files in top-level directories
+        old_sanitized = self._sanitize_feature_name(old_name)
+        new_sanitized = self._sanitize_feature_name(new_name)
+        for analysis_dir in [
+            self._gaps_dir(project_slug),
+            self._test_cases_dir(project_slug),
+            self._bugs_dir(project_slug),
+        ]:
+            old_file = analysis_dir / f"{old_sanitized}.json"
+            if old_file.exists():
+                old_file.rename(analysis_dir / f"{new_sanitized}.json")
 
         # Update name field in feature.json
         feature_json_path = new_dir / "feature.json"
