@@ -56,9 +56,9 @@ export default function HomePage() {
     <div className="container mx-auto py-8 px-4">
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Extract Agent</h1>
+          <h1 className="text-3xl font-bold">Development Management System</h1>
           <p className="text-muted-foreground mt-1">
-            Extract structured context from PDF specs for coding agents
+            AI-powered platform for extracting specifications and managing development workflows
           </p>
         </div>
         <div className="flex items-center gap-2">
