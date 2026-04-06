@@ -268,6 +268,8 @@ class ProjectStore:
                 continue
             try:
                 feat = await self._read_json(feature_json)
+                if "name" not in feat:
+                    feat["name"] = entry.name
                 features.append(feat)
                 seen_names.add(entry.name)
             except Exception as exc:
@@ -294,6 +296,8 @@ class ProjectStore:
         folder_path = self._feature_dir(project_slug, feature_name) / "feature.json"
         if folder_path.exists():
             feat = await self._read_json(folder_path)
+            if "name" not in feat:
+                feat["name"] = feature_name
             # Strip any residual gaps/test_cases if present
             feat.pop("gaps", None)
             feat.pop("test_cases", None)
