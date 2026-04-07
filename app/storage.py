@@ -42,6 +42,36 @@ DEP_TYPE_FILE = {
 }
 
 AGENT_NAMES = ["extraction", "gaps", "test_cases", "bugs", "enrichment"]
+
+# Keys that indicate the dep dict already contains enrichment data (Context Collector format)
+_ENRICHMENT_MARKERS = {
+    "db_table": "columns",
+    "external_api": "endpoints",
+    "cache": "key_patterns",
+    "kafka_topic": "message_schema",
+}
+
+
+def _normalize_dep(dep_dict: dict, key: str, dep_type: str) -> dict:
+    """Normalize a dependency dict: inject name/dep_type, wrap inline enrichment."""
+    dep_dict.setdefault("name", key)
+    dep_dict.setdefault("dep_type", dep_type)
+
+    # If enrichment data is inline (Context Collector format), wrap it
+    marker = _ENRICHMENT_MARKERS.get(dep_type)
+    if marker and marker in dep_dict and "enriched_data" not in dep_dict:
+        # Separate meta fields from enrichment payload
+        meta_keys = {"name", "dep_type", "enrichment_status", "enriched_data",
+                      "source_pdf_name", "enriched_at", "created_at", "updated_at",
+                      "method", "service_name", "path"}
+        enriched = {k: v for k, v in dep_dict.items() if k not in meta_keys}
+        for k in list(dep_dict.keys()):
+            if k not in meta_keys:
+                del dep_dict[k]
+        dep_dict["enriched_data"] = enriched
+        dep_dict.setdefault("enrichment_status", "enriched")
+
+    return dep_dict
 EMPTY_RULES = {name: "" for name in AGENT_NAMES}
 
 
@@ -645,8 +675,11 @@ class ProjectStore:
             if path.exists():
                 try:
                     data = await self._read_json(path)
-                    # data is a dict {name: dep_dict}
-                    result[dep_type] = list(data.values())
+                    # data is a dict {name: dep_dict}; normalize for app format
+                    result[dep_type] = [
+                        _normalize_dep(dep_dict, key, dep_type)
+                        for key, dep_dict in data.items()
+                    ]
                 except Exception as exc:
                     logger.warning("Could not read deps file %s: %s", path, exc)
         return result
@@ -699,7 +732,10 @@ class ProjectStore:
         if not path.exists():
             return None
         data = await self._read_json(path)
-        return data.get(name)
+        dep = data.get(name)
+        if dep is not None:
+            dep = _normalize_dep(dep, name, dep_type)
+        return dep
 
     async def delete_feature(self, project_slug: str, feature_name: str) -> bool:
         """Delete feature directory and associated gaps/test-cases/bugs files.
@@ -861,6 +897,7 @@ class ProjectStore:
         if name not in data:
             return None
         data[name].update(updates)
+        data[name] = _normalize_dep(data[name], name, dep_type)
         await self._write_json(path, data)
         return data[name]
 
