@@ -21,6 +21,11 @@ const SEVERITY_LABEL: Record<BugSeverity, string> = {
 }
 
 type BugStatusFilter = "all" | "open" | "fixed" | "verified"
+type ParsedKafkaArtifact = {
+  topic?: string
+  key?: string
+  value?: string
+}
 
 function RichText({ text }: { text: string }) {
   const parts = text.split(/(`[^`]+`)/)
@@ -80,6 +85,11 @@ function formatValue(raw: string): string {
   return raw
 }
 
+function stringifyKafkaPart(value: unknown): string | undefined {
+  if (value == null) return undefined
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2)
+}
+
 /** Format bug report as Jira wiki markup plain text. */
 function formatBugForJira(bug: BugItem): string {
   const lines: string[] = []
@@ -104,14 +114,14 @@ function formatBugForJira(bug: BugItem): string {
       lines.push(`   {code}`)
     }
     if (step.kafka_message) {
-      let kafkaText = step.kafka_message
-      try {
-        const parsed = JSON.parse(step.kafka_message)
-        if (parsed && typeof parsed === "object" && "key" in parsed && "value" in parsed) {
-          const valStr = typeof parsed.value === "string" ? parsed.value : JSON.stringify(parsed.value, null, 2)
-          kafkaText = `key: ${parsed.key}\nvalue: ${formatValue(valStr)}`
-        }
-      } catch { /* use raw */ }
+      const kafka = parseKafkaArtifact(step.kafka_message)
+      const kafkaText = kafka
+        ? [
+          kafka.topic ? `topic: ${kafka.topic}` : null,
+          kafka.key ? `key: ${kafka.key}` : null,
+          kafka.value ? `value:\n${kafka.value}` : null,
+        ].filter(Boolean).join("\n\n")
+        : step.kafka_message
       lines.push(`   {code}`)
       lines.push(`   ${kafkaText}`)
       lines.push(`   {code}`)
@@ -303,30 +313,16 @@ function BugCard({
                                     const kafka = parseKafkaArtifact(step.kafka_message)
                                     if (kafka) {
                                       return (
-                                        <>
-                                          <BugArtifact
-                                            label="Kafka key"
-                                            value={kafka.key}
-                                            copied={copiedField === `${si}-message-key`}
-                                            onCopy={(e) => {
-                                              e.stopPropagation()
-                                              navigator.clipboard.writeText(kafka.key)
-                                              setCopiedField(`${si}-message-key`)
-                                              setTimeout(() => setCopiedField(null), 1500)
-                                            }}
-                                          />
-                                          <BugArtifact
-                                            label="Kafka value"
-                                            value={kafka.value}
-                                            copied={copiedField === `${si}-message-value`}
-                                            onCopy={(e) => {
-                                              e.stopPropagation()
-                                              navigator.clipboard.writeText(kafka.value)
-                                              setCopiedField(`${si}-message-value`)
-                                              setTimeout(() => setCopiedField(null), 1500)
-                                            }}
-                                          />
-                                        </>
+                                        <BugKafkaArtifact
+                                          kafka={kafka}
+                                          copiedField={copiedField}
+                                          fieldPrefix={`${si}-message`}
+                                          onCopyField={(field, value) => {
+                                            navigator.clipboard.writeText(value)
+                                            setCopiedField(`${si}-${field}`)
+                                            setTimeout(() => setCopiedField(null), 1500)
+                                          }}
+                                        />
                                       )
                                     }
 
@@ -422,35 +418,57 @@ function BugCard({
 }
 
 function formatKafkaArtifact(raw: string): string {
-  try {
-    const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === "object" && "key" in parsed && "value" in parsed) {
-      const value = typeof parsed.value === "string"
-        ? formatValue(parsed.value)
-        : JSON.stringify(parsed.value, null, 2)
-      return `key: ${typeof parsed.key === "string" ? parsed.key : JSON.stringify(parsed.key)}\n\n${value}`
-    }
-  } catch {
-    return formatValue(raw)
-  }
+  const kafka = parseKafkaArtifact(raw)
+  if (!kafka) return formatValue(raw)
 
-  return formatValue(raw)
+  return formatParsedKafkaArtifact(kafka)
 }
 
-function parseKafkaArtifact(raw: string): { key: string; value: string } | null {
+function formatParsedKafkaArtifact(kafka: ParsedKafkaArtifact): string {
+  return [
+    kafka.topic ? `topic: ${kafka.topic}` : null,
+    kafka.key ? `key: ${kafka.key}` : null,
+    kafka.value ? `value:\n${kafka.value}` : null,
+  ].filter(Boolean).join("\n\n")
+}
+
+function parseKafkaArtifact(raw: string): ParsedKafkaArtifact | null {
   try {
     const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === "object" && "key" in parsed && "value" in parsed) {
-      const key = typeof parsed.key === "string" ? parsed.key : JSON.stringify(parsed.key)
-      const value = typeof parsed.value === "string"
-        ? formatValue(parsed.value)
-        : JSON.stringify(parsed.value, null, 2)
-      return { key, value }
+    if (parsed && typeof parsed === "object") {
+      const topic = "topic" in parsed ? stringifyKafkaPart(parsed.topic) : undefined
+      const key = "key" in parsed ? stringifyKafkaPart(parsed.key) : undefined
+      const value = "value" in parsed
+        ? formatValue(typeof parsed.value === "string" ? parsed.value : JSON.stringify(parsed.value, null, 2))
+        : undefined
+
+      if (topic || key || value) {
+        return { topic, key, value }
+      }
     }
   } catch {
+    const topicMatch = raw.match(/(?:^|\n)\s*topic:\s*([^\n]+)/i)
+    const keyMatch = raw.match(/(?:^|\n)\s*key:\s*([^\n]+)/i)
+    const valueMatch = raw.match(/(?:^|\n)\s*value:\s*([\s\S]*)$/i)
+
+    if (topicMatch || keyMatch || valueMatch) {
+      return {
+        topic: topicMatch?.[1]?.trim(),
+        key: keyMatch?.[1]?.trim(),
+        value: valueMatch?.[1] ? formatValue(valueMatch[1].trim()) : undefined,
+      }
+    }
+
     return null
   }
 
+  return null
+}
+
+function getPayloadBadge(value: string): string | null {
+  const trimmed = value.trim()
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "JSON"
+  if (trimmed.startsWith("<")) return "XML"
   return null
 }
 
@@ -480,29 +498,86 @@ function BugSurface({
 function BugArtifact({
   label,
   value,
+  className,
   copied,
   onCopy,
 }: {
   label: string
   value: string
+  className?: string
   copied: boolean
   onCopy: (e: React.MouseEvent) => void
 }) {
   return (
-    <div className="group relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
-      <div className="border-b border-slate-800 px-3 py-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
+    <div className={cn("group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50/90 dark:border-slate-800 dark:bg-slate-900/70", className)}>
+      <div className="border-b border-slate-200 px-3 py-2 dark:border-slate-800">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</span>
       </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 py-3 text-[12px] font-mono leading-6 text-slate-100">
+      <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap break-words px-3 py-3 text-[12px] font-mono leading-6 text-slate-900 dark:text-slate-100">
         <code>{value}</code>
       </pre>
       <button
         onClick={onCopy}
-        className="absolute right-2 top-2 rounded bg-slate-700 p-1.5 text-slate-300 transition-opacity hover:bg-slate-600 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+        className="absolute right-2 top-2 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
         title="Копировать"
       >
-        {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
       </button>
+    </div>
+  )
+}
+
+function BugKafkaArtifact({
+  kafka,
+  copiedField,
+  fieldPrefix,
+  onCopyField,
+}: {
+  kafka: ParsedKafkaArtifact
+  copiedField: string | null
+  fieldPrefix: string
+  onCopyField: (field: string, value: string) => void
+}) {
+  const payloadBadge = kafka.value ? getPayloadBadge(kafka.value) : null
+
+  return (
+    <div className="flex flex-col items-start gap-2.5 lg:col-span-2 xl:col-span-3">
+      {kafka.topic && (
+        <BugArtifact
+          label="Topic"
+          value={kafka.topic}
+          className="w-full max-w-[44rem]"
+          copied={copiedField === `${fieldPrefix}-topic`}
+          onCopy={(e) => {
+            e.stopPropagation()
+            onCopyField("message-topic", kafka.topic!)
+          }}
+        />
+      )}
+      {kafka.key && (
+        <BugArtifact
+          label="Key"
+          value={kafka.key}
+          className="w-full max-w-[44rem]"
+          copied={copiedField === `${fieldPrefix}-key`}
+          onCopy={(e) => {
+            e.stopPropagation()
+            onCopyField("message-key", kafka.key!)
+          }}
+        />
+      )}
+      {kafka.value && (
+        <BugArtifact
+          label={payloadBadge ? `Payload ${payloadBadge}` : "Payload"}
+          value={kafka.value}
+          className="w-full max-w-[44rem]"
+          copied={copiedField === `${fieldPrefix}-value`}
+          onCopy={(e) => {
+            e.stopPropagation()
+            onCopyField("message-value", kafka.value!)
+          }}
+        />
+      )}
     </div>
   )
 }
