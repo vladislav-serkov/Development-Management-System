@@ -6,4 +6,4 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
 # Source code mounted as volume — no COPY needed
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+CMD ["sh", "-c", "npm ci && npm run dev -- --host 0.0.0.0"]

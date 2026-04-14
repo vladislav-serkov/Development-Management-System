@@ -30,10 +30,10 @@ export function MarkdownEditor({ value, onSave, onCancel, isSaving }: MarkdownEd
       </div>
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={isSaving}>
-          Cancel
+          Отмена
         </Button>
         <Button size="sm" onClick={() => onSave(raw)} disabled={isSaving}>
-          {isSaving ? "Saving..." : "Save"}
+          {isSaving ? "Сохраняем..." : "Сохранить"}
         </Button>
       </div>
     </div>

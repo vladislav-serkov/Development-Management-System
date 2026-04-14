@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { useUIStore } from "@/stores/uiStore"
+import { useNavigate } from "react-router-dom"
+import { projectPath } from "@/lib/routes"
 
 interface ProjectCardProject {
   slug: string
@@ -26,12 +27,12 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
 }
 
 export function ProjectCard({ project }: ProjectCardProps) {
-  const goToProject = useUIStore((s) => s.goToProject)
+  const navigate = useNavigate()
 
   return (
     <Card
       className="cursor-pointer hover:shadow-md transition-shadow"
-      onClick={() => goToProject(project.slug)}
+      onClick={() => navigate(projectPath(project.slug))}
     >
       <CardHeader>
         <div className="flex items-start justify-between gap-2">

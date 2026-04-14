@@ -38,8 +38,6 @@ export function useDeleteDependency(projectSlug: string) {
     mutationFn: ({ depName, depType }: { depName: string; depType: string }) =>
       deleteDependency(projectSlug, depName, depType),
     onSuccess: () => {
-      useUIStore.getState().setSelectedDependency(null)
-      useUIStore.getState().setActiveSidebarItem(null)
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "dependencies"] })
       qc.invalidateQueries({ queryKey: ["projects"] })
     },

@@ -29,17 +29,17 @@ export function UploadZone({ onUpload, isUploading }: UploadZoneProps) {
         isUploading && "opacity-50 cursor-not-allowed"
       )}
     >
-      <input {...getInputProps()} />
+      <input {...getInputProps({ className: "hidden" })} />
       {isUploading ? (
-        <p className="text-sm text-muted-foreground">Uploading...</p>
+        <p className="text-sm text-muted-foreground">Загрузка PDF...</p>
       ) : isDragActive ? (
-        <p className="text-sm text-primary">Drop PDF here</p>
+        <p className="text-sm text-primary">Отпустите PDF, чтобы загрузить</p>
       ) : (
         <div className="space-y-1">
           <p className="text-sm text-muted-foreground">
-            Drag PDF here or click to upload
+            Перетащите PDF сюда или нажмите для загрузки
           </p>
-          <p className="text-xs text-muted-foreground/60">PDF files only</p>
+          <p className="text-xs text-muted-foreground/60">Поддерживаются только PDF</p>
         </div>
       )}
     </div>

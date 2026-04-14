@@ -16,7 +16,7 @@ export function ExportDialog({ projectSlug }: ExportDialogProps) {
       onClick={() => exportMutation.mutate()}
       disabled={exportMutation.isPending}
     >
-      {exportMutation.isPending ? "Downloading..." : "Download .zip"}
+      {exportMutation.isPending ? "Скачивание..." : "Скачать .zip"}
     </Button>
   )
 }

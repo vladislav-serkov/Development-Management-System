@@ -8,6 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { X, Plus } from "lucide-react"
+import { Fragment } from "react"
 import type { ParameterField } from "@/types/api"
 
 interface ParametersTableProps {
@@ -59,8 +60,8 @@ function EditableParameterRows({
   return (
     <>
       {parameters.map((param, i) => (
-        <>
-          <TableRow key={`edit-${depth}-${i}`}>
+        <Fragment key={`edit-${depth}-${i}-${param.name || "empty"}`}>
+          <TableRow>
             <TableCell style={{ paddingLeft: `${depth * 24 + 12}px` }}>
               <input
                 className="font-mono text-sm bg-transparent border-b border-border outline-none w-full"
@@ -131,14 +132,14 @@ function EditableParameterRows({
               <div className="flex items-center gap-1">
                 <button
                   className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-                  title="Add child"
+                  title="Добавить дочерний параметр"
                   onClick={() => addChild(i)}
                 >
                   <Plus className="h-3 w-3" />
                 </button>
                 <button
                   className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                  title="Delete row"
+                  title="Удалить строку"
                   onClick={() => deleteParam(i)}
                 >
                   <X className="h-3 w-3" />
@@ -156,7 +157,7 @@ function EditableParameterRows({
               }
             />
           )}
-        </>
+        </Fragment>
       ))}
     </>
   )
@@ -174,8 +175,8 @@ function ParameterRows({
   return (
     <>
       {parameters.map((param, i) => (
-        <>
-          <TableRow key={`${depth}-${i}`}>
+        <Fragment key={`${depth}-${i}-${param.name || "empty"}`}>
+          <TableRow>
             <TableCell style={{ paddingLeft: `${depth * 24 + 12}px` }}>
               <span className="font-mono text-sm">{param.name}</span>
             </TableCell>
@@ -220,7 +221,7 @@ function ParameterRows({
               showParamIn={showParamIn}
             />
           )}
-        </>
+        </Fragment>
       ))}
     </>
   )
@@ -233,21 +234,26 @@ export function ParametersTable({
   onChange,
 }: ParametersTableProps) {
   if (!isEditing && parameters.length === 0) {
-    return <p className="text-sm text-muted-foreground">Нет параметров</p>
+    return (
+      <div className="rounded-xl border border-dashed px-4 py-8 text-center">
+        <p className="text-sm font-medium">Параметры не заполнены</p>
+        <p className="mt-2 text-xs text-muted-foreground">Добавьте или извлеките параметры, чтобы увидеть структуру входных и выходных данных.</p>
+      </div>
+    )
   }
 
   return (
-    <div className="rounded-md border overflow-x-auto">
+    <div className="overflow-hidden rounded-xl border border-border/70 bg-background">
       <Table>
         <TableHeader>
-          <TableRow>
-            <TableHead>Имя</TableHead>
-            <TableHead>Тип</TableHead>
-            {showParamIn && <TableHead>In</TableHead>}
-            <TableHead>Обязательность</TableHead>
-            <TableHead>Описание</TableHead>
-            <TableHead>Валидация</TableHead>
-            {isEditing && <TableHead className="w-16"></TableHead>}
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Имя</TableHead>
+            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Тип</TableHead>
+            {showParamIn && <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Расположение</TableHead>}
+            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Обязательность</TableHead>
+            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Описание</TableHead>
+            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Валидация</TableHead>
+            {isEditing && <TableHead className="w-16 bg-muted/60"></TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>

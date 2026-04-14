@@ -6,7 +6,6 @@ import {
   patchFeature, deleteFeature, importProjectZip,
 } from "@/api/documents"
 import type { FeaturePatchRequest } from "@/types/api"
-import { useUIStore } from "@/stores/uiStore"
 
 // Projects
 export function useProjects() {
@@ -122,8 +121,6 @@ export function useDeleteFeature(projectSlug: string) {
   return useMutation({
     mutationFn: (featureName: string) => deleteFeature(projectSlug, featureName),
     onSuccess: () => {
-      useUIStore.getState().setSelectedFeature(null)
-      useUIStore.getState().setActiveSidebarItem(null)
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
       qc.invalidateQueries({ queryKey: ["projects"] })
     },

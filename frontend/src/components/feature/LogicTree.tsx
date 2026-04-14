@@ -64,7 +64,7 @@ function EditableMappingRows({
               <input
                 className="font-mono bg-transparent border-b border-border outline-none w-full text-xs"
                 value={field.element}
-                placeholder="element"
+                placeholder="элемент"
                 onChange={(e) => updateField(i, { ...field, element: e.target.value })}
               />
             </td>
@@ -72,7 +72,7 @@ function EditableMappingRows({
               <input
                 className="bg-transparent border-b border-border outline-none w-full text-xs"
                 value={field.field_type ?? ""}
-                placeholder="type"
+                placeholder="тип"
                 onChange={(e) => updateField(i, { ...field, field_type: e.target.value || null })}
               />
             </td>
@@ -97,7 +97,7 @@ function EditableMappingRows({
               <input
                 className="bg-transparent border-b border-border outline-none w-full text-xs"
                 value={field.description ?? ""}
-                placeholder="description"
+                placeholder="описание"
                 onChange={(e) => updateField(i, { ...field, description: e.target.value || null })}
               />
             </td>
@@ -105,7 +105,7 @@ function EditableMappingRows({
               <input
                 className="bg-transparent border-b border-border outline-none w-full text-xs"
                 value={field.source ?? ""}
-                placeholder="source"
+                placeholder="источник"
                 onChange={(e) => updateField(i, { ...field, source: e.target.value || null })}
               />
             </td>
@@ -113,14 +113,14 @@ function EditableMappingRows({
               <div className="flex items-center gap-0.5">
                 <button
                   className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-                  title="Add child"
+                  title="Добавить дочернее поле"
                   onClick={() => addChild(i)}
                 >
                   <Plus className="h-3 w-3" />
                 </button>
                 <button
                   className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                  title="Delete"
+                  title="Удалить"
                   onClick={() => deleteField(i)}
                 >
                   <X className="h-3 w-3" />
@@ -152,7 +152,7 @@ function MappingRow({ field, depth, showCardinality }: { field: MessageField; de
           {field.element}{field.is_collection && <span className="text-muted-foreground">[]</span>}
         </td>
         <td className="px-2 py-1 text-muted-foreground">{field.field_type ?? "-"}</td>
-        <td className="px-2 py-1">{field.required ? "Yes" : "No"}</td>
+        <td className="px-2 py-1">{field.required ? "Да" : "Нет"}</td>
         {showCardinality && <td className="px-2 py-1 text-muted-foreground font-mono">{field.cardinality ?? "–"}</td>}
         <td className="px-2 py-1 text-muted-foreground">{field.description ?? "-"}</td>
         <td className="px-2 py-1 text-muted-foreground">{field.source ?? "-"}</td>
@@ -212,19 +212,19 @@ function EditableLogicStepNode({
           value={step.text}
           rows={2}
           onChange={(e) => onUpdate({ ...step, text: e.target.value })}
-          placeholder="Step description..."
+          placeholder="Описание шага..."
         />
         <div className="flex items-center gap-1 shrink-0 pt-1">
           <button
             className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors text-xs"
-            title="Add sub-step"
+            title="Добавить вложенный шаг"
             onClick={addSubStep}
           >
             <Plus className="h-3 w-3" />
           </button>
           <button
             className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-            title="Delete step"
+            title="Удалить шаг"
             onClick={onDelete}
           >
             <X className="h-3 w-3" />
@@ -238,12 +238,12 @@ function EditableLogicStepNode({
           <table className="w-full text-xs">
             <thead className="bg-muted/50">
               <tr>
-                <th className="text-left px-2 py-1 font-medium">Element</th>
-                <th className="text-left px-2 py-1 font-medium">Type</th>
-                <th className="text-left px-2 py-1 font-medium">Req</th>
-                {showCardinality && <th className="text-left px-2 py-1 font-medium">Cardinality</th>}
-                <th className="text-left px-2 py-1 font-medium">Description</th>
-                <th className="text-left px-2 py-1 font-medium">Source</th>
+                <th className="text-left px-2 py-1 font-medium">Элемент</th>
+                <th className="text-left px-2 py-1 font-medium">Тип</th>
+                <th className="text-left px-2 py-1 font-medium">Обяз.</th>
+                {showCardinality && <th className="text-left px-2 py-1 font-medium">Кардинальность</th>}
+                <th className="text-left px-2 py-1 font-medium">Описание</th>
+                <th className="text-left px-2 py-1 font-medium">Источник</th>
                 <th className="w-12"></th>
               </tr>
             </thead>
@@ -299,26 +299,26 @@ function EditableLogicStepNode({
 
 function LogicStepNode({ step, level }: { step: LogicStep; level: number }) {
   return (
-    <div>
-      <div className="flex items-start gap-2 py-1">
-        <span className="font-mono text-muted-foreground shrink-0 text-sm min-w-[2.5rem]">
+    <div className={level === 0 ? "rounded-xl border border-border/70 bg-background px-4 py-3" : ""}>
+      <div className="flex items-start gap-3 py-1">
+        <span className="min-w-[2.5rem] shrink-0 rounded-md bg-muted px-2 py-1 text-center font-mono text-sm text-muted-foreground">
           {step.number}
         </span>
-        <span className="text-sm">{step.text}</span>
+        <span className="pt-1 text-sm leading-6">{step.text}</span>
       </div>
       {step.message_mapping && step.message_mapping.length > 0 && (() => {
         const showCardinality = hasAnyCardinality(step.message_mapping)
         return (
-          <div className="mt-2 ml-8 border rounded-md overflow-hidden">
+          <div className="mt-3 ml-14 overflow-hidden rounded-xl border border-border/70">
             <table className="w-full text-xs">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-left px-2 py-1 font-medium">Element</th>
-                  <th className="text-left px-2 py-1 font-medium">Type</th>
-                  <th className="text-left px-2 py-1 font-medium">Req</th>
-                  {showCardinality && <th className="text-left px-2 py-1 font-medium">Cardinality</th>}
-                  <th className="text-left px-2 py-1 font-medium">Description</th>
-                  <th className="text-left px-2 py-1 font-medium">Source</th>
+                  <th className="text-left px-2 py-1 font-medium">Элемент</th>
+                  <th className="text-left px-2 py-1 font-medium">Тип</th>
+                  <th className="text-left px-2 py-1 font-medium">Обяз.</th>
+                  {showCardinality && <th className="text-left px-2 py-1 font-medium">Кардинальность</th>}
+                  <th className="text-left px-2 py-1 font-medium">Описание</th>
+                  <th className="text-left px-2 py-1 font-medium">Источник</th>
                 </tr>
               </thead>
               <tbody>
@@ -331,7 +331,7 @@ function LogicStepNode({ step, level }: { step: LogicStep; level: number }) {
         )
       })()}
       {step.children.length > 0 && (
-        <div className="ml-6 border-l-2 border-muted pl-4 mt-1 space-y-1">
+        <div className="mt-3 ml-6 space-y-3 border-l-2 border-muted pl-4">
           {step.children.map((child, i) => (
             <LogicStepNode key={i} step={child} level={level + 1} />
           ))}
@@ -343,7 +343,12 @@ function LogicStepNode({ step, level }: { step: LogicStep; level: number }) {
 
 export function LogicTree({ steps, isEditing = false, onChange }: LogicTreeProps) {
   if (!isEditing && steps.length === 0) {
-    return <p className="text-sm text-muted-foreground">Нет шагов обработки</p>
+    return (
+      <div className="rounded-xl border border-dashed px-4 py-10 text-center">
+        <p className="text-sm font-medium">Шаги обработки не заполнены</p>
+        <p className="mt-2 text-xs text-muted-foreground">После извлечения или ручного редактирования здесь появится последовательность бизнес-логики.</p>
+      </div>
+    )
   }
 
   if (isEditing) {
@@ -358,7 +363,7 @@ export function LogicTree({ steps, isEditing = false, onChange }: LogicTreeProps
     }
 
     return (
-      <div className="space-y-2">
+      <div className="space-y-3">
         {steps.map((step, i) => (
           <EditableLogicStepNode
             key={i}
@@ -379,7 +384,7 @@ export function LogicTree({ steps, isEditing = false, onChange }: LogicTreeProps
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-3">
       {steps.map((step, i) => (
         <LogicStepNode key={i} step={step} level={0} />
       ))}

@@ -5,7 +5,7 @@ export function CacheStructureView({ data }: { data: CacheEnrichment }) {
   return (
     <div className="space-y-3">
       {data.description && <p className="text-sm text-muted-foreground">{data.description}</p>}
-      {data.eviction_policy && <p className="text-xs text-muted-foreground">Eviction: {data.eviction_policy}</p>}
+      {data.eviction_policy && <p className="text-xs text-muted-foreground">Политика вытеснения: {data.eviction_policy}</p>}
       <div className="grid gap-3">
         {data.key_patterns.map((kp, i) => (
           <Card key={i}>

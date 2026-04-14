@@ -6,16 +6,16 @@ import type { UsedDependency, ProjectDependency } from "@/types/api"
 interface DependencyCardsProps {
   dependencies: UsedDependency[]
   projectDependencies?: ProjectDependency[]
-  onDepClick?: (depName: string) => void
+  onDepClick?: (dep: ProjectDependency) => void
   isEditing?: boolean
   onChange?: (deps: UsedDependency[]) => void
 }
 
 const SECTION_CONFIG = {
-  db_table: { label: "DB Tables", prefix: "DB", badgeClass: "bg-blue-100 text-blue-800 border-blue-200" },
-  external_api: { label: "External APIs", prefix: "API", badgeClass: "bg-purple-100 text-purple-800 border-purple-200" },
-  cache: { label: "Cache", prefix: "Cache", badgeClass: "bg-orange-100 text-orange-800 border-orange-200" },
-  kafka_topic: { label: "Kafka Topics", prefix: "Kafka", badgeClass: "bg-green-100 text-green-800 border-green-200" },
+  db_table: { label: "Таблицы БД", prefix: "DB", badgeClass: "bg-blue-100 text-blue-800 border-blue-200" },
+  external_api: { label: "Внешние API", prefix: "API", badgeClass: "bg-purple-100 text-purple-800 border-purple-200" },
+  cache: { label: "Кэш", prefix: "Кэш", badgeClass: "bg-orange-100 text-orange-800 border-orange-200" },
+  kafka_topic: { label: "Kafka-топики", prefix: "Kafka", badgeClass: "bg-green-100 text-green-800 border-green-200" },
 } as const
 
 type DepType = keyof typeof SECTION_CONFIG
@@ -73,7 +73,7 @@ function EditableDependencyCard({
               <input
                 className="text-xs bg-transparent border-b border-border outline-none flex-1"
                 value={dep.service_name ?? ""}
-                placeholder="service_name"
+                placeholder="имя_сервиса"
                 onChange={(e) => onUpdate({ ...dep, service_name: e.target.value || undefined })}
               />
             </div>
@@ -88,21 +88,21 @@ function EditableDependencyCard({
             <input
               className="text-xs bg-transparent border-b border-border outline-none w-full text-muted-foreground"
               value={dep.path ?? ""}
-              placeholder="path (e.g. /api/resource)"
+              placeholder="путь (например, /api/resource)"
               onChange={(e) => onUpdate({ ...dep, path: e.target.value || undefined })}
             />
           )}
           <textarea
             className="text-xs text-muted-foreground bg-transparent border border-border rounded px-1.5 py-1 outline-none w-full resize-none"
             value={dep.description}
-            placeholder="description"
+            placeholder="Описание"
             rows={2}
             onChange={(e) => onUpdate({ ...dep, description: e.target.value })}
           />
         </div>
         <button
           className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
-          title="Delete"
+          title="Удалить"
           onClick={onDelete}
         >
           <X className="h-3 w-3" />
@@ -115,7 +115,12 @@ function EditableDependencyCard({
 export function DependencyCards({ dependencies, projectDependencies, onDepClick, isEditing = false, onChange }: DependencyCardsProps) {
 
   if (!isEditing && dependencies.length === 0) {
-    return <p className="text-sm text-muted-foreground">Нет зависимостей</p>
+    return (
+      <div className="rounded-xl border border-dashed px-4 py-10 text-center">
+        <p className="text-sm font-medium">Связанные зависимости не найдены</p>
+        <p className="mt-2 text-xs text-muted-foreground">Когда логика будет связана с DB, API, кэшем или топиками, они появятся здесь.</p>
+      </div>
+    )
   }
 
   const grouped = dependencies.reduce<Record<DepType, UsedDependency[]>>(
@@ -157,7 +162,7 @@ export function DependencyCards({ dependencies, projectDependencies, onDepClick,
           .filter(({ d }) => d.type === type)
 
         return (
-          <Card key={type}>
+          <Card key={type} className="border border-border/70 shadow-none">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <span className="font-mono text-xs px-1.5 py-0.5 rounded border">
@@ -171,11 +176,11 @@ export function DependencyCards({ dependencies, projectDependencies, onDepClick,
                     )
                     return !pd || pd.enrichment_status !== "enriched"
                   }).length
-                  return unenrichedCount > 0 ? (
-                    <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
-                      {unenrichedCount} unenriched
-                    </Badge>
-                  ) : null
+                    return unenrichedCount > 0 ? (
+                      <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
+                        {unenrichedCount} без обогащения
+                      </Badge>
+                    ) : null
                 })()}
                 <Badge variant="secondary" className="text-xs ml-auto">
                   {items.length}
@@ -218,8 +223,8 @@ export function DependencyCards({ dependencies, projectDependencies, onDepClick,
                     return (
                       <div
                         key={i}
-                        className={`rounded border p-2 space-y-1 ${clickable ? "cursor-pointer hover:border-primary hover:bg-accent/50 transition-colors" : ""}`}
-                        onClick={clickable ? () => onDepClick(registryDep.name) : undefined}
+                        className={`rounded-xl border border-border/70 p-3 space-y-2 ${clickable ? "cursor-pointer transition-colors hover:border-primary hover:bg-accent/30" : ""}`}
+                        onClick={clickable ? () => onDepClick(registryDep) : undefined}
                       >
                         <div className="flex items-center gap-1">
                           {dep.type === "external_api" && <DepMethodBadge method={dep.method} />}
@@ -233,7 +238,7 @@ export function DependencyCards({ dependencies, projectDependencies, onDepClick,
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground">{dep.description}</p>
+                        <p className="text-xs leading-5 text-muted-foreground">{dep.description}</p>
                       </div>
                     )
                   })}

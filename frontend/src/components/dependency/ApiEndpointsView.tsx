@@ -2,14 +2,6 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { ExternalApiEnrichment } from "@/types/api"
 
-const methodColors: Record<string, string> = {
-  GET: "bg-green-100 text-green-800",
-  POST: "bg-blue-100 text-blue-800",
-  PUT: "bg-amber-100 text-amber-800",
-  DELETE: "bg-red-100 text-red-800",
-  PATCH: "bg-purple-100 text-purple-800",
-}
-
 function generateExampleValue(schema: Record<string, unknown>): unknown {
   const type = schema.type as string | undefined
   const format = schema.format as string | undefined
@@ -43,10 +35,10 @@ function generateExampleValue(schema: Record<string, unknown>): unknown {
 
 interface SchemaTableProps {
   schema: Record<string, unknown>
-  title: string
 }
 
 function SchemaTable({ schema }: SchemaTableProps) {
+  if (!schema || typeof schema !== "object") return null
   const properties = schema.properties as Record<string, Record<string, unknown>> | undefined
   const required = (schema.required as string[] | undefined) ?? []
 
@@ -59,6 +51,7 @@ function SchemaTable({ schema }: SchemaTableProps) {
   ): React.ReactNode[] {
     if (depth > 4) return []
     return Object.entries(props).flatMap(([fieldName, fieldSchema]) => {
+      if (!fieldSchema || typeof fieldSchema !== "object") return []
       const fieldType = fieldSchema.type as string | undefined
       const fieldDesc = fieldSchema.description as string | undefined
       const fieldProps = fieldSchema.properties as Record<string, Record<string, unknown>> | undefined
@@ -76,7 +69,7 @@ function SchemaTable({ schema }: SchemaTableProps) {
             {fieldName}
           </TableCell>
           <TableCell className="font-mono text-xs text-muted-foreground">{displayType}</TableCell>
-          <TableCell className="text-xs">{req.includes(fieldName) ? "Yes" : "No"}</TableCell>
+          <TableCell className="text-xs">{req.includes(fieldName) ? "Да" : "Нет"}</TableCell>
           <TableCell className="text-xs text-muted-foreground">{fieldDesc ?? ""}</TableCell>
         </TableRow>,
       ]
@@ -101,10 +94,10 @@ function SchemaTable({ schema }: SchemaTableProps) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Field</TableHead>
-          <TableHead>Type</TableHead>
-          <TableHead>Required</TableHead>
-          <TableHead>Description</TableHead>
+          <TableHead>Поле</TableHead>
+          <TableHead>Тип</TableHead>
+          <TableHead>Обяз.</TableHead>
+          <TableHead>Описание</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -124,7 +117,7 @@ export function ApiEndpointsView({ data }: { data: ExternalApiEnrichment }) {
   return (
     <div className="space-y-3">
       {data.description && <p className="text-sm text-muted-foreground">{data.description}</p>}
-      {data.base_url && <p className="text-xs font-mono text-muted-foreground">Base: {data.base_url}</p>}
+      {data.base_url && <p className="text-xs font-mono text-muted-foreground">Базовый URL: {data.base_url}</p>}
       {data.endpoints.map((ep, i) => (
         <div key={i} className="space-y-3">
           {ep.description && <p className="text-sm mb-2">{ep.description}</p>}
@@ -132,11 +125,11 @@ export function ApiEndpointsView({ data }: { data: ExternalApiEnrichment }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Param</TableHead>
-                  <TableHead>In</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Required</TableHead>
-                  <TableHead>Description</TableHead>
+                  <TableHead>Параметр</TableHead>
+                  <TableHead>Где</TableHead>
+                  <TableHead>Тип</TableHead>
+                  <TableHead>Обяз.</TableHead>
+                  <TableHead>Описание</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -145,7 +138,7 @@ export function ApiEndpointsView({ data }: { data: ExternalApiEnrichment }) {
                     <TableCell className="font-mono text-sm">{p.name}</TableCell>
                     <TableCell className="text-sm">{p.param_in}</TableCell>
                     <TableCell className="font-mono text-sm">{p.param_type}</TableCell>
-                    <TableCell>{p.required ? "Yes" : "No"}</TableCell>
+                    <TableCell>{p.required ? "Да" : "Нет"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{p.description}</TableCell>
                   </TableRow>
                 ))}
@@ -155,24 +148,24 @@ export function ApiEndpointsView({ data }: { data: ExternalApiEnrichment }) {
 
           {ep.request_body_schema && (
             <>
-              <h4 className="text-xs font-semibold mt-3 mb-1">Request Body</h4>
-              <SchemaTable schema={ep.request_body_schema} title="Request Body" />
+              <h4 className="text-xs font-semibold mt-3 mb-1">Тело запроса</h4>
+              <SchemaTable schema={ep.request_body_schema} />
             </>
           )}
 
           {ep.response_schema && (
             <>
-              <h4 className="text-xs font-semibold mt-3 mb-1">Response</h4>
-              <SchemaTable schema={ep.response_schema} title="Response" />
+              <h4 className="text-xs font-semibold mt-3 mb-1">Ответ</h4>
+              <SchemaTable schema={ep.response_schema} />
             </>
           )}
 
           {(ep.response_schema || ep.error_codes.length > 0) && (
             <>
-              <h4 className="text-xs font-semibold mt-3 mb-1">Examples</h4>
+              <h4 className="text-xs font-semibold mt-3 mb-1">Примеры</h4>
               {ep.response_schema && (
                 <div className="mb-2">
-                  <p className="text-xs text-muted-foreground mb-1">Success Response</p>
+                  <p className="text-xs text-muted-foreground mb-1">Успешный ответ</p>
                   <pre className="bg-muted rounded p-2 text-xs font-mono overflow-x-auto mt-1">
                     <code>{JSON.stringify(generateExampleValue(ep.response_schema), null, 2)}</code>
                   </pre>
@@ -180,9 +173,9 @@ export function ApiEndpointsView({ data }: { data: ExternalApiEnrichment }) {
               )}
               {ep.error_codes.length > 0 && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Error Response</p>
+                  <p className="text-xs text-muted-foreground mb-1">Ответ с ошибкой</p>
                   <pre className="bg-muted rounded p-2 text-xs font-mono overflow-x-auto mt-1">
-                    <code>{JSON.stringify({ error: { code: ep.error_codes[0], title: "Error description", uuid: "550e8400-e29b-41d4-a716-446655440000" } }, null, 2)}</code>
+                    <code>{JSON.stringify({ error: { code: ep.error_codes[0], title: "Описание ошибки", uuid: "550e8400-e29b-41d4-a716-446655440000" } }, null, 2)}</code>
                   </pre>
                 </div>
               )}
@@ -191,7 +184,7 @@ export function ApiEndpointsView({ data }: { data: ExternalApiEnrichment }) {
 
           {ep.error_codes.length > 0 && (
             <>
-              <h4 className="text-xs font-semibold mt-3 mb-1">Error Codes</h4>
+              <h4 className="text-xs font-semibold mt-3 mb-1">Коды ошибок</h4>
               <div className="flex flex-wrap gap-1.5">
                 {ep.error_codes.map((code) => (
                   <Badge key={code} variant="outline" className={`font-mono text-xs ${errorBadgeClass(code)}`}>

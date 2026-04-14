@@ -9,8 +9,12 @@ class Settings(BaseSettings):
     bugs_model: str = "claude-sonnet-4-6"
     data_dir: str = "./data/projects"
     max_pdf_size_mb: int = 32
+    cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")
+
+    def parsed_cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 def get_settings() -> Settings:

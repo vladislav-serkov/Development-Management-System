@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DbSchemaView } from "./DbSchemaView"
@@ -10,21 +11,22 @@ import { AnimatedDots } from "./AnimatedDots"
 import { useUIStore } from "@/stores/uiStore"
 import { usePatchDependency, useDeleteDependency } from "@/hooks/useDependencies"
 import { Pencil, Trash2 } from "lucide-react"
+import { dependencyPath, projectPath } from "@/lib/routes"
 import type { ProjectDependency, DbTableEnrichment, ExternalApiEnrichment, CacheEnrichment, KafkaTopicEnrichment } from "@/types/api"
 
 const typeLabels: Record<string, string> = {
-  db_table: "DB Table",
-  external_api: "External API",
-  cache: "Cache",
-  kafka_topic: "Kafka Topic",
+  db_table: "Таблица БД",
+  external_api: "Внешний API",
+  cache: "Кэш",
+  kafka_topic: "Kafka-топик",
 }
 
 export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency; projectSlug: string }) {
+  const navigate = useNavigate()
   const isEnriched = dep.enrichment_status === "enriched" && dep.enriched_data
   const enrichingDepTypes = useUIStore((s) => s.enrichingDepTypes)
   const isEnriching = enrichingDepTypes.includes(dep.dep_type)
 
-  const { setSelectedDependency, setActiveSidebarItem } = useUIStore()
   const patchDep = usePatchDependency(projectSlug)
   const deleteDep = useDeleteDependency(projectSlug)
 
@@ -56,8 +58,7 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
         onSuccess: () => {
           setIsEditing(false)
           if (patch.name) {
-            setSelectedDependency(patch.name)
-            setActiveSidebarItem(`dep-${patch.name}`)
+            navigate(dependencyPath(projectSlug, dep.dep_type, patch.name), { replace: true })
           }
         },
       }
@@ -66,7 +67,10 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
 
   const handleDelete = () => {
     if (window.confirm(`Удалить зависимость "${dep.name}"?`)) {
-      deleteDep.mutate({ depName: dep.name, depType: dep.dep_type })
+      deleteDep.mutate(
+        { depName: dep.name, depType: dep.dep_type },
+        { onSuccess: () => navigate(projectPath(projectSlug)) }
+      )
     }
   }
 
@@ -77,7 +81,7 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
         {isEditing && (
           <div className="flex items-center gap-2 mb-2 pb-2 border-b">
             <Button size="sm" onClick={saveEdit} disabled={patchDep.isPending}>
-              {patchDep.isPending ? "Saving..." : "Сохранить"}
+              {patchDep.isPending ? "Сохраняем..." : "Сохранить"}
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelEdit}>Отмена</Button>
           </div>
@@ -96,7 +100,7 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
           )}
           <Badge variant="secondary" className="text-xs">{typeLabels[dep.dep_type] ?? dep.dep_type}</Badge>
           <Badge variant={isEnriched ? "default" : "outline"} className="text-xs">
-            {isEnriched ? "enriched" : "stub"}
+            {isEnriched ? "Обогащена" : "Черновик"}
           </Badge>
 
           {!isEditing && (
@@ -123,7 +127,7 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
         )}
 
         {dep.source_pdf_name && (
-          <p className="text-xs text-muted-foreground">Source: {dep.source_pdf_name}</p>
+          <p className="text-xs text-muted-foreground">Источник: {dep.source_pdf_name}</p>
         )}
       </div>
 
@@ -136,7 +140,7 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
         </div>
       ) : isEnriching ? (
         <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
-          <p className="text-sm text-muted-foreground">Загрузка PDF...</p>
+          <p className="text-sm text-muted-foreground">Загружаем PDF...</p>
           <AnimatedDots className="text-lg" />
         </div>
       ) : (

@@ -73,7 +73,7 @@ export interface FeatureResponse {
   structured_logic: StructuredBusinessLogic | null
   gap_count?: number
   pending_gap_count?: number
-  gaps_status?: "running" | "done" | "error" | null
+  gaps_status?: "running" | "done" | "error" | "overloaded" | null
   apply_status?: "running" | "done" | "error" | null
   test_case_count?: number
   pending_test_case_count?: number
@@ -273,7 +273,7 @@ export interface GapItem {
 
 export interface GapsResponse {
   gaps: GapItem[]
-  gaps_status: "running" | "done" | "error" | null
+  gaps_status: "running" | "done" | "error" | "overloaded" | null
   gaps_run_at: string | null
 }
 

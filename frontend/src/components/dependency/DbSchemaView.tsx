@@ -9,10 +9,10 @@ export function DbSchemaView({ data }: { data: DbTableEnrichment }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Column</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Nullable</TableHead>
-            <TableHead>Description</TableHead>
+            <TableHead>Колонка</TableHead>
+            <TableHead>Тип</TableHead>
+            <TableHead>NULL</TableHead>
+            <TableHead>Описание</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -24,7 +24,7 @@ export function DbSchemaView({ data }: { data: DbTableEnrichment }) {
                 {col.is_fk && <Badge variant="outline" className="ml-1 text-[10px]">FK</Badge>}
               </TableCell>
               <TableCell className="font-mono text-sm">{col.col_type}</TableCell>
-              <TableCell>{col.nullable ? "YES" : "NO"}</TableCell>
+              <TableCell>{col.nullable ? "Да" : "Нет"}</TableCell>
               <TableCell className="text-sm text-muted-foreground">{col.description}</TableCell>
             </TableRow>
           ))}
@@ -32,7 +32,7 @@ export function DbSchemaView({ data }: { data: DbTableEnrichment }) {
       </Table>
       {data.indexes.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Indexes</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Индексы</p>
           <ul className="text-sm list-disc list-inside">
             {data.indexes.map((idx, i) => <li key={i}>{idx}</li>)}
           </ul>

@@ -1,9 +1,9 @@
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ExportDialog } from "@/components/project/ExportDialog"
-import { useUIStore } from "@/stores/uiStore"
 import { cn } from "@/lib/utils"
+import { useLocation, useNavigate } from "react-router-dom"
+import { featurePath, homePath } from "@/lib/routes"
 import type { DocumentResponse, FeatureStatus } from "@/types/api"
 
 interface SidebarProps {
@@ -25,11 +25,15 @@ function featureStatusDot(status: FeatureStatus) {
 }
 
 export function Sidebar({ document }: SidebarProps) {
-  const { selectedFeatureName, activeSidebarItem, setSelectedFeature, setActiveSidebarItem, goHome } = useUIStore()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const selectedFeatureName = document.features.find((feature) =>
+    location.pathname === featurePath(document.project_slug, feature.name) ||
+    location.pathname.startsWith(`${featurePath(document.project_slug, feature.name)}/`)
+  )?.name ?? null
 
   function handleFeatureClick(featureName: string) {
-    setSelectedFeature(featureName)
-    setActiveSidebarItem(`feature-${featureName}`)
+    navigate(featurePath(document.project_slug, featureName))
   }
 
   const isFeatureActive = (featureName: string) =>
@@ -43,9 +47,9 @@ export function Sidebar({ document }: SidebarProps) {
           variant="ghost"
           size="sm"
           className="w-full justify-start text-xs"
-          onClick={goHome}
+          onClick={() => navigate(homePath())}
         >
-          ← Back to projects
+          ← Все проекты
         </Button>
         <p className="mt-2 px-1 text-sm font-medium truncate" title={document.filename.replace(/\.pdf$/i, "")}>
           {document.filename.replace(/\.pdf$/i, "")}
@@ -77,7 +81,7 @@ export function Sidebar({ document }: SidebarProps) {
                 </button>
               ))}
               {document.features.length === 0 && (
-                <p className="text-xs text-muted-foreground px-2">No features detected</p>
+                <p className="text-xs text-muted-foreground px-2">Фичи пока не обнаружены</p>
               )}
             </div>
           </div>
@@ -86,7 +90,7 @@ export function Sidebar({ document }: SidebarProps) {
 
       {/* Export button at bottom */}
       <div className="p-3 border-t">
-        <ExportDialog projectSlug={document.project_slug} docSlug={document.slug} />
+        <ExportDialog projectSlug={document.project_slug} />
       </div>
     </aside>
   )

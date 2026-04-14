@@ -1,11 +1,12 @@
 import { useProjects } from "@/hooks/useDocuments"
-import { useUIStore } from "@/stores/uiStore"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { useNavigate } from "react-router-dom"
+import { projectPath } from "@/lib/routes"
 
 export function ProjectGrid() {
   const { data: projects, isLoading, error } = useProjects()
-  const goToProject = useUIStore((s) => s.goToProject)
+  const navigate = useNavigate()
 
   return (
     <div className="space-y-6">
@@ -19,13 +20,13 @@ export function ProjectGrid() {
 
       {error && (
         <p className="text-sm text-destructive">
-          Failed to load projects. Please try refreshing.
+          Не удалось загрузить проекты. Обновите страницу и попробуйте снова.
         </p>
       )}
 
       {!isLoading && !error && projects && projects.length === 0 && (
         <p className="text-sm text-muted-foreground text-center py-8">
-          No projects yet. Create one to get started.
+          Проектов пока нет. Создайте первый, чтобы начать работу.
         </p>
       )}
 
@@ -35,7 +36,7 @@ export function ProjectGrid() {
             <Card
               key={project.slug}
               className="cursor-pointer hover:shadow-md transition-shadow"
-              onClick={() => goToProject(project.slug)}
+              onClick={() => navigate(projectPath(project.slug))}
             >
               <CardHeader>
                 <CardTitle className="truncate text-base">{project.name}</CardTitle>

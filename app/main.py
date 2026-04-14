@@ -26,10 +26,13 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="Extract Agent", lifespan=lifespan)
 
+cors_origins = settings.parsed_cors_origins()
+allow_all_origins = not cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins or ["*"],
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

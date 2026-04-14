@@ -25,7 +25,7 @@ function MappingRow({ field, depth, showCardinality }: { field: MessageField; de
           {field.element}{field.is_collection && <span className="text-muted-foreground">[]</span>}
         </td>
         <td className="px-2 py-1 text-muted-foreground">{field.field_type ?? "-"}</td>
-        <td className="px-2 py-1">{field.required ? "Yes" : "No"}</td>
+        <td className="px-2 py-1">{field.required ? "Да" : "Нет"}</td>
         {showCardinality && <td className="px-2 py-1 text-muted-foreground font-mono">{field.cardinality ?? "–"}</td>}
         <td className="px-2 py-1 text-muted-foreground">{field.description ?? "-"}</td>
         <td className="px-2 py-1 text-muted-foreground">{field.source ?? "-"}</td>
@@ -50,12 +50,12 @@ function FieldsTable({ fields, title }: { fields: MessageField[]; title: string 
           <table className="w-full text-xs">
             <thead className="bg-muted/50">
               <tr>
-                <th className="px-2 py-1 text-left font-medium">Element</th>
-                <th className="px-2 py-1 text-left font-medium">Type</th>
-                <th className="px-2 py-1 text-left font-medium">Req</th>
-                {showCardinality && <th className="px-2 py-1 text-left font-medium">Cardinality</th>}
-                <th className="px-2 py-1 text-left font-medium">Description</th>
-                <th className="px-2 py-1 text-left font-medium">Source</th>
+                <th className="px-2 py-1 text-left font-medium">Элемент</th>
+                <th className="px-2 py-1 text-left font-medium">Тип</th>
+                <th className="px-2 py-1 text-left font-medium">Обяз.</th>
+                {showCardinality && <th className="px-2 py-1 text-left font-medium">Кардинальность</th>}
+                <th className="px-2 py-1 text-left font-medium">Описание</th>
+                <th className="px-2 py-1 text-left font-medium">Источник</th>
               </tr>
             </thead>
             <tbody>
@@ -75,11 +75,11 @@ export function KafkaTopicView({ data }: { data: KafkaTopicEnrichment }) {
     <div className="space-y-3">
       {data.description && <p className="text-sm text-muted-foreground">{data.description}</p>}
       <div className="flex gap-4 text-xs text-muted-foreground">
-        {data.partitions != null && <span>Partitions: {data.partitions}</span>}
-        {data.retention_ms != null && <span>Retention: {formatRetention(data.retention_ms)}</span>}
+        {data.partitions != null && <span>Партиции: {data.partitions}</span>}
+        {data.retention_ms != null && <span>Хранение: {formatRetention(data.retention_ms)}</span>}
       </div>
-      <FieldsTable fields={data.message_fields} title="Message fields (value)" />
-      <FieldsTable fields={data.key_fields} title="Key fields" />
+      <FieldsTable fields={data.message_fields} title="Поля сообщения (value)" />
+      <FieldsTable fields={data.key_fields} title="Поля ключа" />
       {data.notes.length > 0 && (
         <ul className="text-sm space-y-0.5 list-disc list-inside text-muted-foreground">
           {data.notes.map((note, i) => (
