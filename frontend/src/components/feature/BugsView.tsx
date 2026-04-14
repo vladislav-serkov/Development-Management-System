@@ -265,99 +265,120 @@ function BugCard({
           </div>
 
           {open && (
-            <div className="ml-7 space-y-4 px-5 pb-5">
+            <div className="ml-7 space-y-6 px-5 pb-5">
+              {/* Сценарий — flat document style like Jira */}
               {bug.steps.length > 0 && (
-                <BugSurface title="Шаги воспроизведения">
-                  <div className="space-y-3">
+                <div>
+                  <p className="text-[14px] font-bold text-foreground">Сценарий:</p>
+                  <ol className="mt-3 list-decimal space-y-4 pl-5">
                     {bug.steps.map((step, si) => (
-                      <div key={si} className="rounded-xl border border-border/70 bg-background px-4 py-3">
-                        <div className="grid grid-cols-[auto_1fr] gap-x-3 text-[13px]">
-                          <span className="pt-px font-semibold tabular-nums text-muted-foreground/60">{si + 1}.</span>
-                          <div className="space-y-3">
-                            <p className="leading-[1.7] text-foreground"><RichText text={step.action} /></p>
-                            <div className="rounded-lg bg-muted/50 px-3 py-2.5">
-                              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Фактический результат шага</span>
-                              <p className="mt-1.5 leading-[1.7] text-foreground/85"><RichText text={step.result} /></p>
-                            </div>
-                            {(step.curl_command || step.sql_query || step.kafka_message) && (
-                              <div className="space-y-2.5">
-                                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Технические артефакты</span>
-                                <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
-                                  {step.curl_command && (
-                                    <BugArtifact
-                                      label="cURL"
-                                      value={step.curl_command}
-                                      copied={copiedField === `${si}-curl`}
-                                      onCopy={(e) => {
-                                        e.stopPropagation()
-                                        navigator.clipboard.writeText(step.curl_command!)
-                                        setCopiedField(`${si}-curl`)
-                                        setTimeout(() => setCopiedField(null), 1500)
-                                      }}
-                                    />
-                                  )}
-                                  {step.sql_query && (
-                                    <BugArtifact
-                                      label="SQL"
-                                      value={step.sql_query}
-                                      copied={copiedField === `${si}-sql`}
-                                      onCopy={(e) => {
-                                        e.stopPropagation()
-                                        navigator.clipboard.writeText(step.sql_query!)
-                                        setCopiedField(`${si}-sql`)
-                                        setTimeout(() => setCopiedField(null), 1500)
-                                      }}
-                                    />
-                                  )}
-                                  {step.kafka_message && (() => {
-                                    const kafka = parseKafkaArtifact(step.kafka_message)
-                                    if (kafka) {
-                                      return (
-                                        <BugKafkaArtifact
-                                          kafka={kafka}
-                                          copiedField={copiedField}
-                                          fieldPrefix={`${si}-message`}
-                                          onCopyField={(field, value) => {
-                                            navigator.clipboard.writeText(value)
-                                            setCopiedField(`${si}-${field}`)
-                                            setTimeout(() => setCopiedField(null), 1500)
-                                          }}
-                                        />
-                                      )
-                                    }
-
-                                    return (
-                                      <BugArtifact
-                                        label="MESSAGE"
-                                        value={formatKafkaArtifact(step.kafka_message)}
-                                        copied={copiedField === `${si}-message`}
+                      <li key={si} className="text-[14px] leading-[1.7] text-foreground">
+                        <RichText text={step.action} />
+                        {step.result && (
+                          <p className="mt-1 text-[13px] leading-[1.65] text-foreground/70"><RichText text={step.result} /></p>
+                        )}
+                        {(step.curl_command || step.sql_query || step.kafka_message) && (
+                          <div className="mt-2.5 space-y-2.5">
+                            {step.curl_command && (
+                              <JiraCodeBlock
+                                value={step.curl_command}
+                                copied={copiedField === `${si}-curl`}
+                                onCopy={(e) => {
+                                  e.stopPropagation()
+                                  navigator.clipboard.writeText(step.curl_command!)
+                                  setCopiedField(`${si}-curl`)
+                                  setTimeout(() => setCopiedField(null), 1500)
+                                }}
+                              />
+                            )}
+                            {step.sql_query && (
+                              <JiraCodeBlock
+                                value={step.sql_query}
+                                copied={copiedField === `${si}-sql`}
+                                onCopy={(e) => {
+                                  e.stopPropagation()
+                                  navigator.clipboard.writeText(step.sql_query!)
+                                  setCopiedField(`${si}-sql`)
+                                  setTimeout(() => setCopiedField(null), 1500)
+                                }}
+                              />
+                            )}
+                            {step.kafka_message && (() => {
+                              const kafka = parseKafkaArtifact(step.kafka_message)
+                              if (kafka) {
+                                return (
+                                  <div className="space-y-2.5">
+                                    {kafka.topic && (
+                                      <JiraCodeBlock
+                                        value={`topic: ${kafka.topic}`}
+                                        copied={copiedField === `${si}-message-topic`}
                                         onCopy={(e) => {
                                           e.stopPropagation()
-                                          navigator.clipboard.writeText(formatKafkaArtifact(step.kafka_message!))
-                                          setCopiedField(`${si}-message`)
+                                          navigator.clipboard.writeText(kafka.topic!)
+                                          setCopiedField(`${si}-message-topic`)
                                           setTimeout(() => setCopiedField(null), 1500)
                                         }}
                                       />
-                                    )
-                                  })()}
-                                </div>
-                              </div>
-                            )}
+                                    )}
+                                    {kafka.key && (
+                                      <JiraCodeBlock
+                                        value={`key: ${kafka.key}`}
+                                        copied={copiedField === `${si}-message-key`}
+                                        onCopy={(e) => {
+                                          e.stopPropagation()
+                                          navigator.clipboard.writeText(kafka.key!)
+                                          setCopiedField(`${si}-message-key`)
+                                          setTimeout(() => setCopiedField(null), 1500)
+                                        }}
+                                      />
+                                    )}
+                                    {kafka.value && (
+                                      <JiraCodeBlock
+                                        value={kafka.value}
+                                        copied={copiedField === `${si}-message-value`}
+                                        onCopy={(e) => {
+                                          e.stopPropagation()
+                                          navigator.clipboard.writeText(kafka.value!)
+                                          setCopiedField(`${si}-message-value`)
+                                          setTimeout(() => setCopiedField(null), 1500)
+                                        }}
+                                      />
+                                    )}
+                                  </div>
+                                )
+                              }
+
+                              return (
+                                <JiraCodeBlock
+                                  value={formatKafkaArtifact(step.kafka_message)}
+                                  copied={copiedField === `${si}-message`}
+                                  onCopy={(e) => {
+                                    e.stopPropagation()
+                                    navigator.clipboard.writeText(formatKafkaArtifact(step.kafka_message!))
+                                    setCopiedField(`${si}-message`)
+                                    setTimeout(() => setCopiedField(null), 1500)
+                                  }}
+                                />
+                              )
+                            })()}
                           </div>
-                        </div>
-                      </div>
+                        )}
+                      </li>
                     ))}
-                  </div>
-                </BugSurface>
+                  </ol>
+                </div>
               )}
 
-              <div className="grid gap-3 lg:grid-cols-2">
-                <BugSurface title="Ожидаемый результат" tone="expected">
-                  <p className="text-[13px] leading-[1.7] text-foreground/80"><RichText text={bug.expected_result} /></p>
-                </BugSurface>
-                <BugSurface title="Фактический результат" tone="actual">
-                  <p className="text-[13px] leading-[1.7] text-foreground/80"><RichText text={bug.actual_result} /></p>
-                </BugSurface>
+              {/* ОР — ожидаемый результат */}
+              <div>
+                <p className="text-[14px] font-bold text-foreground">ОР — ожидаемый результат:</p>
+                <p className="mt-2 text-[14px] leading-[1.7] text-foreground/80"><RichText text={bug.expected_result} /></p>
+              </div>
+
+              {/* ФР — фактический результат */}
+              <div>
+                <p className="text-[14px] font-bold text-foreground">ФР — фактический результат:</p>
+                <p className="mt-2 text-[14px] leading-[1.7] text-foreground/80"><RichText text={bug.actual_result} /></p>
               </div>
 
               {bug.status === "open" && (
@@ -472,29 +493,6 @@ function getPayloadBadge(value: string): string | null {
   return null
 }
 
-function BugSurface({
-  title,
-  children,
-  tone = "default",
-}: {
-  title: string
-  children: React.ReactNode
-  tone?: "default" | "expected" | "actual"
-}) {
-  const toneClasses = {
-    default: "border-border/70 bg-muted/20",
-    expected: "border-emerald-200/80 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/10",
-    actual: "border-red-200/80 bg-red-50/50 dark:border-red-900/40 dark:bg-red-950/10",
-  }
-
-  return (
-    <div className={cn("rounded-xl border p-3.5", toneClasses[tone])}>
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">{title}</p>
-      {children}
-    </div>
-  )
-}
-
 function BugArtifact({
   label,
   value,
@@ -578,6 +576,31 @@ function BugKafkaArtifact({
           }}
         />
       )}
+    </div>
+  )
+}
+
+function JiraCodeBlock({
+  value,
+  copied,
+  onCopy,
+}: {
+  value: string
+  copied: boolean
+  onCopy: (e: React.MouseEvent) => void
+}) {
+  return (
+    <div className="group relative overflow-hidden rounded-md bg-[#f0f4f8] dark:bg-slate-900/70">
+      <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-[12px] font-mono leading-6 text-slate-900 dark:text-slate-100">
+        <code>{value}</code>
+      </pre>
+      <button
+        onClick={onCopy}
+        className="absolute right-2 top-2 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 opacity-0 group-hover:opacity-100 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        title="Копировать"
+      >
+        {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
     </div>
   )
 }
