@@ -1,9 +1,6 @@
-import asyncio
-import json
 import logging
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from starlette.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +10,7 @@ from app.schemas.export import ExportRequest, ExportResponse
 from app.schemas.extraction import DocumentPatchRequest, DocumentResponse, FeaturePatchRequest, FeatureResponse
 from app.services.export import export_document_context
 from app.services.extraction import run_extraction_pipeline
+from app.services.task_manager import task_manager
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -64,13 +62,36 @@ async def upload_document(
             detail=f"PDF exceeds {settings.max_pdf_size_mb}MB limit",
         )
 
-    result = await run_extraction_pipeline(
-        filename=file.filename or "unnamed.pdf",
-        pdf_bytes=contents,
-        store=store,
-        project_slug=project_slug,
+    # Create document record immediately, launch extraction in background
+    filename = file.filename or "unnamed.pdf"
+    doc_slug = store.make_doc_slug(project_slug, filename)
+    from datetime import UTC, datetime
+    now_iso = datetime.now(UTC).isoformat()
+    doc_data = {
+        "slug": doc_slug,
+        "project_slug": project_slug,
+        "filename": filename,
+        "pdf_size_bytes": len(contents),
+        "uploaded_at": now_iso,
+        "status": "processing",
+        "error_message": None,
+        "feature_count": 0,
+    }
+    await store.save_document(project_slug, doc_data)
+
+    task_key = f"extraction:{project_slug}/{doc_slug}"
+    task_manager.launch(
+        task_key,
+        run_extraction_pipeline(
+            filename=filename,
+            pdf_bytes=contents,
+            store=store,
+            project_slug=project_slug,
+            doc_slug=doc_slug,
+        ),
     )
-    return result
+
+    return _doc_to_response(doc_data, [])
 
 
 @router.get("/", response_model=list[DocumentResponse])
@@ -86,45 +107,6 @@ async def list_documents():
             all_docs.append(_doc_to_response(doc, features))
     return all_docs
 
-
-@router.get("/{doc_slug}/progress")
-async def stream_extraction_progress(
-    doc_slug: str,
-    project_slug: str = Query(...),
-):
-    """Stream document + feature status updates via SSE until terminal state."""
-
-    async def event_generator():
-        while True:
-            doc = await store.get_document(project_slug, doc_slug)
-
-            if doc is None:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'not found'})}\n\n"
-                return
-
-            features = await store.list_features(project_slug)
-            payload = {
-                "type": "progress",
-                "status": doc.get("status"),
-                "feature_count": doc.get("feature_count", 0),
-                "features": [
-                    {"name": f["name"], "type": f.get("type", ""), "status": f.get("status", "")}
-                    for f in features
-                ],
-            }
-            yield f"data: {json.dumps(payload)}\n\n"
-
-            if doc.get("status") in ("done", "error", "partial"):
-                yield f"data: {json.dumps({'type': 'done', 'status': doc.get('status')})}\n\n"
-                return
-
-            await asyncio.sleep(1)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-    )
 
 
 @router.patch("/{doc_slug}/features/{feature_name}", response_model=FeatureResponse)

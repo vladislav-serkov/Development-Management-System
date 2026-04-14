@@ -5,6 +5,7 @@ import {
   fetchDocuments, fetchDocument, uploadDocument, patchDocument,
   patchFeature, deleteFeature, importProjectZip,
 } from "@/api/documents"
+import type { ProjectResponse } from "@/types/api"
 import type { FeaturePatchRequest } from "@/types/api"
 
 // Projects
@@ -20,6 +21,10 @@ export function useProject(slug: string | null) {
     queryKey: ["projects", slug],
     queryFn: () => fetchProject(slug!),
     enabled: slug !== null,
+    refetchInterval: (query) => {
+      const project = query.state.data
+      return project?.status === "processing" ? 3000 : false
+    },
   })
 }
 
@@ -42,7 +47,7 @@ export function useRenameProject(slug: string) {
   })
 }
 
-export function useProjectFeatures(projectSlug: string | null) {
+export function useProjectFeatures(projectSlug: string | null, projectStatus?: ProjectResponse["status"]) {
   return useQuery({
     queryKey: ["projects", projectSlug, "features"],
     queryFn: () => fetchProjectFeatures(projectSlug!),
@@ -52,7 +57,11 @@ export function useProjectFeatures(projectSlug: string | null) {
       const hasRunning = features?.some(
         f => f.gaps_status === "running" || f.test_cases_status === "running" || f.apply_status === "running"
       )
-      return hasRunning ? 3000 : false
+      const hasExtracting = features?.some(
+        f => f.status === "detected" || f.status === "extracting"
+      )
+      const projectProcessing = projectStatus === "processing"
+      return (hasRunning || hasExtracting || projectProcessing) ? 3000 : false
     },
   })
 }
@@ -81,6 +90,7 @@ export function useUploadDocument(projectSlug: string) {
       qc.invalidateQueries({ queryKey: ["projects", projectSlug] })
       qc.invalidateQueries({ queryKey: ["projects"] })
       qc.invalidateQueries({ queryKey: ["documents"] })
+      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
     },
   })
 }

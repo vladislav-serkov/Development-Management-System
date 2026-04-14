@@ -20,8 +20,10 @@ Directory structure:
             external_apis.json
             cache.json
 """
+import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 from datetime import UTC, datetime
@@ -131,14 +133,34 @@ class ProjectStore:
     def _bugs_dir(self, project_slug: str) -> Path:
         return self._project_dir(project_slug) / "bugs"
 
+    # Per-path asyncio locks to prevent concurrent read-modify-write races
+    _locks: dict[str, asyncio.Lock] = {}
+
+    def _get_lock(self, path: Path) -> asyncio.Lock:
+        key = str(path)
+        if key not in self._locks:
+            self._locks[key] = asyncio.Lock()
+        return self._locks[key]
+
     async def _read_json(self, path: Path) -> dict | list:
         async with aiofiles.open(path, "r", encoding="utf-8") as f:
             return json.loads(await f.read())
 
     async def _write_json(self, path: Path, data: dict | list) -> None:
+        """Atomic write: write to .tmp file, then os.rename (atomic on POSIX)."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+        os.replace(str(tmp_path), str(path))
+
+    @staticmethod
+    def _safe_unlink(path: Path) -> None:
+        """Delete file if it exists, ignore if already gone."""
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
     # ------------------------------------------------------------------
     # Projects
@@ -268,12 +290,13 @@ class ProjectStore:
 
     async def update_document(self, project_slug: str, doc_slug: str, updates: dict) -> dict | None:
         path = self._documents_dir(project_slug) / f"{doc_slug}.json"
-        if not path.exists():
-            return None
-        doc = await self._read_json(path)
-        doc.update(updates)
-        await self._write_json(path, doc)
-        return doc
+        async with self._get_lock(path):
+            if not path.exists():
+                return None
+            doc = await self._read_json(path)
+            doc.update(updates)
+            await self._write_json(path, doc)
+            return doc
 
     # ------------------------------------------------------------------
     # Features
@@ -386,6 +409,12 @@ class ProjectStore:
 
     async def update_feature(self, project_slug: str, feature_name: str, updates: dict) -> dict | None:
         """Update feature data. Redirects gaps/test_cases updates to dedicated files."""
+        folder_feature_json = self._feature_dir(project_slug, feature_name) / "feature.json"
+        async with self._get_lock(folder_feature_json):
+            return await self._update_feature_locked(project_slug, feature_name, updates)
+
+    async def _update_feature_locked(self, project_slug: str, feature_name: str, updates: dict) -> dict | None:
+        """Update feature data (called under lock). Redirects gaps/test_cases updates to dedicated files."""
         # Resolve the feature.json path (folder-based primary, flat file fallback)
         folder_feature_json = self._feature_dir(project_slug, feature_name) / "feature.json"
         flat_feature_json = self._features_dir(project_slug) / f"{feature_name}.json"
@@ -403,7 +432,7 @@ class ProjectStore:
             feat_clean.pop("gaps", None)
             feat_clean.pop("test_cases", None)
             await self._write_json(feature_dir / "feature.json", feat_clean)
-            flat_feature_json.unlink()
+            self._safe_unlink(flat_feature_json)
             feature_json_path = feature_dir / "feature.json"
         else:
             return None
@@ -482,7 +511,7 @@ class ProjectStore:
                 gaps = data.get("gaps", [])
                 # Migrate: copy to new location, delete old
                 await self._write_json(new_path, data)
-                old_path.unlink()
+                self._safe_unlink(old_path)
                 logger.info("Migrated gaps for %s to top-level gaps/ dir", feature_name)
                 return gaps
             except Exception as exc:
@@ -539,8 +568,7 @@ class ProjectStore:
     async def delete_apply_preview(self, project_slug: str, feature_name: str) -> None:
         """Delete apply-preview.json."""
         path = self._feature_dir(project_slug, feature_name) / "apply-preview.json"
-        if path.exists():
-            path.unlink()
+        self._safe_unlink(path)
 
     # ------------------------------------------------------------------
     # Test Cases (dedicated storage methods)
@@ -571,7 +599,7 @@ class ProjectStore:
                 test_cases = data.get("test_cases", [])
                 # Migrate: copy to new location, delete old
                 await self._write_json(new_path, data)
-                old_path.unlink()
+                self._safe_unlink(old_path)
                 logger.info("Migrated test-cases for %s to top-level test-cases/ dir", feature_name)
                 return test_cases
             except Exception as exc:
@@ -636,7 +664,7 @@ class ProjectStore:
                 bugs = data.get("bugs", [])
                 # Migrate: copy to new location, delete old
                 await self._write_json(new_path, data)
-                old_path.unlink()
+                self._safe_unlink(old_path)
                 logger.info("Migrated bugs for %s to top-level bugs/ dir", feature_name)
                 return bugs
             except Exception as exc:
@@ -753,7 +781,7 @@ class ProjectStore:
             # Fallback: flat file format
             flat_path = self._features_dir(project_slug) / f"{feature_name}.json"
             if flat_path.exists():
-                flat_path.unlink()
+                self._safe_unlink(flat_path)
                 found = True
 
         # Clean up top-level analysis files
@@ -762,8 +790,7 @@ class ProjectStore:
             self._test_cases_dir(project_slug) / f"{sanitized}.json",
             self._bugs_dir(project_slug) / f"{sanitized}.json",
         ]:
-            if analysis_path.exists():
-                analysis_path.unlink()
+            self._safe_unlink(analysis_path)
 
         return found
 

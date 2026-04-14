@@ -1,19 +1,13 @@
 import base64
-import json
 import logging
-import re
 from datetime import UTC, datetime
-
-import anthropic
-import httpx
 
 from app.config import settings
 from app.prompts.extraction import DETECT_FEATURE_PROMPT, build_mapping_prompt
+from app.services.claude_client import call_claude, log_cache_stats
 from app.services.rules import build_system_prompt
 from app.schemas.extraction import (
     DetectedFeature,
-    DocumentResponse,
-    FeatureResponse,
     MappingExtractionBatch,
     MappingExtractionResult,
 )
@@ -24,13 +18,6 @@ logger = logging.getLogger(__name__)
 def _normalize_dep_name(name: str) -> str:
     """Normalize dependency name for cross-feature matching."""
     return name.lower().replace(" ", "_")
-
-
-def _get_client() -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(
-        api_key=settings.anthropic_api_key,
-        timeout=httpx.Timeout(timeout=900.0, connect=5.0),
-    )
 
 
 def _build_document_block(pdf_b64: str, cache: bool = False) -> dict:
@@ -47,17 +34,6 @@ def _build_document_block(pdf_b64: str, cache: bool = False) -> dict:
     return block
 
 
-def _log_cache_stats(usage, call_name: str) -> None:
-    input_tokens = getattr(usage, "input_tokens", 0)
-    cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
-    cache_read = getattr(usage, "cache_read_input_tokens", 0)
-    logger.info(
-        "%s: input_tokens=%d, cache_creation_input_tokens=%d, cache_read_input_tokens=%d",
-        call_name,
-        input_tokens,
-        cache_creation,
-        cache_read,
-    )
 
 
 def _collect_steps_with_mapping(steps, result=None):
@@ -94,7 +70,6 @@ def _propagate_is_collection(fields: list) -> None:
 
 async def _detect_feature(
     pdf_b64: str,
-    client: anthropic.AsyncAnthropic,
     model: str,
     system_prompt: str = "",
 ) -> DetectedFeature:
@@ -115,7 +90,8 @@ async def _detect_feature(
     if system_prompt:
         create_kwargs["system"] = system_prompt
 
-    response = await client.messages.create(
+    response = await call_claude(
+        label="detect_feature",
         **create_kwargs,
         messages=[
             {
@@ -150,88 +126,107 @@ async def _detect_feature(
 
     result = DetectedFeature.model_validate(tool_input)
     logger.info("[Call 1] Detected feature '%s' (type=%s)", result.name, result.type.value)
-    _log_cache_stats(response.usage, "detect_feature")
+    log_cache_stats(response.usage, "detect_feature")
     return result
 
 
-async def _extract_message_mappings(
+MAPPING_BATCH_SIZE = 7
+MAPPING_MAX_RETRIES = 2
+
+
+async def _extract_mapping_batch(
     pdf_b64: str,
     feature: DetectedFeature,
-    steps_with_mapping: list[str],  # step numbers
-    client: anthropic.AsyncAnthropic,
+    steps_batch: list[str],
+    batch_idx: int,
     model: str,
     system_prompt: str = "",
 ) -> list[MappingExtractionResult]:
-    """Call 2 (conditional): extract message field mappings for steps that have mapping tables."""
-    logger.info(
-        "[Call 2] Extracting message mappings for '%s', steps: %s",
-        feature.name,
-        steps_with_mapping,
-    )
+    """Single Call 2 request for a batch of steps, with one retry on empty response."""
     tool = {
         "name": "extract_message_mappings",
         "description": "Extract structured message field mappings for specified steps",
         "input_schema": MappingExtractionBatch.model_json_schema(),
     }
-
-    steps_list = ", ".join(steps_with_mapping)
-    create_kwargs2: dict = dict(
+    steps_list = ", ".join(steps_batch)
+    create_kwargs: dict = dict(
         model=model,
-        max_tokens=16384,
+        max_tokens=32768,
         tools=[tool],
         tool_choice={"type": "tool", "name": "extract_message_mappings"},
     )
     if system_prompt:
-        create_kwargs2["system"] = system_prompt
-    response = await client.messages.create(
-        **create_kwargs2,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    _build_document_block(pdf_b64, cache=True),
-                    {
-                        "type": "text",
-                        "text": build_mapping_prompt(feature.name, feature.type.value, steps_list),
-                    },
-                ],
-            }
-        ],
+        create_kwargs["system"] = system_prompt
+
+    for attempt in range(1, MAPPING_MAX_RETRIES + 1):
+        label = f"[Call 2.{batch_idx} attempt {attempt}/{MAPPING_MAX_RETRIES}]"
+        logger.info("%s steps: %s", label, steps_batch)
+
+        response = await call_claude(
+            label=f"mapping_batch:{feature.name}:b{batch_idx}",
+            **create_kwargs,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        _build_document_block(pdf_b64, cache=True),
+                        {
+                            "type": "text",
+                            "text": build_mapping_prompt(feature.name, feature.type.value, steps_list),
+                        },
+                    ],
+                }
+            ],
+        )
+        log_cache_stats(response.usage, f"message_mappings:{feature.name}:b{batch_idx}")
+
+        tool_block = None
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                tool_block = block
+                break
+
+        if tool_block is None or not tool_block.input or not tool_block.input.get("mappings"):
+            logger.warning("%s empty response for '%s': %s", label, feature.name, getattr(tool_block, "input", None))
+            if attempt < MAPPING_MAX_RETRIES:
+                continue
+            return []
+
+        batch = MappingExtractionBatch.model_validate(tool_block.input)
+        logger.info("%s extracted %d mapping(s) for '%s'", label, len(batch.mappings), feature.name)
+        return batch.mappings
+
+    return []
+
+
+async def _extract_message_mappings(
+    pdf_b64: str,
+    feature: DetectedFeature,
+    steps_with_mapping: list[str],
+    model: str,
+    system_prompt: str = "",
+) -> list[MappingExtractionResult]:
+    """Call 2: extract message field mappings, batched by MAPPING_BATCH_SIZE steps per request."""
+    batches = [
+        steps_with_mapping[i:i + MAPPING_BATCH_SIZE]
+        for i in range(0, len(steps_with_mapping), MAPPING_BATCH_SIZE)
+    ]
+    logger.info(
+        "[Call 2] Extracting mappings for '%s': %d steps → %d batch(es)",
+        feature.name, len(steps_with_mapping), len(batches),
     )
 
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
-            break
+    import asyncio
+    batch_results = await asyncio.gather(*(
+        _extract_mapping_batch(pdf_b64, feature, batch, idx, model, system_prompt)
+        for idx, batch in enumerate(batches, 1)
+    ))
+    all_mappings: list[MappingExtractionResult] = []
+    for results in batch_results:
+        all_mappings.extend(results)
 
-    if tool_block is None:
-        logger.warning("[Call 2] No tool_use block in Claude response for '%s'", feature.name)
-        return []
-
-    batch = MappingExtractionBatch.model_validate(tool_block.input)
-    logger.info("[Call 2] Extracted %d mapping(s) for '%s'", len(batch.mappings), feature.name)
-    _log_cache_stats(response.usage, f"message_mappings:{feature.name}")
-    return batch.mappings
-
-
-def _feature_dict_to_response(f: dict) -> FeatureResponse:
-    sl = f.get("structured_logic_json")
-    if not isinstance(sl, dict):
-        sl = None
-    else:
-        sl = None
-    return FeatureResponse(
-        name=f["name"],
-        source_document=f.get("source_document", ""),
-        type=f.get("type", "unknown"),
-        confidence=f.get("confidence", 0.0),
-        summary=f.get("summary"),
-        status=f.get("status", "detected"),
-        method=f.get("method"),
-        endpoint=f.get("endpoint"),
-        structured_logic=sl,
-    )
+    logger.info("[Call 2] Total: %d mapping(s) for '%s'", len(all_mappings), feature.name)
+    return all_mappings
 
 
 async def run_extraction_pipeline(
@@ -239,31 +234,29 @@ async def run_extraction_pipeline(
     pdf_bytes: bytes,
     store,
     project_slug: str,
-) -> DocumentResponse:
-    """1-2 call extraction pipeline: detect feature, conditionally extract message mappings."""
+    doc_slug: str = "",
+) -> None:
+    """1-2 call extraction pipeline: detect feature, conditionally extract message mappings.
+
+    Designed to run as a background task (asyncio.create_task).
+    The document record must already exist in storage before calling this.
+    """
     from datetime import datetime
 
     logger.info("=== Pipeline started: '%s' (%.1fKB) ===", filename, len(pdf_bytes) / 1024)
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
-
-    # Generate document slug
-    doc_slug = store.make_doc_slug(project_slug, filename)
-
     now_iso = datetime.now(UTC).isoformat()
-    doc_data = {
-        "slug": doc_slug,
-        "project_slug": project_slug,
-        "filename": filename,
-        "pdf_size_bytes": len(pdf_bytes),
-        "uploaded_at": now_iso,
-        "status": "processing",
-        "error_message": None,
-        "feature_count": 0,
-    }
-    await store.save_document(project_slug, doc_data)
 
-    client = _get_client()
+    # Load existing document record (created by upload endpoint)
+    if not doc_slug:
+        doc_slug = store.make_doc_slug(project_slug, filename)
+    doc_data = await store.get_document(project_slug, doc_slug)
+    if doc_data is None:
+        logger.error("Document record not found for %s/%s", project_slug, doc_slug)
+        return
+
     model = settings.claude_model
+    feature_data: dict = {}
 
     global_rules = await store.get_global_rules()
     project_rules = await store.get_project_rules(project_slug)
@@ -275,7 +268,7 @@ async def run_extraction_pipeline(
 
     try:
         # Call 1: Feature detection (structured, via tool_use)
-        detected = await _detect_feature(pdf_b64, client, model, extraction_system_prompt)
+        detected = await _detect_feature(pdf_b64, model, extraction_system_prompt)
 
         feature_data = {
             "name": detected.name,
@@ -287,7 +280,7 @@ async def run_extraction_pipeline(
             "endpoint": detected.endpoint,
             "dependencies_json": detected.dependencies,
             "structured_logic_json": detected.structured_logic.model_dump(),
-            "status": "detected",
+            "status": "extracting",
             "error_message": None,
             "extracted_at": None,
         }
@@ -328,21 +321,28 @@ async def run_extraction_pipeline(
         )
 
         if steps_with_mapping:
-            mapping_results = await _extract_message_mappings(
-                pdf_b64, detected, steps_with_mapping, client, model, extraction_system_prompt
-            )
-            mappings_by_step = {r.step_number: r for r in mapping_results}
-            _merge_mappings_into_steps(
-                detected.structured_logic.logic_steps, mappings_by_step
-            )
-            # Post-processing: propagate is_collection from child cardinality
-            def _walk_steps_for_propagation(steps) -> None:
-                for step in steps:
-                    if step.message_mapping:
-                        _propagate_is_collection(step.message_mapping)
-                    _walk_steps_for_propagation(step.children)
-            _walk_steps_for_propagation(detected.structured_logic.logic_steps)
-            feature_data["structured_logic_json"] = detected.structured_logic.model_dump()
+            try:
+                mapping_results = await _extract_message_mappings(
+                    pdf_b64, detected, steps_with_mapping, model, extraction_system_prompt
+                )
+                mappings_by_step = {r.step_number: r for r in mapping_results}
+                _merge_mappings_into_steps(
+                    detected.structured_logic.logic_steps, mappings_by_step
+                )
+                # Post-processing: propagate is_collection from child cardinality
+                def _walk_steps_for_propagation(steps) -> None:
+                    for step in steps:
+                        if step.message_mapping:
+                            _propagate_is_collection(step.message_mapping)
+                        _walk_steps_for_propagation(step.children)
+                _walk_steps_for_propagation(detected.structured_logic.logic_steps)
+                feature_data["structured_logic_json"] = detected.structured_logic.model_dump()
+            except Exception as exc:
+                logger.warning(
+                    "[Call 2] Message mapping extraction failed for '%s' (partial success): %s",
+                    detected.name, exc,
+                )
+                feature_data["error_message"] = f"Маппинги не извлечены: {exc}"
         else:
             logger.info("[Call 2] Skipped — no steps with has_detailed_mapping=True")
 
@@ -359,22 +359,11 @@ async def run_extraction_pipeline(
         doc_data["status"] = "error"
         doc_data["error_message"] = str(exc)
         await store.save_document(project_slug, doc_data)
-        raise
-
-    features = await store.list_features(project_slug)
-    from datetime import datetime as dt
-    uploaded_at_val = doc_data.get("uploaded_at")
-    if isinstance(uploaded_at_val, str):
-        uploaded_at_val = dt.fromisoformat(uploaded_at_val)
-
-    return DocumentResponse(
-        slug=doc_data["slug"],
-        project_slug=project_slug,
-        filename=doc_data["filename"],
-        status=doc_data["status"],
-        pdf_size_bytes=doc_data["pdf_size_bytes"],
-        feature_count=doc_data["feature_count"],
-        features=[_feature_dict_to_response(f) for f in features],
-        uploaded_at=uploaded_at_val,
-        error_message=doc_data.get("error_message"),
-    )
+        # If feature was already created by Call 1, mark it as error too
+        if feature_data.get("name"):
+            try:
+                feature_data["status"] = "error"
+                feature_data["error_message"] = str(exc)
+                await store.save_feature(project_slug, feature_data)
+            except Exception:
+                pass

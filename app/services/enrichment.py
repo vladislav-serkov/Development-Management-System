@@ -13,10 +13,9 @@ from app.schemas.enrichment import (
     ExternalApiEnrichment,
     KafkaTopicEnrichmentBatch,
 )
+from app.services.claude_client import call_claude, log_cache_stats
 from app.services.extraction import (
     _build_document_block,
-    _get_client,
-    _log_cache_stats,
     _normalize_dep_name,
 )
 from app.services.rules import build_system_prompt
@@ -80,7 +79,6 @@ async def run_enrichment_pipeline(
     )
 
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
-    client = _get_client()
     model = settings.claude_model
 
     global_rules = await store.get_global_rules()
@@ -106,7 +104,8 @@ async def run_enrichment_pipeline(
     if system_prompt:
         create_kwargs_enr["system"] = system_prompt
 
-    response = await client.messages.create(
+    response = await call_claude(
+        label=f"enrichment:{dep_type}",
         **create_kwargs_enr,
         messages=[
             {
@@ -119,7 +118,7 @@ async def run_enrichment_pipeline(
         ],
     )
 
-    _log_cache_stats(response.usage, f"enrichment:{dep_type}")
+    log_cache_stats(response.usage, f"enrichment:{dep_type}")
 
     tool_block = None
     for block in response.content:

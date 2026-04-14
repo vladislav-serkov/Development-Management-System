@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from app.config import settings
 from app.prompts.test_cases import DETAIL_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, get_few_shot
 from app.schemas.test_cases import TestCaseGenerationResult, TestCasePlanResult
-from app.services.extraction import _get_client, _log_cache_stats
+from app.services.claude_client import call_claude, log_cache_stats
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -255,7 +255,6 @@ def _build_shared_context(feature: dict, enriched_deps: dict) -> str:
 
 
 async def _call_plan_phase(
-    client,
     model: str,
     shared_context: str,
     system_prompt: str = PLAN_SYSTEM_PROMPT,
@@ -269,7 +268,8 @@ async def _call_plan_phase(
         "input_schema": tool_schema,
     }
 
-    response = await client.messages.create(
+    response = await call_claude(
+        label="test_cases_plan",
         model=model,
         max_tokens=8192,
         system=system_prompt,
@@ -293,7 +293,7 @@ async def _call_plan_phase(
         ],
     )
 
-    _log_cache_stats(response.usage, "test_cases:plan")
+    log_cache_stats(response.usage, "test_cases:plan")
 
     tool_block = None
     for block in response.content:
@@ -316,7 +316,6 @@ async def _call_plan_phase(
 
 
 async def _call_detail_phase(
-    client,
     model: str,
     shared_context: str,
     plan_items: list[dict],
@@ -332,7 +331,8 @@ async def _call_detail_phase(
         "input_schema": tool_schema,
     }
 
-    response = await client.messages.create(
+    response = await call_claude(
+        label="test_cases_detail",
         model=model,
         max_tokens=42768,
         system=system_prompt,
@@ -364,7 +364,7 @@ async def _call_detail_phase(
         ],
     )
 
-    _log_cache_stats(response.usage, "test_cases:detail")
+    log_cache_stats(response.usage, "test_cases:detail")
     logger.info("[test_cases:detail] stop_reason=%s, content_blocks=%d", response.stop_reason, len(response.content))
 
     tool_block = None
@@ -524,7 +524,6 @@ async def run_test_cases_pipeline(
     feature_type = feature.get("type", "")
     shared_ctx = _build_shared_context(feature, enriched_deps)
 
-    client = _get_client()
     model = settings.test_cases_model
 
     global_rules = await store.get_global_rules()
@@ -542,8 +541,8 @@ async def run_test_cases_pipeline(
 
     # Sequential 2-call pipeline: plan then detail
     try:
-        plan_items = await _call_plan_phase(client, model, shared_ctx, plan_system_prompt)
-        all_new_test_cases = await _call_detail_phase(client, model, shared_ctx, plan_items, feature_type, detail_system_prompt)
+        plan_items = await _call_plan_phase(model, shared_ctx, plan_system_prompt)
+        all_new_test_cases = await _call_detail_phase(model, shared_ctx, plan_items, feature_type, detail_system_prompt)
 
         # Post-generation validation (observability only — log warnings, do not reject)
         validation_warnings = _validate_test_cases(all_new_test_cases, len(plan_items))

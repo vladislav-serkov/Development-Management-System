@@ -233,6 +233,7 @@ def _feature_to_response(f: dict) -> FeatureResponse:
         method=f.get("method"),
         endpoint=f.get("endpoint"),
         structured_logic=sl,
+        error_message=f.get("error_message"),
         gap_count=f.get("gap_count", 0),
         pending_gap_count=f.get("pending_gap_count", 0),
         gaps_status=f.get("gaps_status"),

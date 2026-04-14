@@ -155,6 +155,7 @@ class FeatureResponse(BaseModel):
     method: str | None = None
     endpoint: str | None = None
     structured_logic: dict | None = None  # from structured_logic_json field
+    error_message: str | None = None
     gap_count: int = 0
     pending_gap_count: int = 0
     gaps_status: str | None = None

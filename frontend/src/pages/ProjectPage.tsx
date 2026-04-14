@@ -96,7 +96,10 @@ export default function ProjectPage() {
   }, [setSidebarWidth])
 
   const { data: project, isLoading: projectLoading } = useProject(projectSlug)
-  const { data: features } = useProjectFeatures(projectSlug)
+  const { data: allFeatures } = useProjectFeatures(projectSlug, project?.status)
+  const features = allFeatures?.filter(f => f.status === "done" || f.status === "error")
+  const extractingCount = allFeatures?.filter(f => f.status === "detected" || f.status === "extracting").length ?? 0
+  const isExtracting = extractingCount > 0 || project?.status === "processing"
   const { data: dependencies } = useProjectDependencies(projectSlug)
   const uploadMutation = useUploadDocument(projectSlug!)
 
@@ -167,6 +170,7 @@ export default function ProjectPage() {
 
   const totalDependencies = dependencies?.length ?? 0
   const readyFeatures = features?.filter((feature) => feature.status === "done").length ?? 0
+  const errorFeatures = features?.filter((feature) => feature.status === "error").length ?? 0
 
   return (
     <div className="flex h-screen bg-background">
@@ -211,7 +215,7 @@ export default function ProjectPage() {
             )}
 
             <div className="grid grid-cols-2 gap-2">
-              <SidebarMetric label="Фичи" value={features?.length ?? 0} helper={`${readyFeatures} готовы`} />
+              <SidebarMetric label="Фичи" value={features?.length ?? 0} helper={`${readyFeatures} готовы${errorFeatures > 0 ? `, ${errorFeatures} ошибок` : ""}`} />
               <SidebarMetric label="Источники" value={project.document_count} helper={`${totalDependencies} зависимостей`} />
             </div>
           </div>
@@ -239,6 +243,15 @@ export default function ProjectPage() {
                   </Badge>
                 )}
               </div>
+
+              {isExtracting && (
+                <div className="mb-2 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2.5 dark:border-amber-800 dark:bg-amber-950/30">
+                  <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-400" />
+                  <span className="text-xs text-amber-700 dark:text-amber-400">
+                    Извлечение{extractingCount > 0 ? ` (${extractingCount})` : ""}<AnimatedDots className="inline" />
+                  </span>
+                </div>
+              )}
 
               <div className="space-y-1">
                 {features?.map((feature) => (
@@ -583,6 +596,37 @@ function ProjectContentArea({
       <Suspense fallback={<ContentLoadingState label="Загрузка детали зависимости..." />}>
         <DependencyDetail dep={selectedDep} projectSlug={projectSlug} />
       </Suspense>
+    )
+  }
+
+  if (selectedFeature && selectedFeature.status === "error") {
+    return (
+      <div className="space-y-6">
+        <Card className="border border-destructive/30 bg-destructive/5">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-destructive/10 p-2">
+                <AlertTriangle className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Ошибка извлечения</CardTitle>
+                <CardDescription>Не удалось извлечь фичу «{selectedFeature.name}» из PDF</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {selectedFeature.error_message && (
+              <div className="rounded-lg border border-destructive/20 bg-background p-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Подробности</p>
+                <p className="mt-1 text-sm">{selectedFeature.error_message}</p>
+              </div>
+            )}
+            <p className="text-sm text-muted-foreground">
+              Попробуйте загрузить PDF повторно или убедитесь, что документ содержит читаемое техническое задание.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
     )
   }
 

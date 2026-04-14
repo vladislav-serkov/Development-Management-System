@@ -1,18 +1,15 @@
-import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Path
 
 from app.schemas.test_cases import TestCaseReviewRequest
+from app.services.task_manager import task_manager
 from app.services.test_cases import run_test_cases_pipeline, _check_enrichment_gate
 from app.storage import ProjectStore
 
 logger = logging.getLogger(__name__)
 
 store = ProjectStore()
-
-# Track background tasks keyed by "{project_slug}/{feature_name}" to detect stuck "running" states
-_running_tasks: dict[str, asyncio.Task] = {}
 
 router = APIRouter(
     prefix="/projects/{project_slug}/features/{feature_name}/test-cases",
@@ -31,18 +28,13 @@ async def run_test_cases(
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
 
-    task_key = f"{project_slug}/{feature_name}"
+    task_key = f"test_cases:{project_slug}/{feature_name}"
 
     if feature.get("test_cases_status") == "running":
-        # Check if there is actually a live task running — if not, the previous run crashed
-        existing_task = _running_tasks.get(task_key)
-        if existing_task is not None and not existing_task.done():
+        if task_manager.is_running(task_key):
             return {"status": "already_running"}
-        # No live task found — stuck state: reset to "error" and allow re-run
-        logger.warning(
-            "run_test_cases: stuck 'running' state detected for %s/%s, recovering",
-            project_slug, feature_name,
-        )
+        # No live task — stuck state, recover
+        logger.warning("run_test_cases: stuck 'running' state detected for %s/%s, recovering", project_slug, feature_name)
         await store.update_feature(project_slug, feature_name, {"test_cases_status": "error"})
 
     if feature.get("test_cases_status") == "done":
@@ -57,24 +49,10 @@ async def run_test_cases(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Mark running immediately
+    # Mark running immediately and launch in background
     await store.update_feature(project_slug, feature_name, {"test_cases_status": "running"})
-
     logger.info("run_test_cases: project=%s, feature=%s", project_slug, feature_name)
-
-    # Launch in background and track the task reference
-    task = asyncio.create_task(run_test_cases_pipeline(project_slug, feature_name, store))
-    _running_tasks[task_key] = task
-
-    def _on_task_done(t: asyncio.Task) -> None:
-        _running_tasks.pop(task_key, None)
-        if not t.cancelled() and t.exception() is not None:
-            logger.error(
-                "run_test_cases background task failed for %s/%s: %s",
-                project_slug, feature_name, t.exception(),
-            )
-
-    task.add_done_callback(_on_task_done)
+    task_manager.launch(task_key, run_test_cases_pipeline(project_slug, feature_name, store))
 
     return {"status": "started"}
 

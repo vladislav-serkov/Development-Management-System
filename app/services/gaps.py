@@ -14,7 +14,7 @@ from app.prompts.gaps import (
 )
 from app.schemas.extraction import StructuredBusinessLogic
 from app.schemas.gaps import ApplyResult, GapsAnalysisResult
-from app.services.extraction import _get_client, _log_cache_stats
+from app.services.claude_client import call_claude, log_cache_stats
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,6 @@ def _build_shared_context(feature: dict, enriched_deps: dict) -> str:
 
 
 async def _call_gaps_analysis(
-    client,
     model: str,
     shared_context: str,
     system_prompt: str = SYSTEM_PROMPT,
@@ -68,7 +67,8 @@ async def _call_gaps_analysis(
         "input_schema": tool_schema,
     }
 
-    response = await client.messages.create(
+    response = await call_claude(
+        label="gaps_analysis",
         model=model,
         max_tokens=8192,
         system=system_prompt,
@@ -96,7 +96,7 @@ async def _call_gaps_analysis(
         ],
     )
 
-    _log_cache_stats(response.usage, "gaps:analysis")
+    log_cache_stats(response.usage, "gaps:analysis")
 
     tool_block = None
     for block in response.content:
@@ -213,7 +213,6 @@ async def run_gaps_pipeline(
 
     shared_ctx = _build_shared_context(feature, enriched_deps)
 
-    client = _get_client()
     model = settings.gaps_model
 
     global_rules = await store.get_global_rules()
@@ -225,7 +224,7 @@ async def run_gaps_pipeline(
     )
 
     try:
-        all_new_gaps = await _call_gaps_analysis(client, model, shared_ctx, system_prompt)
+        all_new_gaps = await _call_gaps_analysis(model, shared_ctx, system_prompt)
 
         # Smart merge with existing gaps
         existing_gaps = await store.get_gaps(project_slug, feature_name)
@@ -299,7 +298,6 @@ async def generate_apply_preview(
         "input_schema": tool_schema,
     }
 
-    client = _get_client()
     global_rules = await store.get_global_rules()
     project_rules = await store.get_project_rules(project_slug)
     apply_system_prompt = build_system_prompt(
@@ -307,7 +305,8 @@ async def generate_apply_preview(
         global_rules=global_rules.get("gaps", ""),
         project_rules=project_rules.get("gaps", ""),
     )
-    response = await client.messages.create(
+    response = await call_claude(
+        label="gaps_apply_preview",
         model=settings.gaps_model,
         max_tokens=16384,
         system=apply_system_prompt,
@@ -316,7 +315,7 @@ async def generate_apply_preview(
         messages=[{"role": "user", "content": user_message}],
     )
 
-    _log_cache_stats(response.usage, "gaps:apply_preview")
+    log_cache_stats(response.usage, "gaps:apply_preview")
 
     tool_block = None
     for block in response.content:

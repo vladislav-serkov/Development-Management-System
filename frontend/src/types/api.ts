@@ -71,6 +71,7 @@ export interface FeatureResponse {
   method: string | null
   endpoint: string | null
   structured_logic: StructuredBusinessLogic | null
+  error_message: string | null
   gap_count?: number
   pending_gap_count?: number
   gaps_status?: "running" | "done" | "error" | "overloaded" | null
@@ -153,15 +154,6 @@ export interface ExportResponse {
   exported_features: string[]
   target_path: string
   files_written: string[]
-}
-
-// SSE progress event
-export interface ProgressEvent {
-  type: "progress" | "done" | "error"
-  status?: DocumentStatus
-  feature_count?: number
-  features?: { name: string; type: string; status: FeatureStatus }[]
-  message?: string
 }
 
 // Dependency types (v1.1)

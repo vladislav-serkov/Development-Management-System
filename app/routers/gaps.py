@@ -1,10 +1,10 @@
-import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Path
 
 from app.schemas.gaps import ApplyConfirmRequest, GapReviewRequest
 from app.services.gaps import confirm_apply, run_apply_preview_background, run_gaps_pipeline
+from app.services.task_manager import task_manager
 from app.storage import ProjectStore
 
 logger = logging.getLogger(__name__)
@@ -35,15 +35,17 @@ async def run_gaps_analysis(
             status_code=409,
             detail="Gaps analysis already completed for this feature",
         )
+    task_key = f"gaps:{project_slug}/{feature_name}"
     if feature.get("gaps_status") == "running":
-        raise HTTPException(
-            status_code=409,
-            detail="Gaps analysis is already running for this feature",
-        )
+        if task_manager.is_running(task_key):
+            raise HTTPException(status_code=409, detail="Gaps analysis is already running for this feature")
+        # No live task — stuck state, recover
+        logger.warning("run_gaps: stuck 'running' state detected for %s/%s, recovering", project_slug, feature_name)
+        await store.update_feature(project_slug, feature_name, {"gaps_status": "error"})
 
     # Mark as running immediately and launch in background
     await store.update_feature(project_slug, feature_name, {"gaps_status": "running"})
-    asyncio.create_task(run_gaps_pipeline(project_slug, feature_name, store))
+    task_manager.launch(task_key, run_gaps_pipeline(project_slug, feature_name, store))
 
     return {"status": "running"}
 
@@ -140,11 +142,15 @@ async def apply_preview_run(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    task_key = f"apply:{project_slug}/{feature_name}"
     if feature.get("apply_status") == "running":
-        raise HTTPException(status_code=409, detail="Apply preview is already running")
+        if task_manager.is_running(task_key):
+            raise HTTPException(status_code=409, detail="Apply preview is already running")
+        logger.warning("apply_preview: stuck 'running' state detected for %s/%s, recovering", project_slug, feature_name)
+        await store.update_feature(project_slug, feature_name, {"apply_status": "error"})
 
     await store.update_feature(project_slug, feature_name, {"apply_status": "running"})
-    asyncio.create_task(run_apply_preview_background(project_slug, feature_name, store))
+    task_manager.launch(task_key, run_apply_preview_background(project_slug, feature_name, store))
     return {"status": "running"}
 
 

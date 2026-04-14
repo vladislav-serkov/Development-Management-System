@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from app.config import settings
 from app.prompts.bugs import SYSTEM_PROMPT
 from app.schemas.bugs import BugReportResult
-from app.services.extraction import _get_client
+from app.services.claude_client import call_claude
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,6 @@ async def generate_bug_report(
         "input_schema": tool_schema,
     }
 
-    client = _get_client()
     model = settings.bugs_model
 
     global_rules = await store.get_global_rules()
@@ -122,7 +121,8 @@ async def generate_bug_report(
         project_rules=project_rules.get("bugs", ""),
     )
 
-    response = await client.messages.create(
+    response = await call_claude(
+        label="bug_report",
         model=model,
         max_tokens=4096,
         system=system_prompt,
