@@ -2,11 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**IMPORTANT: All tasks MUST go through GSD workflow — use `/gsd:fast` for trivial/small tasks, `/gsd:quick` for anything larger. No direct edits outside GSD.**
-
 ## Project
 
-Extract Agent — AI-powered platform that extracts structured feature specifications from PDF documents using Claude API, then generates gaps analysis and test cases. Users upload PDFs, the system extracts features with their logic/parameters/dependencies via Claude, and provides review/editing UI.
+Extract Agent — AI-powered platform that extracts structured feature specifications from PDF documents using Claude API, then generates gaps analysis, test cases, and bug reports. Users upload PDFs, the system extracts features with their logic/parameters/dependencies via Claude, and provides review/editing UI. Supports project-level validation rules.
 
 ## Commands
 
@@ -36,7 +34,8 @@ npm run lint     # eslint
 
 ### Docker
 ```bash
-docker compose up          # backend :8000 + frontend :5173
+docker compose up              # backend :8000 + frontend :5173 (dev)
+docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 ```
 
 ## Architecture
@@ -51,20 +50,24 @@ docker compose up          # backend :8000 + frontend :5173
   - `dependencies.py` — dependency listing/enrichment (`/projects/{slug}/dependencies/...`)
   - `gaps.py` — gaps analysis per feature (`/projects/{slug}/features/{name}/gaps/...`)
   - `test_cases.py` — test case generation per feature (`/projects/{slug}/features/{name}/test-cases/...`)
+  - `bugs.py` — bug reports derived from test cases (`/projects/{slug}/features/{name}/bugs/...`)
+  - `rules.py` — project-level validation rules (`/projects/{slug}/rules/...`)
 - **`app/services/`** — Business logic:
   - `extraction.py` — Claude API calls: PDF → feature detection (Call 1) → message mapping extraction (Call 2, conditional). Uses `anthropic.AsyncAnthropic` with tool_use for structured output
   - `gaps.py` — Gaps analysis via Claude
   - `test_cases.py` — Test case generation via Claude
+  - `bugs.py` — Bug report generation from test case review via Claude
+  - `rules.py` — Validation rules management
   - `enrichment.py` — Dependency enrichment via Claude (PDF-based)
   - `export.py` — Project zip export
 - **`app/schemas/`** — Pydantic response/request models
 
 ### Frontend (React 19/Vite/TypeScript)
-- **`src/pages/`** — `HomePage` (project grid) and `ProjectPage` (single project view)
+- **`src/pages/`** — `HomePage` (project grid), `ProjectPage` (single project view), `RulesPage` (validation rules)
 - **`src/api/`** — API client functions (fetch-based, typed)
-- **`src/hooks/`** — TanStack Query hooks per domain (`useDocuments`, `useExtraction`, `useGaps`, `useTestCases`, `useDependencies`, `useExport`)
+- **`src/hooks/`** — TanStack Query hooks per domain (`useDocuments`, `useExtraction`, `useGaps`, `useTestCases`, `useDependencies`, `useExport`, `useBugs`, `useRules`)
 - **`src/stores/`** — Zustand store (`uiStore`) for UI state
-- **`src/components/`** — organized by domain: `project/`, `feature/`, `dependency/`, `ui/` (shadcn)
+- **`src/components/`** — organized by domain: `project/`, `feature/`, `dependency/`, `artifact/`, `layout/`, `progress/`, `ui/` (shadcn)
 - Path alias: `@` → `src/`
 - Vite proxy: `/api/*` → backend (strips `/api` prefix)
 
@@ -73,11 +76,13 @@ File-based JSON, no database. Structure per project:
 ```
 data/projects/{project-slug}/
   project.json
+  rules.json
   documents/{doc-slug}.json
   features/{feature-name}/
     feature.json
-    gaps.json
-    test-cases.json
+  gaps/{feature-name}.json
+  test-cases/{feature-name}.json
+  bugs/{feature-name}.json
   dependencies/
     db_tables.json
     external_apis.json
@@ -86,14 +91,14 @@ data/projects/{project-slug}/
 ```
 
 ### LLM Integration
-- Uses **Anthropic Claude API** (not OpenAI despite original plan) via `anthropic` Python SDK
+- Uses **Anthropic Claude API** via `anthropic` Python SDK
 - Extraction pipeline: 2-call pattern — Call 1 detects features via `detect_feature` tool, Call 2 extracts detailed mappings via `extract_message_mappings` tool (conditional)
 - PDF sent as base64 document blocks with `cache_control: ephemeral` for prompt caching
 - Models configured in `app/config.py`: `claude_model` (extraction), `gaps_model`, `test_cases_model`
 
 ### Key Patterns
 - All storage operations are async (`aiofiles`), go through `ProjectStore` singleton instantiated per router
-- Tests use `conftest.py` with mock Claude client (`make_mock_claude_client`) — note: conftest still references old SQLAlchemy setup (stale)
+- Tests use `conftest.py` with mock Claude client (`make_mock_claude_client`)
 - Frontend uses TanStack Query for all server state; mutations invalidate queries automatically
 - SSE used for extraction progress streaming (`/documents/{slug}/progress`)
 - **Long-running LLM calls (1-2 min)**: backend MUST use `asyncio.create_task()` + immediate response; frontend MUST poll via `refetchInterval` while status is `"running"`. Never block the HTTP request. Loaders must survive navigation (check server status, not just mutation.isPending). Sidebar must show animated dots (`AnimatedDots`) for any feature with running gaps/tests.
