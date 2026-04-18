@@ -1,48 +1,31 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useUIStore } from "@/stores/uiStore"
-import { useProject, useRenameProject, useUploadDocument, useProjectFeatures, useSaveFeature, useDeleteFeature } from "@/hooks/useDocuments"
-import { useProjectDependencies, useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies"
+import { useProject, useUploadDocument, useProjectFeatures, useSaveFeature, useDeleteFeature } from "@/hooks/useDocuments"
+import { useProjectDependencies } from "@/hooks/useDependencies"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { UploadZone } from "@/components/project/UploadZone"
-import { ExportDialog } from "@/components/project/ExportDialog"
-import { EnrichUploadZone } from "@/components/dependency/EnrichUploadZone"
-import { AnimatedDots } from "@/components/dependency/AnimatedDots"
+import { ProjectSidebar, MethodBadge } from "@/components/sidebar"
 import {
   AlertTriangle,
   ArrowRight,
   Check,
-  ChevronRight,
-  Database,
-  FileJson2,
   Files,
   FolderKanban,
   Gauge,
-  Globe,
-  HardDrive,
   Inbox,
-  Layers,
-  MessageSquare,
   Pencil,
-  Plus,
   Sparkles,
   Trash2,
   Workflow,
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { dependencyPath, featurePath, homePath, isFeatureTab, projectPath, rulesPath, type FeatureTab } from "@/lib/routes"
+import { dependencyPath, featurePath, isFeatureTab, projectPath, type FeatureTab } from "@/lib/routes"
 import type {
-  CreateDependencyRequest,
-  DependencyStatus,
-  DependencyType,
   FeatureResponse,
-  FeatureStatus,
   ProjectDependency,
   StructuredBusinessLogic,
 } from "@/types/api"
@@ -98,8 +81,6 @@ export default function ProjectPage() {
   const { data: project, isLoading: projectLoading } = useProject(projectSlug)
   const { data: allFeatures } = useProjectFeatures(projectSlug, project?.status)
   const features = allFeatures?.filter(f => f.status === "done" || f.status === "error")
-  const extractingCount = allFeatures?.filter(f => f.status === "detected" || f.status === "extracting").length ?? 0
-  const isExtracting = extractingCount > 0 || project?.status === "processing"
   const { data: dependencies } = useProjectDependencies(projectSlug)
   const uploadMutation = useUploadDocument(projectSlug!)
 
@@ -122,44 +103,8 @@ export default function ProjectPage() {
     navigate(projectPath(projectSlug), { replace: true })
   }, [dependencies, depNameParam, depTypeParam, navigate, projectSlug, selectedDep])
 
-  const renameMutation = useRenameProject(projectSlug!)
-  const deleteFeatureMutation = useDeleteFeature(projectSlug ?? "")
-
-  const [isEditingName, setIsEditingName] = useState(false)
-  const [editedName, setEditedName] = useState("")
-
-  const handleStartEdit = () => {
-    setEditedName(project?.name ?? "")
-    setIsEditingName(true)
-  }
-
-  const handleSaveName = () => {
-    if (!editedName.trim()) return
-    renameMutation.mutate(editedName.trim(), {
-      onSuccess: () => setIsEditingName(false),
-    })
-  }
-
   if (projectLoading || !project) {
     return <div className="p-8 text-sm text-muted-foreground">Загрузка проекта...</div>
-  }
-
-  function handleFeatureClick(featureName: string, tab: FeatureTab = "logic") {
-    navigate(featurePath(projectSlug!, featureName, tab))
-  }
-
-  function handleDepClick(dep: ProjectDependency) {
-    navigate(dependencyPath(projectSlug!, dep.dep_type, dep.name))
-  }
-
-  const isFeatureActive = (featureName: string) => selectedFeature?.name === featureName
-  const isDepActive = (dep: ProjectDependency) => selectedDep?.name === dep.name && selectedDep?.dep_type === dep.dep_type
-
-  const depsByType = {
-    db_table: dependencies?.filter((dep) => dep.dep_type === "db_table") ?? [],
-    external_api: dependencies?.filter((dep) => dep.dep_type === "external_api") ?? [],
-    cache: dependencies?.filter((dep) => dep.dep_type === "cache") ?? [],
-    kafka_topic: dependencies?.filter((dep) => dep.dep_type === "kafka_topic") ?? [],
   }
 
   const contentKey = selectedDep
@@ -168,252 +113,20 @@ export default function ProjectPage() {
       ? `feature-${selectedFeature.name}-${activeFeatureTab}`
       : "none"
 
-  const totalDependencies = dependencies?.length ?? 0
-  const readyFeatures = features?.filter((feature) => feature.status === "done").length ?? 0
-  const errorFeatures = features?.filter((feature) => feature.status === "error").length ?? 0
-
   return (
     <div className="flex h-screen bg-background">
-      <aside className="relative flex h-screen shrink-0 flex-col border-r bg-muted/30" style={{ width: sidebarWidth }}>
-        <div className="border-b p-4">
-          <div className="flex items-center justify-between gap-2">
-            <Button variant="ghost" size="sm" className="justify-start text-xs" onClick={() => navigate(homePath())}>
-              &larr; Все проекты
-            </Button>
-            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => navigate(rulesPath())}>
-              Правила
-            </Button>
-          </div>
-
-          <div className="mt-4 space-y-3 px-1">
-            {isEditingName ? (
-              <div className="flex items-center gap-1">
-                <input
-                  className="min-w-0 flex-1 border-b border-primary bg-transparent text-base font-semibold outline-none"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleSaveName()
-                    if (e.key === "Escape") setIsEditingName(false)
-                  }}
-                  autoFocus
-                />
-              </div>
-            ) : (
-              <div>
-                <p
-                  className="cursor-pointer truncate text-base font-semibold transition-colors hover:text-primary"
-                  onClick={handleStartEdit}
-                  title="Нажмите, чтобы переименовать проект"
-                >
-                  {project.name}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Создан {new Date(project.created_at).toLocaleDateString()}
-                </p>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-2">
-              <SidebarMetric label="Фичи" value={features?.length ?? 0} helper={`${readyFeatures} готовы${errorFeatures > 0 ? `, ${errorFeatures} ошибок` : ""}`} />
-              <SidebarMetric label="Источники" value={project.document_count} helper={`${totalDependencies} зависимостей`} />
-            </div>
-          </div>
-        </div>
-
-        <div className="border-b p-4">
-          <div className="mb-2 px-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Источники</p>
-            <p className="mt-1 text-xs text-muted-foreground">Загрузите PDF, чтобы обновить фичи и зависимости проекта.</p>
-          </div>
-          <UploadZone onUpload={(file) => uploadMutation.mutate(file)} isUploading={uploadMutation.isPending} />
-        </div>
-
-        <ScrollArea className="flex-1 min-h-0 p-4">
-          <div className="space-y-5">
-            <section>
-              <div className="mb-2 flex items-center justify-between px-1">
-                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  <Layers className="h-3.5 w-3.5" />
-                  Навигация по фичам
-                </div>
-                {features && features.length > 0 && (
-                  <Badge variant="outline" className="h-5 px-1.5 py-0 text-[10px]">
-                    {features.length}
-                  </Badge>
-                )}
-              </div>
-
-              {isExtracting && (
-                <div className="mb-2 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2.5 dark:border-amber-800 dark:bg-amber-950/30">
-                  <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-400" />
-                  <span className="text-xs text-amber-700 dark:text-amber-400">
-                    Извлечение{extractingCount > 0 ? ` (${extractingCount})` : ""}<AnimatedDots className="inline" />
-                  </span>
-                </div>
-              )}
-
-              <div className="space-y-1">
-                {features?.map((feature) => (
-                  <div key={feature.name}>
-                    <div className="group relative flex items-center">
-                      {(() => {
-                        const featureMeta = getFeatureSidebarMeta(feature.name)
-
-                        return (
-                      <button
-                        onClick={() => handleFeatureClick(feature.name)}
-                        title={feature.name}
-                        className={cn(
-                          "flex-1 rounded-xl border px-3 py-2.5 text-left transition-colors",
-                          isFeatureActive(feature.name)
-                            ? "border-primary/20 bg-background shadow-sm"
-                            : "border-transparent hover:border-border hover:bg-background/80"
-                        )}
-                      >
-                        <div className="flex items-start gap-2">
-                          <FeatureStatusDot status={feature.status} />
-                          <div className="min-w-0 flex-1">
-                            {featureMeta.secondary && (
-                              <p className="truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground/80">
-                                {featureMeta.secondary}
-                              </p>
-                            )}
-                            <div className="mt-1 flex items-center gap-2">
-                              <MethodBadge method={feature.method} featureType={feature.type} />
-                              <span className="truncate text-sm font-medium">{featureMeta.primary}</span>
-                            </div>
-                            <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                              <span>{feature.gap_count ?? 0} пробелов</span>
-                              <span>{feature.test_case_count ?? 0} тестов</span>
-                              <span>{feature.bug_count ?? 0} багов</span>
-                            </div>
-                          </div>
-                          <ChevronRight className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", isFeatureActive(feature.name) && "rotate-90")} />
-                        </div>
-                      </button>
-                        )
-                      })()}
-                      <SidebarTrashButton
-                        onDelete={() => {
-                          if (window.confirm(`Удалить фичу "${feature.name}" и все связанные gaps/test-cases/bugs?`)) {
-                            deleteFeatureMutation.mutate(feature.name, {
-                              onSuccess: () => {
-                                if (isFeatureActive(feature.name)) {
-                                  navigate(projectPath(projectSlug!))
-                                }
-                              },
-                            })
-                          }
-                        }}
-                      />
-                    </div>
-
-                    {isFeatureActive(feature.name) && (
-                      <div className="mt-1 space-y-1 pl-5">
-                        <FeatureTabButton active={activeFeatureTab === "logic"} onClick={() => handleFeatureClick(feature.name, "logic")}>
-                          Логика
-                        </FeatureTabButton>
-                        <FeatureTabButton active={activeFeatureTab === "gaps"} onClick={() => handleFeatureClick(feature.name, "gaps")}>
-                          <span className="flex-1">Пробелы</span>
-                          {feature.gaps_status === "running" && <AnimatedDots className="shrink-0 text-xs" />}
-                        </FeatureTabButton>
-                        <FeatureTabButton active={activeFeatureTab === "tests"} onClick={() => handleFeatureClick(feature.name, "tests")}>
-                          <span className="flex-1">Тест-кейсы</span>
-                          {feature.test_cases_status === "running" && <AnimatedDots className="shrink-0 text-xs" />}
-                        </FeatureTabButton>
-                        <FeatureTabButton active={activeFeatureTab === "bugs"} onClick={() => handleFeatureClick(feature.name, "bugs")}>
-                          Баги
-                        </FeatureTabButton>
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {(!features || features.length === 0) && (
-                  <div className="rounded-xl border border-dashed px-3 py-4 text-xs text-muted-foreground">
-                    После загрузки первого PDF здесь появятся извлеченные фичи.
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section>
-              <div className="mb-2 px-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Зависимости и интеграции</p>
-                <p className="mt-1 text-xs text-muted-foreground">Инфраструктурные сущности проекта, сгруппированные по типам.</p>
-              </div>
-
-              <div className="space-y-4">
-                <DepSection
-                  label="DB"
-                  icon={<Database className="h-3.5 w-3.5" />}
-                  deps={depsByType.db_table}
-                  depType="db_table"
-                  projectSlug={projectSlug!}
-                  isDepActive={isDepActive}
-                  onDepClick={handleDepClick}
-                />
-                <DepSection
-                  label="API"
-                  icon={<Globe className="h-3.5 w-3.5" />}
-                  deps={depsByType.external_api}
-                  depType="external_api"
-                  projectSlug={projectSlug!}
-                  isDepActive={isDepActive}
-                  onDepClick={handleDepClick}
-                />
-                <DepSection
-                  label="Кэш"
-                  icon={<HardDrive className="h-3.5 w-3.5" />}
-                  deps={depsByType.cache}
-                  depType="cache"
-                  projectSlug={projectSlug!}
-                  isDepActive={isDepActive}
-                  onDepClick={handleDepClick}
-                />
-                <DepSection
-                  label="Топики"
-                  icon={<MessageSquare className="h-3.5 w-3.5" />}
-                  deps={depsByType.kafka_topic}
-                  depType="kafka_topic"
-                  projectSlug={projectSlug!}
-                  isDepActive={isDepActive}
-                  onDepClick={handleDepClick}
-                />
-
-                <div className="rounded-xl border border-dashed px-3 py-3">
-                  <div className="flex items-center gap-2">
-                    <FileJson2 className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Swagger</span>
-                    <Badge variant="outline" className="h-5 px-1.5 py-0 text-[10px] text-muted-foreground">
-                      скоро
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Этот блок не должен конкурировать с основной навигацией, пока он не реализован.
-                  </p>
-                </div>
-              </div>
-            </section>
-          </div>
-        </ScrollArea>
-
-        <div className="border-t p-4">
-          <div className="mb-2 px-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Экспорт</p>
-            <p className="mt-1 text-xs text-muted-foreground">Соберите текущее состояние проекта в архив.</p>
-          </div>
-          <ExportDialog projectSlug={projectSlug!} />
-        </div>
-
-        <div
-          className="absolute top-0 right-0 h-full w-1 cursor-col-resize transition-colors hover:bg-border"
-          onMouseDown={() => {
-            isDragging.current = true
-          }}
-        />
-      </aside>
+      <ProjectSidebar
+        project={project}
+        projectSlug={projectSlug!}
+        features={features}
+        dependencies={dependencies}
+        selectedFeatureName={selectedFeature?.name ?? null}
+        selectedDep={selectedDep}
+        onUpload={(file) => uploadMutation.mutate(file)}
+        isUploading={uploadMutation.isPending}
+        sidebarWidth={sidebarWidth}
+        onStartDrag={() => { isDragging.current = true }}
+      />
 
       <main className="flex-1 min-h-0 overflow-y-auto p-6">
         <ProjectContentArea
@@ -425,7 +138,7 @@ export default function ProjectPage() {
           selectedDep={selectedDep}
           projectDependencies={dependencies}
           features={features}
-          onDepClick={handleDepClick}
+          onDepClick={(dep) => navigate(dependencyPath(projectSlug!, dep.dep_type, dep.name))}
           activeFeatureTab={activeFeatureTab}
           onFeatureTabChange={(tab) => {
             if (selectedFeature) {
@@ -435,83 +148,6 @@ export default function ProjectPage() {
         />
       </main>
     </div>
-  )
-}
-
-function MethodBadge({ method, featureType, large }: { method: string | null; featureType: string; large?: boolean }) {
-  const resolved = method ?? (featureType === "kafka_consumer" ? "CONSUMER" : featureType === "rest_endpoint" ? "API" : null)
-  if (!resolved) return null
-
-  const colorMap: Record<string, string> = {
-    GET: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-    POST: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-    PUT: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
-    DELETE: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-    PATCH: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
-    CONSUMER: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-    API: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400",
-  }
-
-  return (
-    <span className={cn("shrink-0 rounded px-1.5 py-0.5 font-mono font-semibold", large ? "text-xs" : "text-[10px]", colorMap[resolved] ?? colorMap.API)}>
-      {resolved}
-    </span>
-  )
-}
-
-function FeatureStatusDot({ status }: { status: FeatureStatus }) {
-  const colors: Record<FeatureStatus, string> = {
-    done: "bg-green-500",
-    extracting: "bg-amber-400",
-    error: "bg-destructive",
-    detected: "bg-muted-foreground/40",
-  }
-
-  return <span className={cn("mt-1 inline-block h-2 w-2 shrink-0 rounded-full", colors[status] ?? "bg-muted-foreground/40")} />
-}
-
-function SidebarMetric({ label, value, helper }: { label: string; value: number; helper: string }) {
-  return (
-    <div className="rounded-xl border bg-background px-3 py-2">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{value}</p>
-      <p className="text-[11px] text-muted-foreground">{helper}</p>
-    </div>
-  )
-}
-
-function getFeatureSidebarMeta(featureName: string) {
-  const [context, ...rest] = featureName.split(".")
-
-  if (rest.length === 0) {
-    return { primary: featureName, secondary: null as string | null }
-  }
-
-  return {
-    primary: rest.join("."),
-    secondary: context,
-  }
-}
-
-function FeatureTabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
-        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-      )}
-    >
-      {children}
-    </button>
   )
 }
 
@@ -972,12 +608,12 @@ function FeatureOverviewCard({
   }
 
   return (
-    <div className={cn("min-h-20 px-4 py-3.5", toneClasses[tone])}>
+    <div className={cn("min-w-0 min-h-20 px-4 py-3.5", toneClasses[tone])}>
       <div className="flex items-center gap-2 text-muted-foreground">
         <span className="rounded-md bg-background/80 p-1.5 text-muted-foreground shadow-sm">{icon}</span>
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em]">{label}</span>
+        <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em]">{label}</span>
       </div>
-      <p className="mt-3 text-lg font-semibold leading-tight">{value}</p>
+      <p className="mt-3 truncate text-lg font-semibold leading-tight" title={value}>{value}</p>
     </div>
   )
 }
@@ -1050,232 +686,4 @@ function inferFeatureTypeLabel(feature: FeatureResponse) {
   }
 
   return "Не определен"
-}
-
-function DepSection({
-  label,
-  icon,
-  deps,
-  depType,
-  projectSlug,
-  isDepActive,
-  onDepClick,
-}: {
-  label: string
-  icon: ReactNode
-  deps: ProjectDependency[]
-  depType: string
-  projectSlug: string
-  isDepActive: (dep: ProjectDependency) => boolean
-  onDepClick: (dep: ProjectDependency) => void
-}) {
-  const navigate = useNavigate()
-  const enrichingDepTypes = useUIStore((s) => s.enrichingDepTypes)
-  const isEnriching = enrichingDepTypes.includes(depType)
-  const deleteDep = useDeleteDependency(projectSlug)
-  const createDep = useCreateDependency(projectSlug)
-
-  const [showCreateForm, setShowCreateForm] = useState(false)
-  const [newDepName, setNewDepName] = useState("")
-  const [newDepDesc, setNewDepDesc] = useState("")
-  const [newDepMethod, setNewDepMethod] = useState("GET")
-  const [newDepService, setNewDepService] = useState("")
-  const createActionLabel =
-    depType === "db_table"
-      ? "таблицу"
-      : depType === "external_api"
-        ? "API"
-        : depType === "cache"
-          ? "кэш"
-          : depType === "kafka_topic"
-            ? "топик"
-            : label.toLowerCase()
-
-  const handleCreate = () => {
-    if (!newDepName.trim()) return
-
-    const req: CreateDependencyRequest = {
-      dep_type: depType as DependencyType,
-      name: newDepName.trim(),
-      description: newDepDesc.trim(),
-      ...(depType === "external_api" && { method: newDepMethod, service_name: newDepService.trim() }),
-    }
-
-    createDep.mutate(req, {
-      onSuccess: () => {
-        setShowCreateForm(false)
-        setNewDepName("")
-        setNewDepDesc("")
-        setNewDepMethod("GET")
-        setNewDepService("")
-      },
-    })
-  }
-
-  return (
-    <Collapsible defaultOpen>
-      <div className="mb-1 flex items-center justify-between px-1">
-        <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground">
-          {icon}
-          {label}
-          {deps.length > 0 && <span className="text-[10px] font-normal">({deps.length})</span>}
-        </CollapsibleTrigger>
-
-        <div className="flex items-center gap-1">
-          {(depType === "db_table" || depType === "cache") && (
-            <EnrichUploadZone projectSlug={projectSlug} depType={depType} />
-          )}
-          <button
-            className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={`Добавить ${createActionLabel}`}
-            onClick={() => setShowCreateForm((value) => !value)}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-
-      <CollapsibleContent>
-        {showCreateForm && (
-          <div className="mb-2 space-y-1.5 rounded-xl border bg-background p-3 text-xs">
-            <input
-              className="w-full border-b bg-transparent pb-0.5 outline-none placeholder:text-muted-foreground/60"
-              placeholder="Название *"
-              value={newDepName}
-              onChange={(e) => setNewDepName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate()
-                if (e.key === "Escape") setShowCreateForm(false)
-              }}
-              autoFocus
-            />
-            <input
-              className="w-full border-b bg-transparent pb-0.5 outline-none placeholder:text-muted-foreground/60"
-              placeholder="Описание"
-              value={newDepDesc}
-              onChange={(e) => setNewDepDesc(e.target.value)}
-            />
-
-            {depType === "external_api" && (
-              <>
-                <select
-                  className="w-full border-b bg-transparent pb-0.5 outline-none"
-                  value={newDepMethod}
-                  onChange={(e) => setNewDepMethod(e.target.value)}
-                >
-                  {["GET", "POST", "PUT", "DELETE", "PATCH"].map((method) => (
-                    <option key={method} value={method}>{method}</option>
-                  ))}
-                </select>
-                <input
-                  className="w-full border-b bg-transparent pb-0.5 outline-none placeholder:text-muted-foreground/60"
-                  placeholder="Имя сервиса"
-                  value={newDepService}
-                  onChange={(e) => setNewDepService(e.target.value)}
-                />
-              </>
-            )}
-
-            <div className="flex gap-1 pt-1">
-              <button
-                className="flex-1 rounded bg-primary py-1 text-primary-foreground transition-opacity hover:opacity-90"
-                onClick={handleCreate}
-                disabled={createDep.isPending}
-              >
-                Сохранить
-              </button>
-              <button
-                className="flex-1 rounded border py-1 transition-colors hover:bg-accent"
-                onClick={() => {
-                  setShowCreateForm(false)
-                  setNewDepName("")
-                  setNewDepDesc("")
-                  setNewDepMethod("GET")
-                  setNewDepService("")
-                }}
-              >
-                Отмена
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="space-y-1">
-          {deps.map((dep) => (
-            <div key={dep.name} className="group relative flex items-center">
-              <button
-                onClick={() => onDepClick(dep)}
-                title={dep.name}
-                className={cn(
-                  "flex-1 rounded-xl border px-3 py-2 text-left text-sm transition-colors",
-                  isDepActive(dep)
-                    ? "border-primary/20 bg-background shadow-sm"
-                    : "border-transparent hover:border-border hover:bg-background/80"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <DepStatusDot status={dep.enrichment_status} />
-                  {dep.dep_type === "external_api" && dep.method && (
-                    <MethodBadge method={dep.method} featureType="rest_endpoint" />
-                  )}
-                  <span className="truncate">{dep.name}</span>
-                  {isEnriching && dep.enrichment_status === "stub" && (
-                    <AnimatedDots className="ml-auto shrink-0 text-xs" />
-                  )}
-                </div>
-              </button>
-
-              <SidebarTrashButton
-                onDelete={() => {
-                  if (window.confirm(`Удалить зависимость "${dep.name}"?`)) {
-                    deleteDep.mutate(
-                      { depName: dep.name, depType: dep.dep_type },
-                      {
-                        onSuccess: () => {
-                          if (isDepActive(dep)) {
-                            navigate(projectPath(projectSlug))
-                          }
-                        },
-                      }
-                    )
-                  }
-                }}
-              />
-            </div>
-          ))}
-
-          {deps.length === 0 && !showCreateForm && (
-            <div className="rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground">
-              Пока нет зависимостей этого типа.
-            </div>
-          )}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-function SidebarTrashButton({ onDelete }: { onDelete: () => void }) {
-  return (
-    <button
-      className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
-      title="Удалить"
-      onClick={(e) => {
-        e.stopPropagation()
-        onDelete()
-      }}
-    >
-      <Trash2 className="h-3.5 w-3.5" />
-    </button>
-  )
-}
-
-function DepStatusDot({ status }: { status: DependencyStatus }) {
-  const colors: Record<DependencyStatus, string> = {
-    enriched: "bg-green-500",
-    stub: "bg-muted-foreground/40",
-    error: "bg-destructive",
-  }
-
-  return <span className={cn("inline-block h-2 w-2 shrink-0 rounded-full", colors[status] ?? "bg-muted-foreground/40")} />
 }

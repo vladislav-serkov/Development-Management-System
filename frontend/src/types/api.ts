@@ -158,7 +158,7 @@ export interface ExportResponse {
 
 // Dependency types (v1.1)
 export type DependencyType = "db_table" | "external_api" | "cache" | "kafka_topic"
-export type DependencyStatus = "stub" | "enriched" | "error"
+export type DependencyStatus = "stub" | "enriched" | "error" | "running"
 
 export interface ProjectDependency {
   project_slug: string
