@@ -13,3 +13,6 @@ data/
 *.pdf
 .planning/
 .claude/
+.playwright-mcp/
+*.png
+!frontend/src/assets/*.png

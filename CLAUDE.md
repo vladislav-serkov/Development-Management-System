@@ -11,16 +11,10 @@ Extract Agent — AI-powered platform that extracts structured feature specifica
 ### Backend
 ```bash
 # Install (from repo root, uses .venv)
-pip install -e ".[dev]"
+pip install -e .
 
 # Run dev server
 uvicorn app.main:app --reload --port 8000
-
-# Run all tests
-pytest
-
-# Run single test
-pytest tests/test_extraction.py -k "test_name"
 ```
 
 ### Frontend
@@ -98,7 +92,6 @@ data/projects/{project-slug}/
 
 ### Key Patterns
 - All storage operations are async (`aiofiles`), go through `ProjectStore` singleton instantiated per router
-- Tests use `conftest.py` with mock Claude client (`make_mock_claude_client`)
 - Frontend uses TanStack Query for all server state; mutations invalidate queries automatically
 - SSE used for extraction progress streaming (`/documents/{slug}/progress`)
 - **Long-running LLM calls (1-2 min)**: backend MUST use `asyncio.create_task()` + immediate response; frontend MUST poll via `refetchInterval` while status is `"running"`. Never block the HTTP request. Loaders must survive navigation (check server status, not just mutation.isPending). Sidebar must show animated dots (`AnimatedDots`) for any feature with running gaps/tests.
