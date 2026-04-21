@@ -1,20 +1,18 @@
 import { useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { useEnrichDependency } from "@/hooks/useDependencies"
-import { useUIStore } from "@/stores/uiStore"
 import { AnimatedDots } from "./AnimatedDots"
 
 interface EnrichUploadZoneProps {
   projectSlug: string
   depType: string
   depName?: string
+  isRunning?: boolean
 }
 
-export function EnrichUploadZone({ projectSlug, depType, depName }: EnrichUploadZoneProps) {
+export function EnrichUploadZone({ projectSlug, depType, depName, isRunning }: EnrichUploadZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const enrichMutation = useEnrichDependency(projectSlug)
-  const enrichingDepTypes = useUIStore((s) => s.enrichingDepTypes)
-  const isEnriching = enrichingDepTypes.includes(depType)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -27,7 +25,7 @@ export function EnrichUploadZone({ projectSlug, depType, depName }: EnrichUpload
   return (
     <>
       <input ref={inputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileChange} />
-      {isEnriching ? (
+      {isRunning || enrichMutation.isPending ? (
         <AnimatedDots className="text-xs px-2" />
       ) : (
         <Button
@@ -35,7 +33,6 @@ export function EnrichUploadZone({ projectSlug, depType, depName }: EnrichUpload
           size="sm"
           className="h-6 px-2 text-xs"
           onClick={() => inputRef.current?.click()}
-          disabled={enrichMutation.isPending}
         >
           + PDF
         </Button>

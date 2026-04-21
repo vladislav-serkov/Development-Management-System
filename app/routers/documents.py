@@ -15,7 +15,12 @@ from app.services.task_manager import task_manager
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-def _doc_to_response(doc: dict, features: list[dict]) -> DocumentResponse:
+def _doc_to_response(
+    doc: dict,
+    features: list[dict],
+    *,
+    active_tasks: list[dict] | None = None,
+) -> DocumentResponse:
     from datetime import datetime
     uploaded_at = doc.get("uploaded_at")
     if isinstance(uploaded_at, str):
@@ -27,7 +32,7 @@ def _doc_to_response(doc: dict, features: list[dict]) -> DocumentResponse:
         status=doc.get("status", "pending"),
         pdf_size_bytes=doc.get("pdf_size_bytes", 0),
         feature_count=doc.get("feature_count", 0),
-        features=[_feature_to_response(f) for f in features],
+        features=[_feature_to_response(f, active_tasks=active_tasks) for f in features],
         uploaded_at=uploaded_at,
         error_message=doc.get("error_message"),
     )
@@ -91,7 +96,7 @@ async def upload_document(
         ),
     )
 
-    return _doc_to_response(doc_data, [])
+    return _doc_to_response(doc_data, [], active_tasks=[])
 
 
 @router.get("/", response_model=list[DocumentResponse])
@@ -103,8 +108,9 @@ async def list_documents():
         slug = proj["slug"]
         docs = await store.list_documents(slug)
         features = await store.list_features(slug)
+        active_tasks = await store.list_tasks(slug, status="running")
         for doc in docs:
-            all_docs.append(_doc_to_response(doc, features))
+            all_docs.append(_doc_to_response(doc, features, active_tasks=active_tasks))
     return all_docs
 
 
@@ -129,7 +135,8 @@ async def patch_feature(
     if updates:
         feature = await store.update_feature(project_slug, feature_name, updates)
 
-    return _feature_to_response(feature)
+    active_tasks = await store.list_tasks(project_slug, status="running")
+    return _feature_to_response(feature, active_tasks=active_tasks)
 
 
 @router.patch("/{doc_slug}", response_model=DocumentResponse)

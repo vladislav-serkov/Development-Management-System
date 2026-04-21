@@ -7,8 +7,7 @@ export function useFeatureTestCases(projectSlug: string | null, featureName: str
     queryFn: () => fetchTestCases(projectSlug!, featureName!),
     enabled: !!projectSlug && !!featureName,
     refetchInterval: (query) => {
-      const status = query.state.data?.test_cases_status
-      return status === "running" ? 2000 : false
+      return query.state.data?.test_cases_running ? 2000 : false
     },
   })
 }

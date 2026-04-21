@@ -22,7 +22,7 @@ function RichText({ text }: { text: string }) {
     <>
       {parts.map((part, i) =>
         part.startsWith("`") && part.endsWith("`") ? (
-          <code key={i} className="px-1 py-px rounded bg-muted text-[12px] font-mono">
+          <code key={i} className="px-1 py-px rounded bg-muted text-[0.75rem] font-mono">
             {part.slice(1, -1)}
           </code>
         ) : (
@@ -79,7 +79,7 @@ function GapCard({
           >
             <button
               className={cn(
-                "mt-[3px] shrink-0 w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors",
+                "mt-[0.1875rem] shrink-0 w-4 h-4 rounded-[0.25rem] border flex items-center justify-center transition-colors",
                 resolved
                   ? "bg-emerald-500 border-emerald-500 text-white"
                   : applied
@@ -100,7 +100,7 @@ function GapCard({
 
             <div className="flex-1 min-w-0">
               <p className={cn(
-                "text-[13px] font-medium leading-[1.65]",
+                "text-[0.8125rem] font-medium leading-[1.65]",
                 !open && "line-clamp-2",
                 (resolved || applied) && "text-muted-foreground",
               )}>
@@ -108,7 +108,7 @@ function GapCard({
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                  "rounded-full px-2 py-0.5 text-[0.625rem] font-medium",
                   applied && "bg-violet-100 text-violet-700 dark:bg-violet-950/30 dark:text-violet-400",
                   gap.status === "clarified" && "bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400",
                   gap.status === "approved" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400",
@@ -117,14 +117,14 @@ function GapCard({
                   {statusLabel}
                 </span>
                 {!gap.actionable && !resolved && !applied && (
-                  <span className="text-[11px] text-muted-foreground/60">Требует уточнения, а не прямого применения</span>
+                  <span className="text-[0.6875rem] text-muted-foreground/60">Требует уточнения, а не прямого применения</span>
                 )}
               </div>
             </div>
 
             <div className="shrink-0 flex items-center gap-2">
               {gap.severity && (
-                <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", SEVERITY_STYLE[gap.severity])}>
+                <span className={cn("rounded-full px-2 py-0.5 text-[0.625rem] font-medium", SEVERITY_STYLE[gap.severity])}>
                   {gap.severity}
                 </span>
               )}
@@ -134,14 +134,14 @@ function GapCard({
           {open && (
             <div className="ml-7 space-y-4 px-4 pb-4">
               <GapSurface title="Рекомендация">
-                <p className="text-[13px] leading-[1.65] text-foreground/80">
+                <p className="text-[0.8125rem] leading-[1.65] text-foreground/80">
                   <RichText text={gap.suggestion} />
                 </p>
               </GapSurface>
 
               {gap.status === "clarified" && gap.analyst_text && (
                 <GapSurface title="Комментарий аналитика" tone="info">
-                  <p className="text-[13px] leading-[1.65] text-foreground/80">{gap.analyst_text}</p>
+                  <p className="text-[0.8125rem] leading-[1.65] text-foreground/80">{gap.analyst_text}</p>
                 </GapSurface>
               )}
 
@@ -149,7 +149,7 @@ function GapCard({
                 <GapActionRow>
                   {gap.actionable && (
                     <button
-                      className="rounded-md border border-emerald-500 px-3.5 py-1.5 text-[12px] font-medium text-emerald-600 transition-colors hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                      className="rounded-md border border-emerald-500 px-3.5 py-1.5 text-[0.75rem] font-medium text-emerald-600 transition-colors hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
                       onClick={(e) => { e.stopPropagation(); patchGap.mutate({ gapIndex: index, status: "approved" }) }}
                       disabled={isBusy}
                     >
@@ -157,14 +157,14 @@ function GapCard({
                     </button>
                   )}
                   <button
-                    className="rounded-md border border-blue-500 px-3.5 py-1.5 text-[12px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/30"
+                    className="rounded-md border border-blue-500 px-3.5 py-1.5 text-[0.75rem] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/30"
                     onClick={(e) => { e.stopPropagation(); setShowClarify(true) }}
                     disabled={isBusy}
                   >
                     Уточнить
                   </button>
                   <button
-                    className="rounded-md px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:text-red-500"
+                    className="rounded-md px-3 py-1.5 text-[0.75rem] text-muted-foreground transition-colors hover:text-red-500"
                     onClick={(e) => { e.stopPropagation(); deleteGapMut.mutate(index) }}
                     disabled={isBusy}
                   >
@@ -180,15 +180,15 @@ function GapCard({
                       placeholder="Комментарий..."
                       value={clarifyText}
                       onChange={(e) => { setClarifyText(e.target.value); if (e.target.value.trim()) setClarifyError(false) }}
-                      className={cn("text-[13px] min-h-[56px]", clarifyError && "border-red-500 focus-visible:ring-red-500")}
+                      className={cn("text-[0.8125rem] min-h-[3.5rem]", clarifyError && "border-red-500 focus-visible:ring-red-500")}
                     />
                     {clarifyError && (
-                      <p className="text-[12px] text-red-500">Введите комментарий</p>
+                      <p className="text-[0.75rem] text-red-500">Введите комментарий</p>
                     )}
                   </div>
                   <div className="flex items-center gap-2 pt-1">
                     <button
-                      className="rounded-md bg-blue-500 px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-blue-600"
+                      className="rounded-md bg-blue-500 px-3.5 py-1.5 text-[0.75rem] font-medium text-white transition-colors hover:bg-blue-600"
                       onClick={() => {
                         if (!clarifyText.trim()) { setClarifyError(true); return }
                         patchGap.mutate({ gapIndex: index, status: "clarified", analyst_text: clarifyText || null }); setShowClarify(false)
@@ -198,7 +198,7 @@ function GapCard({
                       Сохранить
                     </button>
                     <button
-                      className="rounded-md px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+                      className="rounded-md px-3 py-1.5 text-[0.75rem] text-muted-foreground transition-colors hover:text-foreground"
                       onClick={() => { setShowClarify(false); setClarifyText(gap.analyst_text ?? ""); setClarifyError(false) }}
                     >
                       Отмена
@@ -210,7 +210,7 @@ function GapCard({
               {resolved && (
                 <GapActionRow>
                   <button
-                    className="rounded-md px-3 py-1.5 text-[12px] text-muted-foreground/70 transition-colors hover:text-foreground"
+                    className="rounded-md px-3 py-1.5 text-[0.75rem] text-muted-foreground/70 transition-colors hover:text-foreground"
                     onClick={(e) => { e.stopPropagation(); patchGap.mutate({ gapIndex: index, status: "pending", analyst_text: null }) }}
                     disabled={isBusy}
                   >
@@ -242,7 +242,7 @@ function GapSurface({
 
   return (
     <div className={cn("rounded-xl border p-3.5", toneClasses[tone])}>
-      <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+      <p className="mb-2 text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground/70">
         {title}
       </p>
       {children}
@@ -331,7 +331,7 @@ function DiffMappingRow({ field, depth }: { field: MessageField; depth: number }
           {field.element}{field.is_collection && <span className="text-muted-foreground">[]</span>}
         </td>
         <td className="px-2 py-1 text-muted-foreground">{field.field_type ?? "-"}</td>
-        <td className="px-2 py-1">{field.required ? "Да" : "Нет"}</td>
+        <td className="px-2 py-1">{field.required === null || field.required === undefined ? "–" : field.required ? "Да" : "Нет"}</td>
         <td className="px-2 py-1 text-muted-foreground">{field.description ?? "-"}</td>
         <td className="px-2 py-1 text-muted-foreground">{field.source ?? "-"}</td>
       </tr>
@@ -430,7 +430,7 @@ function DiffParams({ oldParams, newParams }: { oldParams: ParameterField[]; new
             <tr key={i} className={cn("border-t border-muted", DIFF_BG[status])}>
               <td className="px-2 py-1 font-mono">{p.name}</td>
               <td className="px-2 py-1 text-muted-foreground">{p.field_type}</td>
-              <td className="px-2 py-1">{p.required ? "Да" : "Нет"}</td>
+              <td className="px-2 py-1">{p.required === null || p.required === undefined ? "–" : p.required ? "Да" : "Нет"}</td>
               <td className="px-2 py-1 text-muted-foreground">{p.description}</td>
               <td className="px-2 py-1 text-muted-foreground text-xs">{p.validation_rules?.join(", ") || "—"}</td>
             </tr>
@@ -466,7 +466,7 @@ function DiffDeps({ oldDeps, newDeps }: { oldDeps: UsedDependency[]; newDeps: Us
       {diffed.map(({ item: d, status }, i) => (
         <DiffRow key={i} status={status}>
           <div className="flex items-center gap-2 text-sm py-0.5">
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+            <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
               {d.type}
             </span>
             <span className="font-mono text-sm">
@@ -545,12 +545,12 @@ function DiffPreviewModal({
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
           <div>
             <h2 className="text-sm font-semibold">Изменения в логике</h2>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
+            <p className="text-[0.6875rem] text-muted-foreground mt-0.5">
               Предпросмотр на основе утверждённых gaps
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-[10px]">
+            <div className="flex items-center gap-2 text-[0.625rem]">
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-100 dark:bg-emerald-950/40 border border-emerald-300" /> добавлено</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-950/40 border border-amber-300" /> изменено</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-100 dark:bg-red-950/40 border border-red-300" /> удалено</span>
@@ -577,14 +577,14 @@ function DiffPreviewModal({
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-border">
           <button
-            className="text-[12px] px-3.5 py-1.5 rounded-md text-muted-foreground hover:text-foreground border border-border transition-colors"
+            className="text-[0.75rem] px-3.5 py-1.5 rounded-md text-muted-foreground hover:text-foreground border border-border transition-colors"
             onClick={onReject}
             disabled={isAccepting}
           >
             Отклонить
           </button>
           <button
-            className="text-[12px] font-medium px-4 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 transition-colors flex items-center gap-1.5"
+            className="text-[0.75rem] font-medium px-4 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 transition-colors flex items-center gap-1.5"
             onClick={onAccept}
             disabled={isAccepting}
           >
@@ -613,25 +613,30 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
   const applyConfirmMut = useApplyConfirm(projectSlug, featureName)
 
   const displayGaps = gapsData?.gaps ?? []
-  const isRunning = runGaps.isPending || gapsData?.gaps_status === "running"
-  const alreadyDone = gapsData?.gaps_status === "done"
-  const isOverloaded = gapsData?.gaps_status === "overloaded"
-  const isError = gapsData?.gaps_status === "error"
+  const isRunning = runGaps.isPending || Boolean(gapsData?.gaps_running)
+  const alreadyDone = !isRunning && Boolean(gapsData?.gaps_run_at)
 
   // Enrichment gate: check all used dependencies are enriched
   const unenrichedDeps = (() => {
     if (!usedDependencies?.length || !projectDependencies?.length) return []
     const norm = (n: string) => n.toLowerCase().replace(/[ -]/g, "_")
+    const enrichedApis = projectDependencies.filter(
+      d => d.dep_type === "external_api" && d.enrichment_status === "enriched"
+    )
     const enrichedSet = new Set(
       projectDependencies
         .filter(d => d.enrichment_status === "enriched")
         .map(d => norm(d.name))
     )
     return usedDependencies.filter(d => {
-      const name = d.type === "external_api" && d.service_name && d.path
-        ? `${d.service_name}/${d.path.replace(/^\//, "")}`
-        : d.name
-      return !enrichedSet.has(norm(name))
+      // For external_api: match by service_name + path fields
+      if (d.type === "external_api" && d.service_name) {
+        return !enrichedApis.some(pd =>
+          norm(pd.service_name ?? "") === norm(d.service_name ?? "") &&
+          norm(pd.path ?? "") === norm(d.path ?? "")
+        )
+      }
+      return !enrichedSet.has(norm(d.name))
     })
   })()
   const depsReady = unenrichedDeps.length === 0
@@ -666,7 +671,7 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
           <div className="flex items-baseline gap-2.5">
             <h2 className="text-base font-medium">Пробелы</h2>
             {displayGaps.length > 0 && (
-              <span className="text-[13px] text-muted-foreground tabular-nums">
+              <span className="text-[0.8125rem] text-muted-foreground tabular-nums">
                 {resolvedCount} из {displayGaps.length} обработаны
               </span>
             )}
@@ -674,7 +679,7 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
           {!alreadyDone ? (
             <button
               className={cn(
-                "text-[12px] font-medium px-3.5 py-1.5 rounded-md transition-colors",
+                "text-[0.75rem] font-medium px-3.5 py-1.5 rounded-md transition-colors",
                 isRunning
                   ? "text-muted-foreground"
                   : !depsReady
@@ -692,7 +697,7 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
               )}
             </button>
           ) : displayGaps.length > 0 ? (
-            <span className="flex items-center gap-1 text-[12px] font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="flex items-center gap-1 text-[0.75rem] font-medium text-emerald-600 dark:text-emerald-400">
               <Check className="h-3.5 w-3.5" />Завершён
             </span>
           ) : null}
@@ -721,23 +726,17 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
 
       {/* Unenriched deps warning */}
       {!depsReady && !alreadyDone && (
-        <p className="text-[13px] text-amber-600 dark:text-amber-400">
+        <p className="text-[0.8125rem] text-amber-600 dark:text-amber-400">
           Не все зависимости обогащены: {unenrichedDeps.map(d => d.name).join(", ")}
         </p>
       )}
 
       {/* Error */}
-      {isOverloaded && (
-        <p className="text-[13px] text-amber-600 dark:text-amber-400">Claude API перегружен. Попробуйте через 5 минут.</p>
-      )}
-      {isError && (
-        <p className="text-[13px] text-destructive">Анализ завершился с ошибкой. Попробуйте запустить снова.</p>
-      )}
       {runGaps.error && (
-        <p className="text-[13px] text-destructive">{(runGaps.error as Error).message}</p>
+        <p className="text-[0.8125rem] text-destructive">{(runGaps.error as Error).message}</p>
       )}
       {runApplyMut.error && (
-        <p className="text-[13px] text-destructive">{(runApplyMut.error as Error).message}</p>
+        <p className="text-[0.8125rem] text-destructive">{(runApplyMut.error as Error).message}</p>
       )}
 
       {/* Loading */}
@@ -751,7 +750,7 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
       {!isLoading && !isRunning && displayGaps.length === 0 && (
         <div className="rounded-xl border border-dashed px-4 py-12 text-center">
           <p className="text-sm font-medium">Пробелы еще не сгенерированы</p>
-          <p className="mt-2 text-[13px] text-muted-foreground">
+          <p className="mt-2 text-[0.8125rem] text-muted-foreground">
             Запустите анализ, чтобы увидеть вопросы, рекомендации и применимые улучшения для логики.
           </p>
         </div>
@@ -762,10 +761,10 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
         {grouped.map(({ type, items }) => (
           <div key={type}>
             <div className="mb-2.5 flex items-center gap-2 px-1">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground/60">
                 {formatGapType(type)}
               </p>
-              <span className="text-[11px] text-muted-foreground/40">{items.length}</span>
+              <span className="text-[0.6875rem] text-muted-foreground/40">{items.length}</span>
             </div>
             <div className="space-y-2">
               {items.map(({ gap, idx }) => (
@@ -786,7 +785,7 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
       {alreadyDone && hasActionableGaps && (
         <div className="pt-2 flex justify-start">
           <button
-            className="text-[13px] font-medium px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
+            className="text-[0.8125rem] font-medium px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
             onClick={() => runApplyMut.mutate()}
             disabled={applyRunning}
           >
@@ -801,10 +800,10 @@ export function GapsView({ projectSlug, featureName, usedDependencies, projectDe
 
       {/* Apply preview error */}
       {runApplyMut.error && (
-        <p className="text-[13px] text-destructive">{(runApplyMut.error as Error).message}</p>
+        <p className="text-[0.8125rem] text-destructive">{(runApplyMut.error as Error).message}</p>
       )}
       {applyData?.status === "error" && (
-        <p className="text-[13px] text-destructive">{applyData.error ?? "Apply preview failed"}</p>
+        <p className="text-[0.8125rem] text-destructive">{applyData.error ?? "Apply preview failed"}</p>
       )}
 
       {/* Diff Preview Modal */}

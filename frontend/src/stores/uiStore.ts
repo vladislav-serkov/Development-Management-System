@@ -10,7 +10,6 @@ interface UIState {
   selectedDependencyName: string | null
   activeSidebarItem: string | null
   sidebarWidth: number
-  enrichingDepTypes: string[]
   setSelectedProject: (slug: string | null) => void
   setSelectedDocument: (slug: string | null) => void
   setSelectedFeature: (name: string | null) => void
@@ -20,8 +19,6 @@ interface UIState {
   goHome: () => void
   goToProject: (slug: string) => void
   goToRules: () => void
-  startEnriching: (depType: string) => void
-  stopEnriching: (depType: string) => void
 }
 
 export const useUIStore = create<UIState>()((set) => ({
@@ -32,7 +29,6 @@ export const useUIStore = create<UIState>()((set) => ({
   selectedDependencyName: null,
   activeSidebarItem: null,
   sidebarWidth: 256,
-  enrichingDepTypes: [],
   setSelectedProject: (slug) => set({ selectedProjectSlug: slug, selectedDocumentSlug: null, selectedFeatureName: null, selectedDependencyName: null, activeSidebarItem: null }),
   setSelectedDocument: (slug) => set({ selectedDocumentSlug: slug, selectedFeatureName: null, activeSidebarItem: null }),
   setSelectedFeature: (name) => set({ selectedFeatureName: name, selectedDependencyName: null }),
@@ -42,12 +38,4 @@ export const useUIStore = create<UIState>()((set) => ({
   goHome: () => set({ currentView: "home", selectedProjectSlug: null, selectedDocumentSlug: null, selectedFeatureName: null, selectedDependencyName: null, activeSidebarItem: null }),
   goToProject: (slug) => set({ currentView: "project", selectedProjectSlug: slug, selectedDocumentSlug: null, selectedFeatureName: null, selectedDependencyName: null, activeSidebarItem: null }),
   goToRules: () => set({ currentView: "rules", selectedProjectSlug: null, selectedDocumentSlug: null, selectedFeatureName: null, selectedDependencyName: null, activeSidebarItem: null }),
-  startEnriching: (depType) => set((state) => ({
-    enrichingDepTypes: state.enrichingDepTypes.includes(depType)
-      ? state.enrichingDepTypes
-      : [...state.enrichingDepTypes, depType],
-  })),
-  stopEnriching: (depType) => set((state) => ({
-    enrichingDepTypes: state.enrichingDepTypes.filter((t) => t !== depType),
-  })),
 }))

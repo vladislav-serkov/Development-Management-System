@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { fetchProjectDependencies, enrichDependency, createDependency, patchDependency, deleteDependency } from "@/api/documents"
-import { useUIStore } from "@/stores/uiStore"
 import type { CreateDependencyRequest, PatchDependencyRequest } from "@/types/api"
 
 export function useProjectDependencies(projectSlug: string | null) {
@@ -8,6 +7,11 @@ export function useProjectDependencies(projectSlug: string | null) {
     queryKey: ["projects", projectSlug, "dependencies"],
     queryFn: () => fetchProjectDependencies(projectSlug!),
     enabled: projectSlug !== null,
+    // Poll while any dependency has enrichment_status === "running"
+    refetchInterval: (query) => {
+      const hasRunning = query.state.data?.some(d => d.enrichment_status === "running") ?? false
+      return hasRunning ? 2000 : false
+    },
   })
 }
 
@@ -46,18 +50,11 @@ export function useDeleteDependency(projectSlug: string) {
 
 export function useEnrichDependency(projectSlug: string) {
   const qc = useQueryClient()
-  const startEnriching = useUIStore((s) => s.startEnriching)
-  const stopEnriching = useUIStore((s) => s.stopEnriching)
   return useMutation({
     mutationFn: ({ depType, file, depName }: { depType: string; file: File; depName?: string }) =>
       enrichDependency(projectSlug, depType, file, depName),
-    onMutate: ({ depType }) => {
-      startEnriching(depType)
-    },
-    onSettled: (_data, _error, { depType }) => {
-      stopEnriching(depType)
-    },
     onSuccess: () => {
+      // Trigger immediate refetch — polling will pick up "running" status
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "dependencies"] })
     },
   })

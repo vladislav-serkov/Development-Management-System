@@ -8,6 +8,7 @@ from app.config import settings
 from app.prompts.test_cases import DETAIL_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, get_few_shot
 from app.schemas.test_cases import TestCaseGenerationResult, TestCasePlanResult
 from app.services.claude_client import call_claude, log_cache_stats
+from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -208,50 +209,26 @@ def _build_fk_tree(enriched_deps: dict) -> dict:
 
 
 def _build_shared_context(feature: dict, enriched_deps: dict) -> str:
-    """Build a shared text block for all parallel test case calls."""
-    lines = []
-    lines.append("## Feature")
-    lines.append(f"Name: {feature.get('name', '')}")
-    lines.append(f"Type: {feature.get('type', '')}")
-    lines.append(f"Method: {feature.get('method', '')}")
-    lines.append(f"Endpoint: {feature.get('endpoint', '')}")
-    lines.append(f"Summary: {feature.get('summary', '')}")
-    lines.append("")
+    """Build a shared text block for all parallel test case calls.
 
-    structured_logic = feature.get("structured_logic_json")
-    if structured_logic:
-        lines.append("### Structured Logic")
-        lines.append(json.dumps(structured_logic, ensure_ascii=False, indent=2))
-        lines.append("")
-
-    lines.append("## Dependencies")
-    if enriched_deps:
-        for dep_name, dep_data in enriched_deps.items():
-            lines.append(f"### {dep_name} ({dep_data.get('dep_type', '')})")
-            enriched = dep_data.get("enriched_data")
-            if enriched:
-                lines.append(json.dumps(enriched, ensure_ascii=False, indent=2))
-            else:
-                lines.append(f"Description: {dep_data.get('description', '')}")
-                lines.append(f"Status: {dep_data.get('enrichment_status', 'stub')}")
-            lines.append("")
-    else:
-        lines.append("No enriched dependencies available.")
+    Reuses the common feature+deps context builder, then appends the FK
+    dependency tree (specific to test_cases for sql_setup ordering).
+    """
+    base = build_feature_context(feature, enriched_deps)
 
     fk_tree = _build_fk_tree(enriched_deps)
-    if fk_tree:
-        lines.append("")
-        lines.append("## FK Dependency Tree")
-        lines.append(
-            "DELETE order (child -> parent): " + ", ".join(fk_tree["delete_order"])
-        )
-        lines.append(
-            "INSERT order (parent -> child): " + ", ".join(fk_tree["insert_order"])
-        )
-        lines.append("")
-        lines.append("sql_setup MUST follow INSERT order for INSERTs and DELETE order for DELETEs.")
+    if not fk_tree:
+        return base
 
-    return "\n".join(lines)
+    extra = [
+        "",
+        "## FK Dependency Tree",
+        "DELETE order (child -> parent): " + ", ".join(fk_tree["delete_order"]),
+        "INSERT order (parent -> child): " + ", ".join(fk_tree["insert_order"]),
+        "",
+        "sql_setup MUST follow INSERT order for INSERTs and DELETE order for DELETEs.",
+    ]
+    return base + "\n" + "\n".join(extra)
 
 
 async def _call_plan_phase(
@@ -451,15 +428,30 @@ async def _check_enrichment_gate(feature: dict, project_slug: str, store) -> Non
 
     norm_flat: dict[str, dict] = {_norm(name): dep for name, dep in flat_deps.items()}
 
+    # Build lookup for external_api by service_name+path
+    api_deps = [d for d in flat_deps.values() if d.get("dep_type") == "external_api"]
+
     unenriched: list[str] = []
     for dep in used_deps:
         if not isinstance(dep, dict):
             continue
         dep_name = dep.get("name", "")
-        if dep.get("type") == "external_api" and dep.get("service_name") and dep.get("path"):
-            dep_name = f"{dep['service_name']}/{dep['path'].lstrip('/')}"
         if not dep_name:
             continue
+
+        # For external_api: match by service_name + path fields
+        if dep.get("type") == "external_api" and dep.get("service_name"):
+            matched = next(
+                (d for d in api_deps
+                 if _norm(d.get("service_name") or "") == _norm(dep.get("service_name") or "")
+                 and _norm(d.get("path") or "") == _norm(dep.get("path") or "")),
+                None,
+            )
+            display = f"{dep['service_name']}/{(dep.get('path') or '').lstrip('/')}"
+            if matched is None or matched.get("enrichment_status") != "enriched":
+                unenriched.append(display)
+            continue
+
         norm_name = _norm(dep_name)
         if norm_name in norm_flat:
             if norm_flat[norm_name].get("enrichment_status") != "enriched":
@@ -478,8 +470,29 @@ async def run_test_cases_pipeline(
     project_slug: str,
     feature_name: str,
     store,
+    *,
+    task_id: str | None = None,
 ) -> list[dict]:
     """Run 2 sequential Claude calls (plan + detail with few-shot) and return merged test cases."""
+    try:
+        result = await _run_test_cases_pipeline_inner(project_slug, feature_name, store)
+    except Exception as exc:
+        if task_id:
+            await store.finish_task(
+                project_slug, task_id, status="error", error_message=str(exc),
+            )
+        raise
+    if task_id:
+        await store.finish_task(project_slug, task_id, status="done")
+    return result
+
+
+async def _run_test_cases_pipeline_inner(
+    project_slug: str,
+    feature_name: str,
+    store,
+) -> list[dict]:
+    """Core pipeline without task handling (caller wraps for task lifecycle)."""
     # Load feature
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
@@ -540,29 +553,22 @@ async def run_test_cases_pipeline(
     )
 
     # Sequential 2-call pipeline: plan then detail
-    try:
-        plan_items = await _call_plan_phase(model, shared_ctx, plan_system_prompt)
-        all_new_test_cases = await _call_detail_phase(model, shared_ctx, plan_items, feature_type, detail_system_prompt)
+    plan_items = await _call_plan_phase(model, shared_ctx, plan_system_prompt)
+    all_new_test_cases = await _call_detail_phase(model, shared_ctx, plan_items, feature_type, detail_system_prompt)
 
-        # Post-generation validation (observability only — log warnings, do not reject)
-        validation_warnings = _validate_test_cases(all_new_test_cases, len(plan_items))
-        for warning in validation_warnings:
-            logger.warning("[test_cases:validate] %s", warning)
+    # Post-generation validation (observability only — log warnings, do not reject)
+    validation_warnings = _validate_test_cases(all_new_test_cases, len(plan_items))
+    for warning in validation_warnings:
+        logger.warning("[test_cases:validate] %s", warning)
 
-        # Smart merge with existing test cases
-        existing_test_cases = await store.get_test_cases(project_slug, feature_name)
-        merged_test_cases = _smart_merge_test_cases(existing_test_cases, all_new_test_cases)
+    # Smart merge with existing test cases
+    existing_test_cases = await store.get_test_cases(project_slug, feature_name)
+    merged_test_cases = _smart_merge_test_cases(existing_test_cases, all_new_test_cases)
 
-        # Save results: test_cases go to test-cases.json, status/timestamp go to feature.json
-        await store.save_test_cases(project_slug, feature_name, merged_test_cases)
-        await store.update_feature(project_slug, feature_name, {
-            "test_cases_status": "done",
-            "test_cases_run_at": datetime.now(UTC).isoformat(),
-        })
+    # Save test cases; timestamp stays on feature.json as a last-run marker
+    await store.save_test_cases(project_slug, feature_name, merged_test_cases)
+    await store.update_feature(project_slug, feature_name, {
+        "test_cases_run_at": datetime.now(UTC).isoformat(),
+    })
 
-        return merged_test_cases
-
-    except Exception as exc:
-        logger.error("Test cases pipeline fatal error for feature '%s': %s", feature_name, exc)
-        await store.update_feature(project_slug, feature_name, {"test_cases_status": "error"})
-        raise
+    return merged_test_cases

@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import shutil
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -41,6 +42,7 @@ DEP_TYPE_FILE = {
     "external_api": "external_apis.json",
     "cache": "cache.json",
     "kafka_topic": "kafka_topics.json",
+    "external_doc": "external_docs.json",
 }
 
 AGENT_NAMES = ["extraction", "gaps", "test_cases", "bugs", "enrichment"]
@@ -51,6 +53,7 @@ _ENRICHMENT_MARKERS = {
     "external_api": "endpoints",
     "cache": "key_patterns",
     "kafka_topic": "message_schema",
+    "external_doc": "content_html",
 }
 
 
@@ -91,6 +94,14 @@ class ProjectStore:
 
     def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir or settings.data_dir)
+        self._dep_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_dep_lock(self, project_slug: str, dep_type: str) -> asyncio.Lock:
+        """Get or create an asyncio.Lock for a specific project+dep_type combination."""
+        key = f"{project_slug}:{dep_type}"
+        if key not in self._dep_locks:
+            self._dep_locks[key] = asyncio.Lock()
+        return self._dep_locks[key]
 
     @property
     def data_dir(self) -> Path:
@@ -486,10 +497,11 @@ class ProjectStore:
     # Gaps (dedicated storage methods)
     # ------------------------------------------------------------------
 
-    async def get_gaps(self, project_slug: str, feature_name: str) -> list[dict]:
+    async def get_gaps(self, project_slug: str, feature_name: str, *, include_archived: bool = False) -> list[dict]:
         """Read gaps array from gaps/{name}.json (top-level).
         Falls back to old features/{name}/gaps.json with migration.
         Falls back to flat feature.json for oldest format.
+        By default filters out archived gaps.
         """
         sanitized = self._sanitize_feature_name(feature_name)
 
@@ -498,7 +510,10 @@ class ProjectStore:
         if new_path.exists():
             try:
                 data = await self._read_json(new_path)
-                return data.get("gaps", [])
+                all_gaps = data.get("gaps", [])
+                if include_archived:
+                    return all_gaps
+                return [g for g in all_gaps if not g.get("archived")]
             except Exception as exc:
                 logger.warning("Could not read gaps/%s.json: %s", sanitized, exc)
                 return []
@@ -537,9 +552,10 @@ class ProjectStore:
             {"gaps": gaps},
         )
 
-        # Update counts in feature.json
-        gap_count = len(gaps)
-        pending_gap_count = sum(1 for g in gaps if g.get("status") == "pending")
+        # Update counts in feature.json (exclude archived)
+        active_gaps = [g for g in gaps if not g.get("archived")]
+        gap_count = len(active_gaps)
+        pending_gap_count = sum(1 for g in active_gaps if g.get("status") == "pending")
 
         feature_json_path = self._feature_dir(project_slug, feature_name) / "feature.json"
         if feature_json_path.exists():
@@ -695,6 +711,17 @@ class ProjectStore:
     # Dependencies
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _find_key_ci(data: dict, name: str) -> str | None:
+        """Find dict key by case-insensitive match. Returns actual key or None."""
+        if name in data:
+            return name
+        lower = name.lower()
+        for key in data:
+            if key.lower() == lower:
+                return key
+        return None
+
     async def list_dependencies(self, project_slug: str) -> dict[str, list]:
         """Return {dep_type: [dep_dict, ...]} for all 3 dep types."""
         result: dict[str, list] = {dep_type: [] for dep_type in DEP_TYPE_FILE}
@@ -719,39 +746,47 @@ class ProjectStore:
         name: str,
         data: dict,
     ) -> dict:
-        """Read dep file, update/insert entry by name, write back."""
+        """Read dep file, update/insert entry by name, write back. Thread-safe per project+dep_type."""
         if dep_type not in DEP_TYPE_FILE:
             raise ValueError(f"Unknown dep_type: {dep_type}")
 
-        path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
-        path.parent.mkdir(parents=True, exist_ok=True)
+        async with self._get_dep_lock(project_slug, dep_type):
+            path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
+            path.parent.mkdir(parents=True, exist_ok=True)
 
-        existing: dict = {}
-        if path.exists():
-            try:
-                existing = await self._read_json(path)
-            except Exception:
-                existing = {}
+            existing: dict = {}
+            if path.exists():
+                try:
+                    existing = await self._read_json(path)
+                except Exception:
+                    existing = {}
 
-        # Merge: preserve existing keys, update with new data
-        # Never downgrade enrichment: if already enriched, skip stub overwrites
-        if name in existing:
-            prev = existing[name]
-            if (
-                prev.get("enrichment_status") == "enriched"
-                and data.get("enrichment_status") == "stub"
-            ):
-                data = {
-                    k: v
-                    for k, v in data.items()
-                    if k not in ("enriched_data", "enrichment_status", "enriched_at")
-                }
-            prev.update(data)
-        else:
-            existing[name] = data
+            # Case-insensitive lookup: find existing key regardless of case
+            actual_key = self._find_key_ci(existing, name)
 
-        await self._write_json(path, existing)
-        return existing[name]
+            # Merge: preserve existing keys, update with new data
+            # Never downgrade enrichment: if already enriched, skip stub overwrites
+            if actual_key is not None:
+                prev = existing[actual_key]
+                if (
+                    prev.get("enrichment_status") == "enriched"
+                    and data.get("enrichment_status") == "stub"
+                ):
+                    data = {
+                        k: v
+                        for k, v in data.items()
+                        if k not in ("enriched_data", "enrichment_status", "enriched_at")
+                    }
+                prev.update(data)
+                # If incoming name has different case, re-key to preserve original case
+                if actual_key != name:
+                    existing[name] = existing.pop(actual_key)
+                    existing[name]["name"] = name
+            else:
+                existing[name] = data
+
+            await self._write_json(path, existing)
+            return existing[name]
 
     async def get_dependency(self, project_slug: str, dep_type: str, name: str) -> dict | None:
         if dep_type not in DEP_TYPE_FILE:
@@ -760,9 +795,10 @@ class ProjectStore:
         if not path.exists():
             return None
         data = await self._read_json(path)
-        dep = data.get(name)
-        if dep is not None:
-            dep = _normalize_dep(dep, name, dep_type)
+        actual_key = self._find_key_ci(data, name)
+        if actual_key is None:
+            return None
+        dep = _normalize_dep(data[actual_key], actual_key, dep_type)
         return dep
 
     async def delete_feature(self, project_slug: str, feature_name: str) -> bool:
@@ -838,16 +874,18 @@ class ProjectStore:
         if dep_type not in DEP_TYPE_FILE:
             raise ValueError(f"Unknown dep_type: {dep_type}")
 
-        path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
-        if not path.exists():
-            return False
+        async with self._get_dep_lock(project_slug, dep_type):
+            path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
+            if not path.exists():
+                return False
 
-        data = await self._read_json(path)
-        if name not in data:
-            return False
+            data = await self._read_json(path)
+            actual_key = self._find_key_ci(data, name)
+            if actual_key is None:
+                return False
 
-        del data[name]
-        await self._write_json(path, data)
+            del data[actual_key]
+            await self._write_json(path, data)
         return True
 
     async def rename_dependency(
@@ -860,22 +898,25 @@ class ProjectStore:
         if dep_type not in DEP_TYPE_FILE:
             raise ValueError(f"Unknown dep_type: {dep_type}")
 
-        path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
-        if not path.exists():
-            return None
+        async with self._get_dep_lock(project_slug, dep_type):
+            path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
+            if not path.exists():
+                return None
 
-        data = await self._read_json(path)
-        if old_name not in data:
-            return None
-        if new_name in data:
-            raise ValueError(f"Dependency with name '{new_name}' already exists")
+            data = await self._read_json(path)
+            actual_old = self._find_key_ci(data, old_name)
+            if actual_old is None:
+                return None
+            actual_new = self._find_key_ci(data, new_name)
+            if actual_new is not None and actual_new != actual_old:
+                raise ValueError(f"Dependency with name '{new_name}' already exists")
 
-        entry = data.pop(old_name)
-        entry["name"] = new_name
-        data[new_name] = entry
-        await self._write_json(path, data)
+            entry = data.pop(actual_old)
+            entry["name"] = new_name
+            data[new_name] = entry
+            await self._write_json(path, data)
 
-        # Scan all features and update used_dependencies references
+        # Scan all features and update used_dependencies references (outside lock)
         features = await self.list_features(project_slug)
         for feat in features:
             feat_name = feat.get("name", "")
@@ -917,16 +958,18 @@ class ProjectStore:
     ) -> dict | None:
         if dep_type not in DEP_TYPE_FILE:
             return None
-        path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
-        if not path.exists():
-            return None
-        data = await self._read_json(path)
-        if name not in data:
-            return None
-        data[name].update(updates)
-        data[name] = _normalize_dep(data[name], name, dep_type)
-        await self._write_json(path, data)
-        return data[name]
+        async with self._get_dep_lock(project_slug, dep_type):
+            path = self._deps_dir(project_slug) / DEP_TYPE_FILE[dep_type]
+            if not path.exists():
+                return None
+            data = await self._read_json(path)
+            actual_key = self._find_key_ci(data, name)
+            if actual_key is None:
+                return None
+            data[actual_key].update(updates)
+            data[actual_key] = _normalize_dep(data[actual_key], actual_key, dep_type)
+            await self._write_json(path, data)
+            return data[actual_key]
 
     # ------------------------------------------------------------------
     # Rules (global + per-project)
@@ -962,6 +1005,142 @@ class ProjectStore:
 
     def get_context_dir(self, project_slug: str) -> Path:
         return self._project_dir(project_slug)
+
+    # ------------------------------------------------------------------
+    # Tasks (background-task log, per-project)
+    # ------------------------------------------------------------------
+
+    def _tasks_path(self, project_slug: str) -> Path:
+        return self._project_dir(project_slug) / "tasks.json"
+
+    async def _read_tasks(self, project_slug: str) -> list[dict]:
+        path = self._tasks_path(project_slug)
+        if not path.exists():
+            return []
+        data = await self._read_json(path)
+        return data.get("tasks", []) if isinstance(data, dict) else []
+
+    async def _write_tasks(self, project_slug: str, tasks: list[dict]) -> None:
+        await self._write_json(self._tasks_path(project_slug), {"tasks": tasks})
+
+    async def create_task(
+        self,
+        project_slug: str,
+        *,
+        kind: str,
+        target_type: str,
+        target_id: str,
+    ) -> dict:
+        """Append a new running task to tasks.json and return it."""
+        lock = self._get_lock(self._tasks_path(project_slug))
+        async with lock:
+            tasks = await self._read_tasks(project_slug)
+            task = {
+                "id": str(uuid.uuid4()),
+                "kind": kind,
+                "target_type": target_type,
+                "target_id": target_id,
+                "status": "running",
+                "started_at": datetime.now(UTC).isoformat(),
+                "finished_at": None,
+                "error_message": None,
+                "duration_ms": None,
+            }
+            tasks.append(task)
+            await self._write_tasks(project_slug, tasks)
+            return task
+
+    async def update_task(
+        self,
+        project_slug: str,
+        task_id: str,
+        updates: dict,
+    ) -> dict | None:
+        """Merge updates into a task by id. Returns the updated task or None."""
+        lock = self._get_lock(self._tasks_path(project_slug))
+        async with lock:
+            tasks = await self._read_tasks(project_slug)
+            for i, t in enumerate(tasks):
+                if t.get("id") == task_id:
+                    tasks[i] = {**t, **updates}
+                    await self._write_tasks(project_slug, tasks)
+                    return tasks[i]
+            return None
+
+    async def finish_task(
+        self,
+        project_slug: str,
+        task_id: str,
+        *,
+        status: str,
+        error_message: str | None = None,
+    ) -> dict | None:
+        """Close a running task with done/error, set finished_at + duration_ms."""
+        lock = self._get_lock(self._tasks_path(project_slug))
+        async with lock:
+            tasks = await self._read_tasks(project_slug)
+            now = datetime.now(UTC)
+            for i, t in enumerate(tasks):
+                if t.get("id") != task_id:
+                    continue
+                started = t.get("started_at")
+                duration_ms: int | None = None
+                if started:
+                    try:
+                        started_dt = datetime.fromisoformat(started)
+                        duration_ms = int((now - started_dt).total_seconds() * 1000)
+                    except (ValueError, TypeError):
+                        duration_ms = None
+                tasks[i] = {
+                    **t,
+                    "status": status,
+                    "finished_at": now.isoformat(),
+                    "duration_ms": duration_ms,
+                    "error_message": error_message,
+                }
+                await self._write_tasks(project_slug, tasks)
+                return tasks[i]
+            return None
+
+    async def list_tasks(
+        self,
+        project_slug: str,
+        *,
+        status: str | None = None,
+        kind: str | None = None,
+        target_id: str | None = None,
+    ) -> list[dict]:
+        tasks = await self._read_tasks(project_slug)
+        if status is not None:
+            tasks = [t for t in tasks if t.get("status") == status]
+        if kind is not None:
+            tasks = [t for t in tasks if t.get("kind") == kind]
+        if target_id is not None:
+            tasks = [t for t in tasks if t.get("target_id") == target_id]
+        tasks.sort(key=lambda t: t.get("started_at", ""), reverse=True)
+        return tasks
+
+    async def get_active_task(
+        self,
+        project_slug: str,
+        *,
+        kind: str,
+        target_id: str,
+    ) -> dict | None:
+        """Return the running task for (kind, target_id) if any, else None.
+
+        Used by routers to enforce «no concurrent task of the same kind for
+        the same target» (returns 409 to the client).
+        """
+        tasks = await self._read_tasks(project_slug)
+        for t in tasks:
+            if (
+                t.get("status") == "running"
+                and t.get("kind") == kind
+                and t.get("target_id") == target_id
+            ):
+                return t
+        return None
 
     # ------------------------------------------------------------------
     # Internal helpers for counts/status

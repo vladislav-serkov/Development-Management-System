@@ -23,36 +23,45 @@ async def run_test_cases(
     feature_name: str,
 ):
     """Launch test cases generation in background. Poll GET / for status."""
-    # Validate feature exists + enrichment gate before launching background task
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
-
-    task_key = f"test_cases:{project_slug}/{feature_name}"
-
-    if feature.get("test_cases_status") == "running":
-        if task_manager.is_running(task_key):
-            return {"status": "already_running"}
-        # No live task — stuck state, recover
-        logger.warning("run_test_cases: stuck 'running' state detected for %s/%s, recovering", project_slug, feature_name)
-        await store.update_feature(project_slug, feature_name, {"test_cases_status": "error"})
-
-    if feature.get("test_cases_status") == "done":
+    if feature.get("status") != "done":
         raise HTTPException(
             status_code=409,
-            detail="Test cases already generated for this feature",
+            detail="Feature extraction is not done — cannot generate test cases",
         )
 
-    # Pre-validate enrichment gate (raises ValueError if not ready)
+    task_key = f"test_cases:{project_slug}/{feature_name}"
+    active = await store.get_active_task(
+        project_slug, kind="test_cases", target_id=feature_name,
+    )
+    if active is not None:
+        if task_manager.is_running(task_key):
+            return {"status": "already_running"}
+        logger.warning(
+            "run_test_cases: stuck task %s for %s/%s, recovering",
+            active["id"], project_slug, feature_name,
+        )
+        await store.finish_task(
+            project_slug, active["id"], status="error",
+            error_message="Server restarted before task completed",
+        )
+
+    # Pre-validate enrichment gate
     try:
         await _check_enrichment_gate(feature, project_slug, store)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Mark running immediately and launch in background
-    await store.update_feature(project_slug, feature_name, {"test_cases_status": "running"})
-    logger.info("run_test_cases: project=%s, feature=%s", project_slug, feature_name)
-    task_manager.launch(task_key, run_test_cases_pipeline(project_slug, feature_name, store))
+    task = await store.create_task(
+        project_slug, kind="test_cases", target_type="feature", target_id=feature_name,
+    )
+    logger.info("run_test_cases: project=%s, feature=%s, task=%s", project_slug, feature_name, task["id"])
+    task_manager.launch(
+        task_key,
+        run_test_cases_pipeline(project_slug, feature_name, store, task_id=task["id"]),
+    )
 
     return {"status": "started"}
 
@@ -70,9 +79,12 @@ async def list_test_cases(
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
     test_cases = await store.get_test_cases(project_slug, feature_name)
+    active = await store.get_active_task(
+        project_slug, kind="test_cases", target_id=feature_name,
+    )
     return {
         "test_cases": test_cases,
-        "test_cases_status": feature.get("test_cases_status"),
+        "test_cases_running": active is not None,
         "test_cases_run_at": feature.get("test_cases_run_at"),
     }
 

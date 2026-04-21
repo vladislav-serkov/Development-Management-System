@@ -21,10 +21,10 @@ export function MarkdownEditor({ value, onSave, onCancel, isSaving }: MarkdownEd
           value={raw}
           extensions={[markdown()]}
           onChange={setRaw}
-          height="500px"
+          height="31.25rem"
           theme="light"
         />
-        <article className="prose prose-sm max-w-none p-4 overflow-y-auto h-[500px] border-l">
+        <article className="prose prose-sm max-w-none p-4 overflow-y-auto h-[31.25rem] border-l">
           <Markdown>{raw}</Markdown>
         </article>
       </div>

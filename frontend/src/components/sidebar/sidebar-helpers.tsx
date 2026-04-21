@@ -16,16 +16,12 @@ export function SidebarMetric({ label, value, helper }: { label: string; value: 
 const featureStatusLabels: Record<FeatureStatus, string> = {
   done: "Готово",
   extracting: "Извлечение",
-  error: "Ошибка",
-  detected: "Обнаружено",
 }
 
 export function FeatureStatusDot({ status }: { status: FeatureStatus }) {
   const colors: Record<FeatureStatus, string> = {
     done: "bg-green-500",
     extracting: "bg-amber-400",
-    error: "bg-destructive",
-    detected: "bg-muted-foreground/40",
   }
 
   return (

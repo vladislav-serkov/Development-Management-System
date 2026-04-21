@@ -55,11 +55,9 @@ export function useProjectFeatures(projectSlug: string | null, projectStatus?: P
     refetchInterval: (query) => {
       const features = query.state.data
       const hasRunning = features?.some(
-        f => f.gaps_status === "running" || f.test_cases_status === "running" || f.apply_status === "running"
+        f => f.gaps_running || f.test_cases_running || f.apply_running
       )
-      const hasExtracting = features?.some(
-        f => f.status === "detected" || f.status === "extracting"
-      )
+      const hasExtracting = features?.some(f => f.status === "extracting")
       const projectProcessing = projectStatus === "processing"
       return (hasRunning || hasExtracting || projectProcessing) ? 3000 : false
     },

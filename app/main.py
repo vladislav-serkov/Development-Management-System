@@ -11,6 +11,7 @@ from app.routers.dependencies import router as dependencies_router
 from app.routers.documents import router as documents_router
 from app.routers.gaps import router as gaps_router
 from app.routers.rules import router as rules_router
+from app.routers.tasks import router as tasks_router
 from app.routers.test_cases import router as test_cases_router
 from app.routers.projects import router as projects_router
 
@@ -44,6 +45,7 @@ app.include_router(gaps_router)
 app.include_router(test_cases_router)
 app.include_router(bugs_router)
 app.include_router(rules_router)
+app.include_router(tasks_router)
 
 
 @app.get("/")

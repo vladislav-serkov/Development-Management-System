@@ -25,6 +25,10 @@ export function projectPath(projectSlug: string) {
   return `/projects/${encodeSegment(projectSlug)}`
 }
 
+export function tasksPath(projectSlug: string) {
+  return `${projectPath(projectSlug)}/tasks`
+}
+
 export function featurePath(projectSlug: string, featureName: string, tab: FeatureTab = DEFAULT_FEATURE_TAB) {
   const base = `${projectPath(projectSlug)}/features/${encodeSegment(featureName)}`
   return tab === DEFAULT_FEATURE_TAB ? base : `${base}/${tab}`

@@ -7,3 +7,10 @@ from .extraction import (
     FeatureStatus,
     FeatureType,
 )
+from .tasks import (
+    TaskKind,
+    TaskListResponse,
+    TaskRecord,
+    TaskStatus,
+    TaskTargetType,
+)

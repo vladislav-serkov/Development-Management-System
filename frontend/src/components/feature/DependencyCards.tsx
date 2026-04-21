@@ -16,6 +16,7 @@ const SECTION_CONFIG = {
   external_api: { label: "Внешние API", prefix: "API", badgeClass: "bg-purple-100 text-purple-800 border-purple-200" },
   cache: { label: "Кэш", prefix: "Кэш", badgeClass: "bg-orange-100 text-orange-800 border-orange-200" },
   kafka_topic: { label: "Kafka-топики", prefix: "Kafka", badgeClass: "bg-green-100 text-green-800 border-green-200" },
+  external_doc: { label: "Документы", prefix: "Doc", badgeClass: "bg-slate-100 text-slate-800 border-slate-200" },
 } as const
 
 type DepType = keyof typeof SECTION_CONFIG
@@ -28,6 +29,18 @@ function effectiveName(dep: UsedDependency): string {
   return dep.name
 }
 
+function matchesDep(pd: ProjectDependency, dep: UsedDependency): boolean {
+  if (pd.dep_type !== dep.type) return false
+  // For external_api: match by service_name + path
+  if (dep.type === "external_api" && dep.service_name) {
+    return (
+      normalizeName(pd.service_name ?? "") === normalizeName(dep.service_name ?? "") &&
+      normalizeName(pd.path ?? "") === normalizeName(dep.path ?? "")
+    )
+  }
+  return normalizeName(pd.name) === normalizeName(effectiveName(dep))
+}
+
 function DepMethodBadge({ method }: { method?: string }) {
   if (!method) return null
   const colorMap: Record<string, string> = {
@@ -38,7 +51,7 @@ function DepMethodBadge({ method }: { method?: string }) {
     PATCH: "bg-yellow-100 text-yellow-700",
   }
   const c = colorMap[method] ?? "bg-slate-100 text-slate-700"
-  return <span className={`font-semibold font-mono text-[10px] px-1 py-0.5 rounded shrink-0 ${c}`}>{method}</span>
+  return <span className={`font-semibold font-mono text-[0.625rem] px-1 py-0.5 rounded shrink-0 ${c}`}>{method}</span>
 }
 
 function emptyDep(type: DepType): UsedDependency {
@@ -131,7 +144,7 @@ export function DependencyCards({ dependencies, projectDependencies, onDepClick,
       }
       return acc
     },
-    { db_table: [], external_api: [], cache: [], kafka_topic: [] }
+    { db_table: [], external_api: [], cache: [], kafka_topic: [], external_doc: [] }
   )
 
   const sections = isEditing
@@ -171,9 +184,7 @@ export function DependencyCards({ dependencies, projectDependencies, onDepClick,
                 {config.label}
                 {!isEditing && (() => {
                   const unenrichedCount = items.filter(dep => {
-                    const pd = projectDependencies?.find(
-                      p => p.dep_type === dep.type && normalizeName(p.name) === normalizeName(effectiveName(dep))
-                    )
+                    const pd = projectDependencies?.find(p => matchesDep(p, dep))
                     return !pd || pd.enrichment_status !== "enriched"
                   }).length
                     return unenrichedCount > 0 ? (
@@ -215,9 +226,7 @@ export function DependencyCards({ dependencies, projectDependencies, onDepClick,
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {items.map((dep, i) => {
                     const depName = effectiveName(dep)
-                    const registryDep = projectDependencies?.find(
-                      pd => pd.dep_type === dep.type && normalizeName(pd.name) === normalizeName(depName)
-                    )
+                    const registryDep = projectDependencies?.find(pd => matchesDep(pd, dep))
                     const clickable = registryDep && onDepClick
                     const isUnenriched = !registryDep || registryDep.enrichment_status !== "enriched"
                     return (

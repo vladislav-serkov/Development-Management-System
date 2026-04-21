@@ -1,11 +1,13 @@
-import { useNavigate } from "react-router-dom"
-import { Database, Globe, HardDrive, MessageSquare } from "lucide-react"
+import { useLocation, useNavigate } from "react-router-dom"
+import { Activity, Database, Globe, HardDrive, MessageSquare } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ExportDialog } from "@/components/project/ExportDialog"
 import { UploadZone } from "@/components/project/UploadZone"
 import { useDeleteFeature } from "@/hooks/useDocuments"
 import { useRenameProject } from "@/hooks/useDocuments"
-import { featurePath, projectPath } from "@/lib/routes"
+import { useProjectTasks } from "@/hooks/useTasks"
+import { featurePath, projectPath, tasksPath } from "@/lib/routes"
 import { SidebarHeader } from "./SidebarHeader"
 import { FeatureList } from "./FeatureList"
 import { DependencySection } from "./DependencySection"
@@ -37,11 +39,15 @@ export function ProjectSidebar({
   onStartDrag,
 }: ProjectSidebarProps) {
   const navigate = useNavigate()
+  const location = useLocation()
   const renameMutation = useRenameProject(projectSlug)
   const deleteFeatureMutation = useDeleteFeature(projectSlug)
+  const { data: runningTasks } = useProjectTasks(projectSlug, { status: "running" })
+  const runningCount = runningTasks?.tasks.length ?? 0
+  const isTasksActive = location.pathname === tasksPath(projectSlug)
 
   const readyFeatures = features?.filter((f) => f.status === "done").length ?? 0
-  const errorFeatures = features?.filter((f) => f.status === "error").length ?? 0
+  const errorFeatures = 0
   const totalDependencies = dependencies?.length ?? 0
 
   const depsByType = {
@@ -92,6 +98,22 @@ export function ProjectSidebar({
 
       <ScrollArea className="flex-1 min-h-0 p-4">
         <div className="space-y-5">
+          <button
+            onClick={() => navigate(tasksPath(projectSlug))}
+            className={cn(
+              "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
+              isTasksActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
+            )}
+          >
+            <Activity className={cn("h-3.5 w-3.5 shrink-0", runningCount > 0 ? "text-amber-500" : "text-muted-foreground")} />
+            <span className="flex-1 truncate">Фоновые задачи</span>
+            {runningCount > 0 && (
+              <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[0.6875rem] font-medium text-amber-600 dark:text-amber-400 tabular-nums">
+                {runningCount}
+              </span>
+            )}
+          </button>
+
           <FeatureList
             features={features}
             selectedFeatureName={selectedFeatureName}

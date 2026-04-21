@@ -25,7 +25,7 @@ function MappingRow({ field, depth, showCardinality }: { field: MessageField; de
           {field.element}{field.is_collection && <span className="text-muted-foreground">[]</span>}
         </td>
         <td className="px-2 py-1 text-muted-foreground">{field.field_type ?? "-"}</td>
-        <td className="px-2 py-1">{field.required ? "Да" : "Нет"}</td>
+        <td className="px-2 py-1">{field.required === null || field.required === undefined ? "–" : field.required ? "Да" : "Нет"}</td>
         {showCardinality && <td className="px-2 py-1 text-muted-foreground font-mono">{field.cardinality ?? "–"}</td>}
         <td className="px-2 py-1 text-muted-foreground">{field.description ?? "-"}</td>
         <td className="px-2 py-1 text-muted-foreground">{field.source ?? "-"}</td>

@@ -26,6 +26,7 @@ function emptyParam(): ParameterField {
     required: false,
     validation_rules: [],
     param_in: null,
+    example: null,
     children: [],
   }
 }
@@ -111,6 +112,14 @@ function EditableParameterRows({
                 value={param.description}
                 placeholder="description"
                 onChange={(e) => updateParam(i, { ...param, description: e.target.value })}
+              />
+            </TableCell>
+            <TableCell>
+              <input
+                className="text-xs font-mono bg-transparent border-b border-border outline-none w-full"
+                value={param.example ?? ""}
+                placeholder="пример"
+                onChange={(e) => updateParam(i, { ...param, example: e.target.value || null })}
               />
             </TableCell>
             <TableCell>
@@ -208,6 +217,9 @@ function ParameterRows({
               )}
             </TableCell>
             <TableCell className="text-sm">{param.description}</TableCell>
+            <TableCell className="text-xs font-mono text-muted-foreground">
+              {param.example ? param.example : "—"}
+            </TableCell>
             <TableCell className="text-xs text-muted-foreground">
               {param.validation_rules.length > 0
                 ? param.validation_rules.join(", ")
@@ -247,12 +259,13 @@ export function ParametersTable({
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Имя</TableHead>
-            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Тип</TableHead>
-            {showParamIn && <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Расположение</TableHead>}
-            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Обязательность</TableHead>
-            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Описание</TableHead>
-            <TableHead className="bg-muted/60 text-[11px] uppercase tracking-wide text-muted-foreground">Валидация</TableHead>
+            <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Имя</TableHead>
+            <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Тип</TableHead>
+            {showParamIn && <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Расположение</TableHead>}
+            <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Обязательность</TableHead>
+            <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Описание</TableHead>
+            <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Пример</TableHead>
+            <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Валидация</TableHead>
             {isEditing && <TableHead className="w-16 bg-muted/60"></TableHead>}
           </TableRow>
         </TableHeader>

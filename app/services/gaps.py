@@ -15,43 +15,10 @@ from app.prompts.gaps import (
 from app.schemas.extraction import StructuredBusinessLogic
 from app.schemas.gaps import ApplyResult, GapsAnalysisResult
 from app.services.claude_client import call_claude, log_cache_stats
+from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
-
-
-def _build_shared_context(feature: dict, enriched_deps: dict) -> str:
-    """Build a shared text block describing the feature and its dependencies."""
-    lines = []
-    lines.append("## Feature")
-    lines.append(f"Name: {feature.get('name', '')}")
-    lines.append(f"Type: {feature.get('type', '')}")
-    lines.append(f"Method: {feature.get('method', '')}")
-    lines.append(f"Endpoint: {feature.get('endpoint', '')}")
-    lines.append(f"Summary: {feature.get('summary', '')}")
-    lines.append("")
-
-    structured_logic = feature.get("structured_logic_json")
-    if structured_logic:
-        lines.append("### Structured Logic")
-        lines.append(json.dumps(structured_logic, ensure_ascii=False, indent=2))
-        lines.append("")
-
-    lines.append("## Dependencies")
-    if enriched_deps:
-        for dep_name, dep_data in enriched_deps.items():
-            lines.append(f"### {dep_name} ({dep_data.get('dep_type', '')})")
-            enriched = dep_data.get("enriched_data")
-            if enriched:
-                lines.append(json.dumps(enriched, ensure_ascii=False, indent=2))
-            else:
-                lines.append(f"Description: {dep_data.get('description', '')}")
-                lines.append(f"Status: {dep_data.get('enrichment_status', 'stub')}")
-            lines.append("")
-    else:
-        lines.append("No enriched dependencies available.")
-
-    return "\n".join(lines)
 
 
 async def _call_gaps_analysis(
@@ -159,8 +126,33 @@ async def run_gaps_pipeline(
     project_slug: str,
     feature_name: str,
     store,
+    *,
+    task_id: str | None = None,
 ) -> list[dict]:
-    """Run single-call gap analysis and return merged gaps list."""
+    """Run single-call gap analysis and return merged gaps list.
+
+    On success: gaps.json is saved, task (if any) is finished with status=done.
+    On error: task is finished with status=error.
+    """
+    try:
+        result = await _run_gaps_pipeline_inner(project_slug, feature_name, store)
+    except Exception as exc:
+        if task_id:
+            await store.finish_task(
+                project_slug, task_id, status="error", error_message=str(exc),
+            )
+        raise
+    if task_id:
+        await store.finish_task(project_slug, task_id, status="done")
+    return result
+
+
+async def _run_gaps_pipeline_inner(
+    project_slug: str,
+    feature_name: str,
+    store,
+) -> list[dict]:
+    """Core pipeline without task handling (caller wraps for task lifecycle)."""
     # Load feature
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
@@ -184,16 +176,30 @@ async def run_gaps_pipeline(
     # Build normalized flat_deps lookup
     norm_flat: dict[str, dict] = {_norm(name): dep for name, dep in flat_deps.items()}
 
+    # Build lookup for external_api by service_name+path
+    api_deps = [d for d in flat_deps.values() if d.get("dep_type") == "external_api"]
+
     unenriched: list[str] = []
     for dep in used_deps:
         if not isinstance(dep, dict):
             continue
-        # For external_api, effective name is service_name/path
         dep_name = dep.get("name", "")
-        if dep.get("type") == "external_api" and dep.get("service_name") and dep.get("path"):
-            dep_name = f"{dep['service_name']}/{dep['path'].lstrip('/')}"
         if not dep_name:
             continue
+
+        # For external_api: match by service_name + path fields
+        if dep.get("type") == "external_api" and dep.get("service_name"):
+            matched = next(
+                (d for d in api_deps
+                 if _norm(d.get("service_name") or "") == _norm(dep.get("service_name") or "")
+                 and _norm(d.get("path") or "") == _norm(dep.get("path") or "")),
+                None,
+            )
+            display = f"{dep['service_name']}/{(dep.get('path') or '').lstrip('/')}"
+            if matched is None or matched.get("enrichment_status") != "enriched":
+                unenriched.append(display)
+            continue
+
         norm_name = _norm(dep_name)
         if norm_name in norm_flat:
             if norm_flat[norm_name].get("enrichment_status") != "enriched":
@@ -211,7 +217,7 @@ async def run_gaps_pipeline(
     enriched_deps = {name: dep for name, dep in flat_deps.items()
                      if dep.get("enrichment_status") == "enriched"}
 
-    shared_ctx = _build_shared_context(feature, enriched_deps)
+    shared_ctx = build_feature_context(feature, enriched_deps)
 
     model = settings.gaps_model
 
@@ -223,33 +229,19 @@ async def run_gaps_pipeline(
         project_rules=project_rules.get("gaps", ""),
     )
 
-    try:
-        all_new_gaps = await _call_gaps_analysis(model, shared_ctx, system_prompt)
+    all_new_gaps = await _call_gaps_analysis(model, shared_ctx, system_prompt)
 
-        # Smart merge with existing gaps
-        existing_gaps = await store.get_gaps(project_slug, feature_name)
-        merged_gaps = _smart_merge_gaps(existing_gaps, all_new_gaps)
+    # Smart merge with existing gaps
+    existing_gaps = await store.get_gaps(project_slug, feature_name)
+    merged_gaps = _smart_merge_gaps(existing_gaps, all_new_gaps)
 
-        # Save results: gaps go to gaps.json, status/timestamp go to feature.json
-        await store.save_gaps(project_slug, feature_name, merged_gaps)
-        await store.update_feature(project_slug, feature_name, {
-            "gaps_status": "done",
-            "gaps_run_at": datetime.now(UTC).isoformat(),
-        })
+    # Save gaps; timestamp stays on feature.json as a last-run marker
+    await store.save_gaps(project_slug, feature_name, merged_gaps)
+    await store.update_feature(project_slug, feature_name, {
+        "gaps_run_at": datetime.now(UTC).isoformat(),
+    })
 
-        return merged_gaps
-
-    except Exception as exc:
-        is_overloaded = getattr(exc, "status_code", None) == 529
-        if is_overloaded:
-            logger.warning("Gaps pipeline overloaded for feature '%s'", feature_name)
-            await store.update_feature(project_slug, feature_name, {
-                "gaps_status": "overloaded",
-            })
-        else:
-            logger.error("Gaps pipeline fatal error for feature '%s': %s", feature_name, exc)
-            await store.update_feature(project_slug, feature_name, {"gaps_status": "error"})
-        raise
+    return merged_gaps
 
 
 
@@ -352,6 +344,8 @@ async def run_apply_preview_background(
     project_slug: str,
     feature_name: str,
     store,
+    *,
+    task_id: str | None = None,
 ) -> None:
     """Background task: generate apply preview and save to storage."""
     try:
@@ -360,14 +354,19 @@ async def run_apply_preview_background(
             "status": "done",
             **result,
         })
-        await store.update_feature(project_slug, feature_name, {"apply_status": "done"})
     except Exception as exc:
         logger.error("Apply preview failed for feature '%s': %s", feature_name, exc)
         await store.save_apply_preview(project_slug, feature_name, {
             "status": "error",
             "error": str(exc),
         })
-        await store.update_feature(project_slug, feature_name, {"apply_status": "error"})
+        if task_id:
+            await store.finish_task(
+                project_slug, task_id, status="error", error_message=str(exc),
+            )
+        return
+    if task_id:
+        await store.finish_task(project_slug, task_id, status="done")
 
 
 async def confirm_apply(
@@ -386,7 +385,6 @@ async def confirm_apply(
 
     await store.save_gaps(project_slug, feature_name, gaps)
     await store.delete_apply_preview(project_slug, feature_name)
-    await store.update_feature(project_slug, feature_name, {"apply_status": None})
     logger.info(
         "[gaps:confirm_apply] Applied proposed logic to feature '%s'",
         feature_name,

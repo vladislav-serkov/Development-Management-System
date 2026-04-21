@@ -92,9 +92,17 @@ class KafkaTopicEnrichmentBatch(BaseModel):
     topics: list[KafkaTopicEnrichment]
 
 
+# --- External document enrichment (HTML dump of arbitrary reference doc) ---
+class ExternalDocEnrichment(BaseModel):
+    """1 PDF -> 1 external document. Stores verbatim HTML of the source doc (preserves tables with rowspan/colspan 1:1)."""
+    doc_name: str = Field(description="Document title; latin if present in source heading")
+    description: str = Field(default="", description="Short Russian summary — 1-2 lines about what the doc is")
+    content_html: str = Field(default="", description="Full document body converted to sanitized HTML verbatim")
+
+
 # --- Manual dependency creation ---
 class CreateDependencyRequest(BaseModel):
-    dep_type: str = Field(description="db_table | external_api | cache | kafka_topic")
+    dep_type: str = Field(description="db_table | external_api | cache | kafka_topic | external_doc")
     name: str = Field(min_length=1)
     description: str = ""
     method: str | None = None       # for external_api

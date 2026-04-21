@@ -209,6 +209,12 @@ export function StructuredLogicView({
           steps={logic.logic_steps ?? []}
           isEditing={isEditing}
           onChange={isEditing ? (steps) => onChange?.({ ...logic, logic_steps: steps }) : undefined}
+          onDocRefClick={(name) => {
+            const dep = projectDependencies?.find(
+              (pd) => pd.dep_type === "external_doc" && pd.name === name
+            )
+            if (dep && onDepClick) onDepClick(dep)
+          }}
         />
       </TabsContent>
 
@@ -237,7 +243,7 @@ export function StructuredLogicView({
               <div>
                 <h3 className="text-sm font-medium mb-2">Обработка ошибок (JSON)</h3>
                 <textarea
-                  className={`w-full text-xs font-mono bg-muted/30 border rounded px-3 py-2 outline-none resize-none min-h-[120px] ${
+                  className={`w-full text-xs font-mono bg-muted/30 border rounded px-3 py-2 outline-none resize-none min-h-[7.5rem] ${
                     errorHandlingJsonError ? "border-destructive" : "border-border"
                   }`}
                   value={errorHandlingJson}

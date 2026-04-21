@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class FeatureType(str, Enum):
     kafka_consumer = "kafka_consumer"
     rest_endpoint = "rest_endpoint"
+    scheduled_task = "scheduled_task"
     unknown = "unknown"
 
 
@@ -18,6 +19,7 @@ class ParameterField(BaseModel):
     required: bool = Field(default=True)
     validation_rules: list[str] = Field(default_factory=list, description="Validation rules in Russian, e.g. 'Не более 50 символов'")
     param_in: str | None = Field(default=None, description="For REST: body, header, query, path. Null for Kafka.")
+    example: str | None = Field(default=None, description="Sample value for this field. Extract from spec if given, otherwise synthesise a realistic one based on type. Null for container fields (object/array) whose value is represented by children.")
     children: list["ParameterField"] = Field(default_factory=list, description="Nested fields for object/array types")
 
 
@@ -25,25 +27,48 @@ class MessageField(BaseModel):
     element: str = Field(description="Field/element name")
     parent: str | None = Field(default=None, description="Parent element name")
     field_type: str | None = Field(default=None, description="Data type")
-    required: bool = Field(default=False)
+    required: bool | None = Field(default=None, description="Verbatim from spec table 'Обяз.' column: true/false. Null if no such column in spec.")
     cardinality: str | None = Field(default=None, description="Verbatim cardinality from spec table: '1', '0-1', '1-N', '0-N'. Null if not present in spec.")
     is_collection: bool = Field(default=False, description="True if this field is a list/array based on direct textual cues in the spec")
     description: str | None = Field(default=None, description="What this field is, in Russian from the spec")
     source: str | None = Field(default=None, description="Where the value comes from, in Russian from the spec")
+    example: str | None = Field(default=None, description="Sample value for this field. Extract from spec if given, otherwise synthesise a realistic one based on type. Null for container fields whose value is represented by children.")
     children: list["MessageField"] = Field(default_factory=list)
+
+
+class GenericTable(BaseModel):
+    """Reference / lookup table from the spec that is NOT a field mapping.
+
+    Examples: enum value → action mapping, error code reference, status matrix.
+    Stored verbatim as headers + rows so the original table structure is preserved
+    without forcing it into the MessageField schema.
+    """
+
+    caption: str | None = Field(default=None, description="Optional table title/caption from the spec, in Russian")
+    headers: list[str] = Field(description="Column headers verbatim from the spec, in order")
+    rows: list[list[str]] = Field(description="Data rows; each row has len(headers) cells as strings")
 
 
 class LogicStep(BaseModel):
     number: str = Field(description="Step number like '1', '1.1', '1.1.2'")
     text: str = Field(description="VERBATIM text from the PDF specification in Russian")
     has_detailed_mapping: bool = Field(default=False, description="True if this step contains XML/JSON message mapping table")
+    message_type: str | None = Field(default=None, description="Target table/message type name from Call 2, e.g. 'outbox_payment'")
     message_mapping: list[MessageField] | None = Field(default=None, description="Extracted message mapping fields")
+    reference_tables: list[GenericTable] = Field(
+        default_factory=list,
+        description="Reference/lookup tables attached to this step (enum value mappings, code reference tables, etc.) — NOT field mappings.",
+    )
+    external_doc_refs: list[str] = Field(
+        default_factory=list,
+        description="Names of external documents referenced in this step. Must exactly match names in used_dependencies (type=external_doc).",
+    )
     children: list["LogicStep"] = Field(default_factory=list)
 
 
 class UsedDependency(BaseModel):
-    type: str = Field(description="db_table, external_api, cache, or kafka_topic")
-    name: str = Field(description="Name: table name, cache structure name, Kafka topic name, or endpoint path for external_api")
+    type: str = Field(description="db_table, external_api, cache, kafka_topic, or external_doc")
+    name: str = Field(description="Name: table name, cache structure name, Kafka topic name, endpoint path for external_api, or document title for external_doc")
     description: str = Field(description="What it's used for, in Russian")
     method: str | None = Field(default=None, description="HTTP method for external_api: GET/POST/PUT/DELETE/PATCH")
     service_name: str | None = Field(default=None, description="Service name for external_api, e.g. flp-credit-line")
@@ -90,12 +115,14 @@ class DocumentPatchRequest(BaseModel):
 class DetectedFeature(BaseModel):
     """Feature detected from PDF by the 1st Claude call (tool_use schema)."""
 
-    name: str
+    name: str = Field(description="Latin slug identifier: topic name for Kafka, METHOD /path for REST, or a latin snake_case slug derived from the scheduled-task heading")
+    display_name: str | None = Field(default=None, description="Human-readable name verbatim from the spec (Russian). Required for scheduled_task (heading of the task section). Null for kafka_consumer/rest_endpoint — UI falls back to name.")
     type: FeatureType
     confidence: float = Field(ge=0.0, le=1.0)
     summary: str
-    method: str | None = Field(default=None, description="HTTP method for REST (GET/POST/PUT/DELETE) or CONSUMER for Kafka")
-    endpoint: str | None = Field(default=None, description="REST path like /v1/credit-line or Kafka topic like pay-later.flp.rbo-adapter.product.return.queue")
+    method: str | None = Field(default=None, description="HTTP method for REST (GET/POST/PUT/DELETE), CONSUMER for Kafka, SCHEDULED for scheduled_task")
+    endpoint: str | None = Field(default=None, description="REST path like /v1/credit-line or Kafka topic like pay-later.flp.rbo-adapter.product.return.queue. Null for scheduled_task — use `schedule` instead.")
+    schedule: str | None = Field(default=None, description="Trigger schedule verbatim from the spec (Russian). Examples: 'Ежедневно в 19:00 МСК', 'Каждый час'. Required for scheduled_task, null otherwise.")
     dependencies: list[str] = Field(default_factory=list)
     structured_logic: StructuredBusinessLogic = Field(default_factory=StructuredBusinessLogic)
 
@@ -128,10 +155,8 @@ class DocumentStatus(str, Enum):
 
 
 class FeatureStatus(str, Enum):
-    detected = "detected"
     extracting = "extracting"
     done = "done"
-    error = "error"
 
 
 class FeaturePatchRequest(BaseModel):
@@ -147,6 +172,7 @@ class FeatureResponse(BaseModel):
     """HTTP response model for a single feature."""
 
     name: str
+    display_name: str | None = None
     source_document: str  # doc slug
     type: str
     confidence: float
@@ -154,15 +180,15 @@ class FeatureResponse(BaseModel):
     status: str
     method: str | None = None
     endpoint: str | None = None
+    schedule: str | None = None
     structured_logic: dict | None = None  # from structured_logic_json field
-    error_message: str | None = None
     gap_count: int = 0
     pending_gap_count: int = 0
-    gaps_status: str | None = None
-    apply_status: str | None = None
+    gaps_running: bool = False
+    apply_running: bool = False
     test_case_count: int = 0
     pending_test_case_count: int = 0
-    test_cases_status: str | None = None
+    test_cases_running: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -20,8 +20,8 @@ export function DbSchemaView({ data }: { data: DbTableEnrichment }) {
             <TableRow key={col.name}>
               <TableCell className="font-mono text-sm">
                 {col.name}
-                {col.is_pk && <Badge variant="outline" className="ml-1 text-[10px]">PK</Badge>}
-                {col.is_fk && <Badge variant="outline" className="ml-1 text-[10px]">FK</Badge>}
+                {col.is_pk && <Badge variant="outline" className="ml-1 text-[0.625rem]">PK</Badge>}
+                {col.is_fk && <Badge variant="outline" className="ml-1 text-[0.625rem]">FK</Badge>}
               </TableCell>
               <TableCell className="font-mono text-sm">{col.col_type}</TableCell>
               <TableCell>{col.nullable ? "Да" : "Нет"}</TableCell>

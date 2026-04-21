@@ -8,8 +8,7 @@ export function useFeatureGaps(projectSlug: string | null, featureName: string |
     queryFn: () => fetchGaps(projectSlug!, featureName!),
     enabled: !!projectSlug && !!featureName,
     refetchInterval: (query) => {
-      const status = query.state.data?.gaps_status
-      return status === "running" ? 2000 : false
+      return query.state.data?.gaps_running ? 2000 : false
     },
   })
 }

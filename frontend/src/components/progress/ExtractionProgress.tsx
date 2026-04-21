@@ -12,10 +12,6 @@ function featureStatusVariant(status: FeatureStatus): "default" | "secondary" | 
       return "default"
     case "extracting":
       return "outline"
-    case "error":
-      return "destructive"
-    default:
-      return "secondary"
   }
 }
 
@@ -23,8 +19,6 @@ function featureStatusLabel(status: FeatureStatus): string {
   switch (status) {
     case "done": return "done"
     case "extracting": return "extracting"
-    case "error": return "error"
-    default: return "detected"
   }
 }
 
@@ -48,7 +42,7 @@ export function ExtractionProgress({ status, features }: ExtractionProgressProps
               <Badge variant={featureStatusVariant(feature.status)} className="text-xs">
                 {featureStatusLabel(feature.status)}
               </Badge>
-              <span className="text-xs truncate max-w-[160px]">{feature.name}</span>
+              <span className="text-xs truncate max-w-[10rem]">{feature.name}</span>
             </div>
           ))}
         </div>
@@ -66,25 +60,19 @@ export function ExtractionProgress({ status, features }: ExtractionProgressProps
   }
 
   if (status === "error") {
-    const errorCount = features.filter((f) => f.status === "error").length
     return (
       <div className="flex items-center gap-1">
         <span className="text-destructive text-xs">✗</span>
-        <span className="text-xs text-destructive">
-          {errorCount > 0 ? `${errorCount} error${errorCount > 1 ? "s" : ""}` : "Error"}
-        </span>
+        <span className="text-xs text-destructive">Error</span>
       </div>
     )
   }
 
   if (status === "partial") {
-    const errorCount = features.filter((f) => f.status === "error").length
     return (
       <div className="flex items-center gap-1">
         <span className="text-amber-500 text-xs">⚠</span>
-        <span className="text-xs text-amber-600">
-          {errorCount > 0 ? `Partial (${errorCount} error${errorCount > 1 ? "s" : ""})` : "Partial"}
-        </span>
+        <span className="text-xs text-amber-600">Partial</span>
       </div>
     )
   }

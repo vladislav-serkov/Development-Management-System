@@ -33,7 +33,7 @@ function RichText({ text }: { text: string }) {
     <>
       {parts.map((part, i) =>
         part.startsWith("`") && part.endsWith("`") ? (
-          <code key={i} className="px-1 py-px rounded bg-muted text-[12px] font-mono">
+          <code key={i} className="px-1 py-px rounded bg-muted text-[0.75rem] font-mono">
             {part.slice(1, -1)}
           </code>
         ) : (
@@ -204,7 +204,7 @@ function BugCard({
             <div className="flex items-start gap-3">
               <button
                 className={cn(
-                  "mt-[3px] shrink-0 flex h-4 w-4 items-center justify-center rounded-[4px] border transition-colors",
+                  "mt-[0.1875rem] shrink-0 flex h-4 w-4 items-center justify-center rounded-[0.25rem] border transition-colors",
                   isVerified
                     ? "border-emerald-500 bg-emerald-500 text-white"
                     : isFixed
@@ -222,14 +222,14 @@ function BugCard({
                   <div className="min-w-0 flex-1">
                     <p
                       className={cn(
-                        "text-[14px] font-semibold leading-[1.55] text-foreground",
+                        "text-[0.875rem] font-semibold leading-[1.55] text-foreground",
                         !open && "line-clamp-2",
                         isDone && "text-foreground/80",
                       )}
                     >
                       <RichText text={bug.title} />
                     </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[11px]">
+                    <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[0.6875rem]">
                       <p className="font-medium text-muted-foreground">{bug.test_case_name}</p>
                       <span className={cn(
                         "rounded-full px-2.5 py-0.5 font-medium",
@@ -244,7 +244,7 @@ function BugCard({
 
                   <div className="shrink-0 flex items-start gap-2">
                     {bug.severity && (
-                      <span className={cn("rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide", SEVERITY_STYLE[bug.severity])}>
+                      <span className={cn("rounded-full px-2.5 py-1 text-[0.625rem] font-semibold uppercase tracking-wide", SEVERITY_STYLE[bug.severity])}>
                         {bug.severity}
                       </span>
                     )}
@@ -269,13 +269,13 @@ function BugCard({
               {/* Сценарий — flat document style like Jira */}
               {bug.steps.length > 0 && (
                 <div>
-                  <p className="text-[14px] font-bold text-foreground">Сценарий:</p>
+                  <p className="text-[0.875rem] font-bold text-foreground">Сценарий:</p>
                   <ol className="mt-3 list-decimal space-y-4 pl-5">
                     {bug.steps.map((step, si) => (
-                      <li key={si} className="text-[14px] leading-[1.7] text-foreground">
+                      <li key={si} className="text-[0.875rem] leading-[1.7] text-foreground">
                         <RichText text={step.action} />
                         {step.result && (
-                          <p className="mt-1 text-[13px] leading-[1.65] text-foreground/70"><RichText text={step.result} /></p>
+                          <p className="mt-1 text-[0.8125rem] leading-[1.65] text-foreground/70"><RichText text={step.result} /></p>
                         )}
                         {(step.curl_command || step.sql_query || step.kafka_message) && (
                           <div className="mt-2.5 space-y-2.5">
@@ -371,27 +371,27 @@ function BugCard({
 
               {/* ОР — ожидаемый результат */}
               <div>
-                <p className="text-[14px] font-bold text-foreground">ОР — ожидаемый результат:</p>
-                <p className="mt-2 text-[14px] leading-[1.7] text-foreground/80"><RichText text={bug.expected_result} /></p>
+                <p className="text-[0.875rem] font-bold text-foreground">ОР — ожидаемый результат:</p>
+                <p className="mt-2 text-[0.875rem] leading-[1.7] text-foreground/80"><RichText text={bug.expected_result} /></p>
               </div>
 
               {/* ФР — фактический результат */}
               <div>
-                <p className="text-[14px] font-bold text-foreground">ФР — фактический результат:</p>
-                <p className="mt-2 text-[14px] leading-[1.7] text-foreground/80"><RichText text={bug.actual_result} /></p>
+                <p className="text-[0.875rem] font-bold text-foreground">ФР — фактический результат:</p>
+                <p className="mt-2 text-[0.875rem] leading-[1.7] text-foreground/80"><RichText text={bug.actual_result} /></p>
               </div>
 
               {bug.status === "open" && (
                 <BugActionRow>
                   <button
-                    className="rounded-md bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-amber-600 disabled:opacity-60"
+                    className="rounded-md bg-amber-500 px-4 py-2 text-[0.75rem] font-semibold text-white transition-colors hover:bg-amber-600 disabled:opacity-60"
                     onClick={(e) => { e.stopPropagation(); patchMut.mutate({ bugIndex: index, status: "fixed" }) }}
                     disabled={isBusy}
                   >
                     Исправлен
                   </button>
                   <button
-                    className="rounded-md px-3 py-2 text-[12px] text-muted-foreground transition-colors hover:text-red-500"
+                    className="rounded-md px-3 py-2 text-[0.75rem] text-muted-foreground transition-colors hover:text-red-500"
                     onClick={(e) => { e.stopPropagation(); deleteMut.mutate(index) }}
                     disabled={isBusy}
                   >
@@ -403,14 +403,14 @@ function BugCard({
               {bug.status === "fixed" && (
                 <BugActionRow>
                   <button
-                    className="rounded-md bg-emerald-600 px-4 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60"
+                    className="rounded-md bg-emerald-600 px-4 py-2 text-[0.75rem] font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60"
                     onClick={(e) => { e.stopPropagation(); patchMut.mutate({ bugIndex: index, status: "verified" }) }}
                     disabled={isBusy}
                   >
                     Проверен
                   </button>
                   <button
-                    className="rounded-md border border-border px-3.5 py-2 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                    className="rounded-md border border-border px-3.5 py-2 text-[0.75rem] font-medium text-muted-foreground transition-colors hover:text-foreground"
                     onClick={(e) => { e.stopPropagation(); patchMut.mutate({ bugIndex: index, status: "open" }) }}
                     disabled={isBusy}
                   >
@@ -422,7 +422,7 @@ function BugCard({
               {bug.status === "verified" && (
                 <BugActionRow>
                   <button
-                    className="rounded-md px-3 py-2 text-[12px] text-muted-foreground/70 transition-colors hover:text-foreground"
+                    className="rounded-md px-3 py-2 text-[0.75rem] text-muted-foreground/70 transition-colors hover:text-foreground"
                     onClick={(e) => { e.stopPropagation(); patchMut.mutate({ bugIndex: index, status: "open" }) }}
                     disabled={isBusy}
                   >
@@ -486,100 +486,6 @@ function parseKafkaArtifact(raw: string): ParsedKafkaArtifact | null {
   return null
 }
 
-function getPayloadBadge(value: string): string | null {
-  const trimmed = value.trim()
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "JSON"
-  if (trimmed.startsWith("<")) return "XML"
-  return null
-}
-
-function BugArtifact({
-  label,
-  value,
-  className,
-  copied,
-  onCopy,
-}: {
-  label: string
-  value: string
-  className?: string
-  copied: boolean
-  onCopy: (e: React.MouseEvent) => void
-}) {
-  return (
-    <div className={cn("group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50/90 dark:border-slate-800 dark:bg-slate-900/70", className)}>
-      <div className="border-b border-slate-200 px-3 py-2 dark:border-slate-800">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</span>
-      </div>
-      <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap break-words px-3 py-3 text-[12px] font-mono leading-6 text-slate-900 dark:text-slate-100">
-        <code>{value}</code>
-      </pre>
-      <button
-        onClick={onCopy}
-        className="absolute right-2 top-2 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-        title="Копировать"
-      >
-        {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-      </button>
-    </div>
-  )
-}
-
-function BugKafkaArtifact({
-  kafka,
-  copiedField,
-  fieldPrefix,
-  onCopyField,
-}: {
-  kafka: ParsedKafkaArtifact
-  copiedField: string | null
-  fieldPrefix: string
-  onCopyField: (field: string, value: string) => void
-}) {
-  const payloadBadge = kafka.value ? getPayloadBadge(kafka.value) : null
-
-  return (
-    <div className="flex flex-col items-start gap-2.5 lg:col-span-2 xl:col-span-3">
-      {kafka.topic && (
-        <BugArtifact
-          label="Topic"
-          value={kafka.topic}
-          className="w-full max-w-[44rem]"
-          copied={copiedField === `${fieldPrefix}-topic`}
-          onCopy={(e) => {
-            e.stopPropagation()
-            onCopyField("message-topic", kafka.topic!)
-          }}
-        />
-      )}
-      {kafka.key && (
-        <BugArtifact
-          label="Key"
-          value={kafka.key}
-          className="w-full max-w-[44rem]"
-          copied={copiedField === `${fieldPrefix}-key`}
-          onCopy={(e) => {
-            e.stopPropagation()
-            onCopyField("message-key", kafka.key!)
-          }}
-        />
-      )}
-      {kafka.value && (
-        <BugArtifact
-          label={payloadBadge ? `Payload ${payloadBadge}` : "Payload"}
-          value={kafka.value}
-          className="w-full max-w-[44rem]"
-          copied={copiedField === `${fieldPrefix}-value`}
-          onCopy={(e) => {
-            e.stopPropagation()
-            onCopyField("message-value", kafka.value!)
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
 function JiraCodeBlock({
   value,
   copied,
@@ -591,7 +497,7 @@ function JiraCodeBlock({
 }) {
   return (
     <div className="group relative overflow-hidden rounded-md bg-[#f0f4f8] dark:bg-slate-900/70">
-      <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-[12px] font-mono leading-6 text-slate-900 dark:text-slate-100">
+      <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-[0.75rem] font-mono leading-6 text-slate-900 dark:text-slate-100">
         <code>{value}</code>
       </pre>
       <button
@@ -660,7 +566,7 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
         <div className="flex flex-wrap items-baseline gap-2.5">
           <h2 className="text-base font-medium">Баг-репорты</h2>
           {bugs.length > 0 && (
-            <span className="text-[13px] text-muted-foreground tabular-nums">
+            <span className="text-[0.8125rem] text-muted-foreground tabular-nums">
               Открыто {openCount} / Закрыто {resolvedCount} / Всего {bugs.length}
             </span>
           )}
@@ -697,7 +603,7 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
                 ))}
               </div>
 
-              <div className="relative min-w-[240px]">
+              <div className="relative min-w-[15rem]">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск по названию, кейсу и результату" className="pl-8 text-sm" />
               </div>
@@ -727,7 +633,7 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
       {!isLoading && bugs.length === 0 && (
         <div className="rounded-xl border border-dashed px-4 py-12 text-center">
           <p className="text-sm font-medium">Баг-репорты еще не появились</p>
-          <p className="mt-2 text-[13px] text-muted-foreground">
+          <p className="mt-2 text-[0.8125rem] text-muted-foreground">
             Они создаются из вкладки тест-кейсов, когда сценарий требует отдельного баг-репорта.
           </p>
         </div>
@@ -736,7 +642,7 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
       {bugs.length > 0 && filteredBugs.length === 0 && (
         <div className="rounded-xl border border-dashed px-4 py-12 text-center">
           <p className="text-sm font-medium">Ничего не найдено</p>
-          <p className="mt-2 text-[13px] text-muted-foreground">Сбросьте фильтры или расширьте поисковый запрос.</p>
+          <p className="mt-2 text-[0.8125rem] text-muted-foreground">Сбросьте фильтры или расширьте поисковый запрос.</p>
         </div>
       )}
 
@@ -745,10 +651,10 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
         {grouped.map(({ severity, items }) => (
           <div key={severity}>
             <div className="mb-2.5 flex items-center gap-2 px-1">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground/60">
                 {SEVERITY_LABEL[severity]}
               </p>
-              <span className="text-[11px] text-muted-foreground/40">{items.length}</span>
+              <span className="text-[0.6875rem] text-muted-foreground/40">{items.length}</span>
             </div>
             <div className="space-y-2">
               {items.map(({ bug, idx }) => (
@@ -780,7 +686,7 @@ function BugFilterChip({
   return (
     <button
       className={cn(
-        "rounded-full border px-3 py-1 text-[11px] font-medium transition-colors",
+        "rounded-full border px-3 py-1 text-[0.6875rem] font-medium transition-colors",
         active
           ? "border-foreground/10 bg-foreground text-background"
           : "border-border bg-background text-muted-foreground hover:border-foreground/15 hover:text-foreground"
@@ -814,7 +720,7 @@ function BugMiniStat({
     <Card className={cn("shadow-none", toneClasses[tone])}>
       <CardContent className="flex items-start justify-between gap-3 py-3.5">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+          <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
           <p className="mt-2 text-xl font-semibold">{value}</p>
         </div>
         <div className="rounded-lg bg-muted p-2 text-muted-foreground">

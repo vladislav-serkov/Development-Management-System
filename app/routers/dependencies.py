@@ -5,7 +5,9 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from app.routers.projects import store
 from app.schemas.enrichment import CreateDependencyRequest, DependencyResponse
-from app.services.enrichment import run_enrichment_pipeline
+from app.services.enrichment import EXTERNAL_DOC_TARGETED_ONLY_MSG, run_enrichment_pipeline
+from app.services.required_sync import sync_required_after_enrichment
+from app.services.task_manager import task_manager
 from app.storage import DEP_TYPE_FILE
 
 logger = logging.getLogger(__name__)
@@ -99,7 +101,7 @@ async def patch_dependency(
     project_slug: str,
     dep_name: str,
     patch: dict,
-    dep_type: str = Query(..., description="db_table | external_api | cache | kafka_topic"),
+    dep_type: str = Query(..., description="db_table | external_api | cache | kafka_topic | external_doc"),
 ):
     dep = await store.get_dependency(project_slug, dep_type, dep_name)
     if dep is None:
@@ -141,7 +143,7 @@ async def patch_dependency(
 async def delete_dependency(
     project_slug: str,
     dep_name: str,
-    dep_type: str = Query(..., description="db_table | external_api | cache | kafka_topic"),
+    dep_type: str = Query(..., description="db_table | external_api | cache | kafka_topic | external_doc"),
 ):
     """Delete a dependency entry from the JSON file."""
     dep = await store.get_dependency(project_slug, dep_type, dep_name)
@@ -152,24 +154,92 @@ async def delete_dependency(
     return {"ok": True}
 
 
-@router.post("/enrich", response_model=list[DependencyResponse])
+async def _run_enrichment_background(
+    project_slug: str,
+    dep_type: str,
+    dep_name: str | None,
+    pdf_bytes: bytes,
+    pdf_filename: str,
+    *,
+    task_id: str | None = None,
+) -> None:
+    """Background wrapper: run enrichment pipeline and handle status transitions."""
+    try:
+        enriched_deps = await run_enrichment_pipeline(
+            project_slug=project_slug,
+            dep_type=dep_type,
+            pdf_bytes=pdf_bytes,
+            pdf_filename=pdf_filename,
+            store=store,
+            target_dep_name=dep_name,
+        )
+        # enrichment_status is set to "enriched" inside run_enrichment_pipeline
+
+        # Sync required fields from enriched data into feature mappings
+        for dep_resp in enriched_deps:
+            if dep_resp.enriched_data:
+                try:
+                    await sync_required_after_enrichment(
+                        project_slug=project_slug,
+                        dep_type=dep_resp.dep_type,
+                        dep_name=dep_resp.name,
+                        enriched_data=dep_resp.enriched_data,
+                        store=store,
+                    )
+                except Exception as sync_exc:
+                    logger.warning(
+                        "required_sync failed (non-fatal): %s/%s: %s",
+                        dep_resp.dep_type, dep_resp.name, sync_exc,
+                    )
+    except Exception as exc:
+        logger.error(
+            "Enrichment failed: project=%s, dep_type=%s, dep_name=%s: %s",
+            project_slug, dep_type, dep_name, exc,
+        )
+        # Mark affected deps as error
+        if dep_name:
+            await store.update_dependency(project_slug, dep_type, dep_name, {
+                "enrichment_status": "error",
+            })
+        else:
+            # Bulk: mark all "running" deps of this type as error
+            by_type = await store.list_dependencies(project_slug)
+            for dep in by_type.get(dep_type, []):
+                if dep.get("enrichment_status") == "running":
+                    await store.update_dependency(project_slug, dep_type, dep["name"], {
+                        "enrichment_status": "error",
+                    })
+        if task_id:
+            await store.finish_task(
+                project_slug, task_id, status="error", error_message=str(exc),
+            )
+        return
+    if task_id:
+        await store.finish_task(project_slug, task_id, status="done")
+
+
+@router.post("/enrich")
 async def enrich_dependency(
     project_slug: str,
-    dep_type: str = Query(..., description="db_table | external_api | cache | kafka_topic"),
+    dep_type: str = Query(..., description="db_table | external_api | cache | kafka_topic | external_doc"),
     dep_name: str | None = Query(None, description="Target specific dependency by name"),
     file: UploadFile = File(...),
 ):
-    """Upload a PDF to enrich dependencies of the given type."""
+    """Upload a PDF to enrich dependencies of the given type (async)."""
     proj = await store.get_project(project_slug)
     if proj is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
 
-    valid_types = ("db_table", "external_api", "cache", "kafka_topic")
+    valid_types = ("db_table", "external_api", "cache", "kafka_topic", "external_doc")
     if dep_type not in valid_types:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid dep_type: {dep_type}. Must be one of: {', '.join(valid_types)}",
         )
+
+    # external_doc supports only targeted enrichment — fail-fast before reading PDF
+    if dep_type == "external_doc" and not dep_name:
+        raise HTTPException(status_code=400, detail=EXTERNAL_DOC_TARGETED_ONLY_MSG)
 
     contents = await file.read()
     logger.info(
@@ -179,12 +249,51 @@ async def enrich_dependency(
     if not contents[:5] == b"%PDF-":
         raise HTTPException(status_code=400, detail="File does not appear to be a valid PDF")
 
-    results = await run_enrichment_pipeline(
-        project_slug=project_slug,
-        dep_type=dep_type,
-        pdf_bytes=contents,
-        pdf_filename=file.filename or "unnamed.pdf",
-        store=store,
-        target_dep_name=dep_name,
+    # Mark targeted dep as "running" immediately (dep-level data state — kept
+    # alongside the tasks log so the dep card keeps its running indicator).
+    if dep_name:
+        dep = await store.get_dependency(project_slug, dep_type, dep_name)
+        if dep is None:
+            raise HTTPException(status_code=404, detail=f"Dependency '{dep_name}' not found")
+        await store.update_dependency(project_slug, dep_type, dep_name, {
+            "enrichment_status": "running",
+        })
+    else:
+        # Bulk: mark all stubs of this type as "running"
+        by_type = await store.list_dependencies(project_slug)
+        for dep in by_type.get(dep_type, []):
+            if dep.get("enrichment_status") in ("stub", "error"):
+                await store.update_dependency(project_slug, dep_type, dep["name"], {
+                    "enrichment_status": "running",
+                })
+
+    task_key = f"enrich:{project_slug}/{dep_type}"
+    if dep_name:
+        task_key += f"/{dep_name}"
+
+    target_id = dep_name if dep_name else f"bulk:{dep_type}"
+    active = await store.get_active_task(project_slug, kind="enrichment", target_id=target_id)
+    if active is not None:
+        if task_manager.is_running(task_key):
+            raise HTTPException(status_code=409, detail="Enrichment is already running")
+        logger.warning(
+            "enrich: stuck task %s for %s/%s, recovering",
+            active["id"], project_slug, target_id,
+        )
+        await store.finish_task(
+            project_slug, active["id"], status="error",
+            error_message="Server restarted before task completed",
+        )
+
+    task = await store.create_task(
+        project_slug, kind="enrichment", target_type="dependency", target_id=target_id,
     )
-    return results
+    task_manager.launch(
+        task_key,
+        _run_enrichment_background(
+            project_slug, dep_type, dep_name, contents,
+            file.filename or "unnamed.pdf", task_id=task["id"],
+        ),
+    )
+
+    return {"status": "running"}

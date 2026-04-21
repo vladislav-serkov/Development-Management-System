@@ -30,22 +30,32 @@ async def run_gaps_analysis(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
-    if feature.get("gaps_status") == "done":
+    if feature.get("status") != "done":
         raise HTTPException(
             status_code=409,
-            detail="Gaps analysis already completed for this feature",
+            detail="Feature extraction is not done — cannot run gaps analysis",
         )
+
     task_key = f"gaps:{project_slug}/{feature_name}"
-    if feature.get("gaps_status") == "running":
+    active = await store.get_active_task(project_slug, kind="gaps", target_id=feature_name)
+    if active is not None:
         if task_manager.is_running(task_key):
             raise HTTPException(status_code=409, detail="Gaps analysis is already running for this feature")
-        # No live task — stuck state, recover
-        logger.warning("run_gaps: stuck 'running' state detected for %s/%s, recovering", project_slug, feature_name)
-        await store.update_feature(project_slug, feature_name, {"gaps_status": "error"})
+        logger.warning(
+            "run_gaps: stuck task %s for %s/%s, recovering", active["id"], project_slug, feature_name
+        )
+        await store.finish_task(
+            project_slug, active["id"], status="error",
+            error_message="Server restarted before task completed",
+        )
 
-    # Mark as running immediately and launch in background
-    await store.update_feature(project_slug, feature_name, {"gaps_status": "running"})
-    task_manager.launch(task_key, run_gaps_pipeline(project_slug, feature_name, store))
+    task = await store.create_task(
+        project_slug, kind="gaps", target_type="feature", target_id=feature_name,
+    )
+    task_manager.launch(
+        task_key,
+        run_gaps_pipeline(project_slug, feature_name, store, task_id=task["id"]),
+    )
 
     return {"status": "running"}
 
@@ -63,9 +73,10 @@ async def list_gaps(
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
     gaps = await store.get_gaps(project_slug, feature_name)
+    active = await store.get_active_task(project_slug, kind="gaps", target_id=feature_name)
     return {
         "gaps": gaps,
-        "gaps_status": feature.get("gaps_status"),
+        "gaps_running": active is not None,
         "gaps_run_at": feature.get("gaps_run_at"),
     }
 
@@ -115,18 +126,29 @@ async def delete_gap(
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
 
-    gaps = await store.get_gaps(project_slug, feature_name)
-    if gap_index < 0 or gap_index >= len(gaps):
+    all_gaps = await store.get_gaps(project_slug, feature_name, include_archived=True)
+
+    # Find the N-th active (non-archived) gap by index
+    active_count = 0
+    target_real_index = None
+    for i, g in enumerate(all_gaps):
+        if not g.get("archived"):
+            if active_count == gap_index:
+                target_real_index = i
+                break
+            active_count += 1
+
+    if target_real_index is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Gap index {gap_index} out of range (total: {len(gaps)})",
+            detail=f"Gap index {gap_index} out of range",
         )
 
-    logger.info("delete_gap: project=%s, feature=%s, index=%d", project_slug, feature_name, gap_index)
-    gaps.pop(gap_index)
-    await store.save_gaps(project_slug, feature_name, gaps)
+    logger.info("delete_gap (archive): project=%s, feature=%s, index=%d", project_slug, feature_name, gap_index)
+    all_gaps[target_real_index]["archived"] = True
+    await store.save_gaps(project_slug, feature_name, all_gaps)
 
-    return {"gaps": gaps}
+    return {"gaps": [g for g in all_gaps if not g.get("archived")]}
 
 
 @router.post("/apply-preview")
@@ -142,15 +164,33 @@ async def apply_preview_run(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    if feature.get("status") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Feature extraction is not done — cannot apply gaps",
+        )
+
     task_key = f"apply:{project_slug}/{feature_name}"
-    if feature.get("apply_status") == "running":
+    active = await store.get_active_task(project_slug, kind="apply_gaps", target_id=feature_name)
+    if active is not None:
         if task_manager.is_running(task_key):
             raise HTTPException(status_code=409, detail="Apply preview is already running")
-        logger.warning("apply_preview: stuck 'running' state detected for %s/%s, recovering", project_slug, feature_name)
-        await store.update_feature(project_slug, feature_name, {"apply_status": "error"})
+        logger.warning(
+            "apply_preview: stuck task %s for %s/%s, recovering",
+            active["id"], project_slug, feature_name,
+        )
+        await store.finish_task(
+            project_slug, active["id"], status="error",
+            error_message="Server restarted before task completed",
+        )
 
-    await store.update_feature(project_slug, feature_name, {"apply_status": "running"})
-    task_manager.launch(task_key, run_apply_preview_background(project_slug, feature_name, store))
+    task = await store.create_task(
+        project_slug, kind="apply_gaps", target_type="feature", target_id=feature_name,
+    )
+    task_manager.launch(
+        task_key,
+        run_apply_preview_background(project_slug, feature_name, store, task_id=task["id"]),
+    )
     return {"status": "running"}
 
 
@@ -159,7 +199,7 @@ async def apply_preview_get(
     project_slug: str,
     feature_name: str,
 ):
-    """Get apply preview result (poll while apply_status is running)."""
+    """Get apply preview result (poll while apply task is running)."""
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(
@@ -167,8 +207,8 @@ async def apply_preview_get(
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
 
-    apply_status = feature.get("apply_status")
-    if apply_status == "running":
+    active = await store.get_active_task(project_slug, kind="apply_gaps", target_id=feature_name)
+    if active is not None:
         return {"status": "running"}
 
     preview = await store.get_apply_preview(project_slug, feature_name)

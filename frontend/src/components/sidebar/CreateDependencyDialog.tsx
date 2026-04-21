@@ -23,6 +23,7 @@ const depTypeLabels: Record<DependencyType, string> = {
   external_api: "API",
   cache: "кэш",
   kafka_topic: "топик",
+  external_doc: "документ",
 }
 
 export function CreateDependencyDialog({ open, onOpenChange, depType, onSubmit, isPending }: CreateDependencyDialogProps) {

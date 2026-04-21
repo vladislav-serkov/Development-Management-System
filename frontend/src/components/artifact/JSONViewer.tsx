@@ -12,7 +12,7 @@ export function JSONViewer({ value }: JSONViewerProps) {
       extensions={[json()]}
       readOnly
       height="auto"
-      maxHeight="500px"
+      maxHeight="31.25rem"
       theme="light"
       className="border rounded-md overflow-hidden"
     />

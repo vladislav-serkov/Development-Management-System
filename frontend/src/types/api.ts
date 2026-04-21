@@ -1,6 +1,6 @@
 // Document statuses
 export type DocumentStatus = "pending" | "processing" | "extracting" | "done" | "error" | "partial"
-export type FeatureStatus = "detected" | "extracting" | "done" | "error"
+export type FeatureStatus = "extracting" | "done"
 export type FeatureType = "kafka_consumer" | "rest_endpoint" | "scheduled_task" | "unknown"
 
 // Structured business logic from 1st Claude call
@@ -11,6 +11,7 @@ export interface ParameterField {
   required: boolean
   validation_rules: string[]
   param_in: string | null
+  example?: string | null
   children: ParameterField[]
 }
 
@@ -23,7 +24,14 @@ export interface MessageField {
   is_collection?: boolean
   description?: string | null
   source?: string | null
+  example?: string | null
   children: MessageField[]
+}
+
+export interface GenericTable {
+  caption?: string | null
+  headers: string[]
+  rows: string[][]
 }
 
 export interface LogicStep {
@@ -31,11 +39,13 @@ export interface LogicStep {
   text: string
   has_detailed_mapping?: boolean
   message_mapping?: MessageField[] | null
+  reference_tables?: GenericTable[]
+  external_doc_refs?: string[]
   children: LogicStep[]
 }
 
 export interface UsedDependency {
-  type: "db_table" | "external_api" | "cache" | "kafka_topic"
+  type: "db_table" | "external_api" | "cache" | "kafka_topic" | "external_doc"
   name: string
   description: string
   method?: string
@@ -63,6 +73,7 @@ export interface StructuredBusinessLogic {
 // Feature response — keyed by name (no numeric id)
 export interface FeatureResponse {
   name: string
+  display_name: string | null
   source_document: string  // doc slug
   type: FeatureType
   confidence: number
@@ -70,16 +81,37 @@ export interface FeatureResponse {
   status: FeatureStatus
   method: string | null
   endpoint: string | null
+  schedule: string | null
   structured_logic: StructuredBusinessLogic | null
-  error_message: string | null
   gap_count?: number
   pending_gap_count?: number
-  gaps_status?: "running" | "done" | "error" | "overloaded" | null
-  apply_status?: "running" | "done" | "error" | null
+  gaps_running?: boolean
+  apply_running?: boolean
   test_case_count?: number
   pending_test_case_count?: number
-  test_cases_status?: "running" | "done" | "error" | null
+  test_cases_running?: boolean
   bug_count?: number
+}
+
+// Background tasks (per-project log)
+export type TaskKind = "extraction" | "gaps" | "apply_gaps" | "test_cases" | "enrichment"
+export type TaskStatus = "running" | "done" | "error"
+export type TaskTargetType = "document" | "feature" | "dependency"
+
+export interface TaskRecord {
+  id: string
+  kind: TaskKind
+  target_type: TaskTargetType
+  target_id: string
+  status: TaskStatus
+  started_at: string
+  finished_at: string | null
+  error_message: string | null
+  duration_ms: number | null
+}
+
+export interface TaskListResponse {
+  tasks: TaskRecord[]
 }
 
 export interface FeaturePatchRequest {
@@ -157,7 +189,7 @@ export interface ExportResponse {
 }
 
 // Dependency types (v1.1)
-export type DependencyType = "db_table" | "external_api" | "cache" | "kafka_topic"
+export type DependencyType = "db_table" | "external_api" | "cache" | "kafka_topic" | "external_doc"
 export type DependencyStatus = "stub" | "enriched" | "error" | "running"
 
 export interface ProjectDependency {
@@ -166,7 +198,7 @@ export interface ProjectDependency {
   name: string
   description: string | null
   enrichment_status: DependencyStatus
-  enriched_data: DbTableEnrichment | ExternalApiEnrichment | CacheEnrichment | KafkaTopicEnrichment | null
+  enriched_data: DbTableEnrichment | ExternalApiEnrichment | CacheEnrichment | KafkaTopicEnrichment | ExternalDocEnrichment | null
   source_pdf_name: string | null
   enriched_at: string | null
   created_at: string
@@ -247,6 +279,13 @@ export interface KafkaTopicEnrichment {
   notes: string[]
 }
 
+// External document enrichment (verbatim sanitized HTML of a reference doc)
+export interface ExternalDocEnrichment {
+  doc_name: string
+  description: string
+  content_html: string
+}
+
 // Gaps types (v1.1 Phase 6)
 export type GapStatus = "pending" | "approved" | "clarified" | "applied"
 export type GapType = string
@@ -265,7 +304,7 @@ export interface GapItem {
 
 export interface GapsResponse {
   gaps: GapItem[]
-  gaps_status: "running" | "done" | "error" | "overloaded" | null
+  gaps_running: boolean
   gaps_run_at: string | null
 }
 
@@ -312,7 +351,7 @@ export interface TestCaseItem {
 
 export interface TestCasesResponse {
   test_cases: TestCaseItem[]
-  test_cases_status: "running" | "done" | "error" | null
+  test_cases_running: boolean
   test_cases_run_at: string | null
 }
 

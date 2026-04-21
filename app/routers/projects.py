@@ -165,7 +165,8 @@ async def get_project_features(project_slug: str):
     if proj is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
     features = await store.list_features(project_slug)
-    return [_feature_to_response(f) for f in features]
+    active_tasks = await store.list_tasks(project_slug, status="running")
+    return [_feature_to_response(f, active_tasks=active_tasks) for f in features]
 
 
 @router.patch("/{project_slug}/features/{feature_name}", response_model=FeatureResponse)
@@ -205,7 +206,8 @@ async def patch_feature(project_slug: str, feature_name: str, patch: FeaturePatc
         feature = await store.update_feature(project_slug, actual_name, updates)
 
     logger.info("patch_feature: project=%s, name=%s -> %s", project_slug, feature_name, actual_name)
-    return _feature_to_response(feature)
+    active_tasks = await store.list_tasks(project_slug, status="running")
+    return _feature_to_response(feature, active_tasks=active_tasks)
 
 
 @router.delete("/{project_slug}/features/{feature_name}")
@@ -219,26 +221,39 @@ async def delete_feature(project_slug: str, feature_name: str):
     return {"ok": True}
 
 
-def _feature_to_response(f: dict) -> FeatureResponse:
+def _feature_to_response(
+    f: dict,
+    *,
+    active_tasks: list[dict] | None = None,
+) -> FeatureResponse:
     sl = f.get("structured_logic_json") or f.get("structured_logic")
     if not isinstance(sl, dict):
         sl = None
+
+    running_kinds: set[str] = set()
+    if active_tasks:
+        name = f["name"]
+        for t in active_tasks:
+            if t.get("target_id") == name and t.get("status") == "running":
+                running_kinds.add(t.get("kind"))
+
     return FeatureResponse(
         name=f["name"],
+        display_name=f.get("display_name"),
         source_document=f.get("source_document", ""),
         type=f.get("type", "unknown"),
         confidence=f.get("confidence", 0.0),
         summary=f.get("summary"),
-        status=f.get("status", "detected"),
+        status=f.get("status", "extracting"),
         method=f.get("method"),
         endpoint=f.get("endpoint"),
+        schedule=f.get("schedule"),
         structured_logic=sl,
-        error_message=f.get("error_message"),
         gap_count=f.get("gap_count", 0),
         pending_gap_count=f.get("pending_gap_count", 0),
-        gaps_status=f.get("gaps_status"),
-        apply_status=f.get("apply_status"),
+        gaps_running="gaps" in running_kinds,
+        apply_running="apply_gaps" in running_kinds,
         test_case_count=f.get("test_case_count", 0),
         pending_test_case_count=f.get("pending_test_case_count", 0),
-        test_cases_status=f.get("test_cases_status"),
+        test_cases_running="test_cases" in running_kinds,
     )

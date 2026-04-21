@@ -15,14 +15,17 @@ interface FeatureListItemProps {
 
 export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, isDeletePending }: FeatureListItemProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const featureMeta = getFeatureSidebarMeta(feature.name)
+  const hasDisplayName = !!feature.display_name
+  const featureMeta = hasDisplayName
+    ? { primary: feature.display_name as string, secondary: feature.schedule ?? null }
+    : getFeatureSidebarMeta(feature.name)
 
   return (
     <div>
       <div className="group relative flex items-center">
         <button
           onClick={() => onFeatureClick(feature.name)}
-          title={feature.name}
+          title={feature.display_name ?? feature.name}
           className={cn(
             "flex-1 rounded-xl border px-3 py-2.5 text-left transition-colors",
             isActive
@@ -58,7 +61,7 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="Удалить фичу"
-        description={`Удалить фичу "${feature.name}" и все связанные gaps/test-cases/bugs?`}
+        description={`Удалить фичу "${feature.display_name ?? feature.name}" и все связанные gaps/test-cases/bugs?`}
         onConfirm={() => {
           onDelete(feature.name)
           setConfirmOpen(false)

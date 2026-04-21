@@ -11,6 +11,7 @@ from app.schemas.enrichment import (
     DbEnrichmentBatch,
     DependencyResponse,
     ExternalApiEnrichment,
+    ExternalDocEnrichment,
     KafkaTopicEnrichmentBatch,
 )
 from app.services.claude_client import call_claude, log_cache_stats
@@ -21,6 +22,12 @@ from app.services.extraction import (
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
+
+# Single source of truth for the "external_doc needs a specific dep_name" error —
+# used by both the HTTP guard in the router and the runtime guard in this service.
+EXTERNAL_DOC_TARGETED_ONLY_MSG = (
+    "external_doc requires dep_name: 1 PDF enriches exactly one named document"
+)
 
 
 def _dep_to_response(dep: dict, project_slug: str) -> DependencyResponse:
@@ -146,6 +153,8 @@ async def run_enrichment_pipeline(
             enriched_data = result.caches[0].model_dump() if result.caches else {}
         elif dep_type == "kafka_topic":
             enriched_data = result.topics[0].model_dump() if result.topics else {}
+        elif dep_type == "external_doc":
+            enriched_data = result.model_dump()
         else:
             enriched_data = {}
 
@@ -168,6 +177,11 @@ async def run_enrichment_pipeline(
         return [_dep_to_response(updated_dep, project_slug)]
 
     upserted_deps: list[dict] = []
+
+    if dep_type == "external_doc":
+        # external_doc supports only targeted enrichment (1 PDF = 1 document) —
+        # bulk upload can't auto-bind an anonymous markdown dump to an existing stub.
+        raise ValueError(EXTERNAL_DOC_TARGETED_ONLY_MSG)
 
     if dep_type == "db_table":
         for table in result.tables:
@@ -194,7 +208,7 @@ async def run_enrichment_pipeline(
         all_deps = await store.list_dependencies(project_slug)
         matching_stubs = [
             d for d in all_deps.get("external_api", [])
-            if d.get("service_name") and _normalize_dep_name(d["service_name"]) == api_name
+            if d.get("service_name") and _normalize_dep_name(d["service_name"]).lower() == api_name.lower()
         ]
         if matching_stubs:
             # Update each stub that belongs to this service
