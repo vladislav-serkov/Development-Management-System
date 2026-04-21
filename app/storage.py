@@ -95,6 +95,7 @@ class ProjectStore:
     def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir or settings.data_dir)
         self._dep_locks: dict[str, asyncio.Lock] = {}
+        self._registry_cache: dict | None = None
 
     def _get_dep_lock(self, project_slug: str, dep_type: str) -> asyncio.Lock:
         """Get or create an asyncio.Lock for a specific project+dep_type combination."""
@@ -112,7 +113,78 @@ class ProjectStore:
     # ------------------------------------------------------------------
 
     def _project_dir(self, project_slug: str) -> Path:
+        entry = self._get_linked_entry(project_slug)
+        if entry is not None:
+            return Path(entry["external_path"]) / ".context"
         return self._data_dir / project_slug
+
+    # ------------------------------------------------------------------
+    # Linked project registry
+    # ------------------------------------------------------------------
+
+    def _registry_path(self) -> Path:
+        return self._data_dir / "registry.json"
+
+    def _load_registry(self) -> dict:
+        if self._registry_cache is None:
+            path = self._registry_path()
+            if path.exists():
+                try:
+                    self._registry_cache = json.loads(path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    logger.warning("Could not read registry: %s", exc)
+                    self._registry_cache = {"linked": []}
+            else:
+                self._registry_cache = {"linked": []}
+            self._registry_cache.setdefault("linked", [])
+        return self._registry_cache
+
+    def _persist_registry(self, registry: dict) -> None:
+        path = self._registry_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+        self._registry_cache = registry
+
+    def _get_linked_entry(self, slug: str) -> dict | None:
+        for entry in self._load_registry().get("linked", []):
+            if entry.get("slug") == slug:
+                return entry
+        return None
+
+    def _find_linked_by_path(self, external_path: str) -> dict | None:
+        target = str(Path(external_path).resolve())
+        for entry in self._load_registry().get("linked", []):
+            try:
+                if str(Path(entry["external_path"]).resolve()) == target:
+                    return entry
+            except Exception:
+                continue
+        return None
+
+    def _register_link(self, slug: str, name: str, external_path: str) -> dict:
+        registry = self._load_registry()
+        entry = {
+            "slug": slug,
+            "name": name,
+            "external_path": str(Path(external_path).resolve()),
+            "linked_at": datetime.now(UTC).isoformat(),
+        }
+        registry["linked"].append(entry)
+        self._persist_registry(registry)
+        return entry
+
+    def _unregister_link(self, slug: str) -> dict | None:
+        registry = self._load_registry()
+        before = registry.get("linked", [])
+        after = [e for e in before if e.get("slug") != slug]
+        if len(after) == len(before):
+            return None
+        removed = next(e for e in before if e.get("slug") == slug)
+        registry["linked"] = after
+        self._persist_registry(registry)
+        return removed
 
     def _project_json(self, project_slug: str) -> Path:
         return self._project_dir(project_slug) / "project.json"
@@ -178,13 +250,15 @@ class ProjectStore:
     # ------------------------------------------------------------------
 
     async def list_projects(self) -> list[dict]:
-        """Scan DATA_DIR subdirectories, read each project.json."""
+        """Scan DATA_DIR subdirectories + linked registry, read each project.json."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
         projects = []
+        linked_slugs = {e.get("slug") for e in self._load_registry().get("linked", [])}
+
         try:
             entries = list(self._data_dir.iterdir())
         except OSError:
-            return []
+            entries = []
 
         for entry in entries:
             if not entry.is_dir():
@@ -192,27 +266,81 @@ class ProjectStore:
             pjson = entry / "project.json"
             if not pjson.exists():
                 continue
+            if entry.name in linked_slugs:
+                # A linked slug lives in registry, not in data_dir
+                continue
             try:
                 proj = await self._read_json(pjson)
-                # Enrich with counts
                 proj["document_count"] = await self._count_documents(proj["slug"])
                 proj["feature_count"] = await self._count_features(proj["slug"])
                 proj["status"] = await self._compute_project_status(proj["slug"])
+                proj["is_linked"] = False
+                proj["external_path"] = None
+                proj["available"] = True
                 projects.append(proj)
             except Exception as exc:
                 logger.warning("Could not read project at %s: %s", entry, exc)
+
+        for link in self._load_registry().get("linked", []):
+            slug = link.get("slug")
+            external = link.get("external_path")
+            if not slug or not external:
+                continue
+            pjson = Path(external) / ".context" / "project.json"
+            if pjson.exists():
+                try:
+                    proj = await self._read_json(pjson)
+                    proj["slug"] = slug  # registry slug wins
+                    proj["document_count"] = await self._count_documents(slug)
+                    proj["feature_count"] = await self._count_features(slug)
+                    proj["status"] = await self._compute_project_status(slug)
+                    proj["is_linked"] = True
+                    proj["external_path"] = external
+                    proj["available"] = True
+                    projects.append(proj)
+                except Exception as exc:
+                    logger.warning("Could not read linked project %s: %s", slug, exc)
+            else:
+                projects.append({
+                    "slug": slug,
+                    "name": link.get("name", slug),
+                    "created_at": link.get("linked_at", ""),
+                    "document_count": 0,
+                    "feature_count": 0,
+                    "status": "empty",
+                    "is_linked": True,
+                    "external_path": external,
+                    "available": False,
+                })
 
         projects.sort(key=lambda p: p.get("created_at", ""), reverse=True)
         return projects
 
     async def get_project(self, slug: str) -> dict | None:
+        entry = self._get_linked_entry(slug)
         pjson = self._project_json(slug)
         if not pjson.exists():
-            return None
+            if entry is None:
+                return None
+            return {
+                "slug": slug,
+                "name": entry.get("name", slug),
+                "created_at": entry.get("linked_at", ""),
+                "document_count": 0,
+                "feature_count": 0,
+                "status": "empty",
+                "is_linked": True,
+                "external_path": entry.get("external_path"),
+                "available": False,
+            }
         proj = await self._read_json(pjson)
+        proj["slug"] = slug
         proj["document_count"] = await self._count_documents(slug)
         proj["feature_count"] = await self._count_features(slug)
         proj["status"] = await self._compute_project_status(slug)
+        proj["is_linked"] = entry is not None
+        proj["external_path"] = entry.get("external_path") if entry else None
+        proj["available"] = True
         return proj
 
     async def create_project(self, name: str) -> dict:
@@ -220,7 +348,7 @@ class ProjectStore:
         base_slug = slugify(name)
         slug = base_slug
         counter = 2
-        while (self._project_dir(slug) / "project.json").exists():
+        while self._slug_taken(slug):
             slug = f"{base_slug}-{counter}"
             counter += 1
 
@@ -245,7 +373,80 @@ class ProjectStore:
 
         proj["document_count"] = 0
         proj["feature_count"] = 0
+        proj["is_linked"] = False
+        proj["external_path"] = None
+        proj["available"] = True
         return proj
+
+    def _slug_taken(self, slug: str) -> bool:
+        """True if slug is registered as a link or has a local project dir."""
+        if self._get_linked_entry(slug) is not None:
+            return True
+        return (self._data_dir / slug / "project.json").exists()
+
+    async def link_project(self, external_path: str) -> dict:
+        """Attach an existing `.context/` inside `external_path` (create if missing).
+
+        Raises ValueError with a user-facing message on conflicts.
+        """
+        base = Path(external_path).expanduser()
+        if not base.exists() or not base.is_dir():
+            raise ValueError(f"Directory does not exist: {external_path}")
+        resolved = base.resolve()
+
+        existing_by_path = self._find_linked_by_path(str(resolved))
+        if existing_by_path is not None:
+            # Same directory already attached — return the existing project.
+            result = await self.get_project(existing_by_path["slug"])
+            if result is not None:
+                return result
+
+        context_dir = resolved / ".context"
+        project_json_path = context_dir / "project.json"
+
+        if project_json_path.exists():
+            try:
+                existing_proj = json.loads(project_json_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise ValueError(f"Could not parse existing .context/project.json: {exc}") from exc
+            name = existing_proj.get("name") or resolved.name
+            slug = existing_proj.get("slug") or slugify(name)
+            if self._slug_taken(slug):
+                raise ValueError(
+                    f"Project with slug '{slug}' is already linked or exists locally. "
+                    "Rename the project in its .context/project.json or remove the existing entry."
+                )
+            # Ensure project.json has up-to-date slug
+            existing_proj["slug"] = slug
+            existing_proj.setdefault("name", name)
+            existing_proj.setdefault("created_at", datetime.now(UTC).isoformat())
+            existing_proj.setdefault("status", "empty")
+            self._register_link(slug, name, str(resolved))
+            await self._write_json(project_json_path, existing_proj)
+            for sub in ("documents", "features", "dependencies", "gaps", "test-cases", "bugs"):
+                (context_dir / sub).mkdir(parents=True, exist_ok=True)
+        else:
+            name = resolved.name or "project"
+            base_slug = slugify(name)
+            slug = base_slug
+            counter = 2
+            while self._slug_taken(slug):
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            now = datetime.now(UTC).isoformat()
+            proj = {
+                "slug": slug,
+                "name": name,
+                "created_at": now,
+                "status": "empty",
+            }
+            self._register_link(slug, name, str(resolved))
+            context_dir.mkdir(parents=True, exist_ok=True)
+            for sub in ("documents", "features", "dependencies", "gaps", "test-cases", "bugs"):
+                (context_dir / sub).mkdir(parents=True, exist_ok=True)
+            await self._write_json(project_json_path, proj)
+
+        return await self.get_project(slug)
 
     async def update_project(self, slug: str, name: str) -> dict | None:
         proj = await self.get_project(slug)
@@ -253,14 +454,34 @@ class ProjectStore:
             return None
         proj["name"] = name
         # Remove computed fields before writing
-        to_write = {k: v for k, v in proj.items() if k not in ("document_count", "feature_count", "status")}
+        to_write = {
+            k: v for k, v in proj.items()
+            if k not in ("document_count", "feature_count", "status", "is_linked", "external_path", "available")
+        }
         await self._write_json(self._project_json(slug), to_write)
-        proj["document_count"] = await self._count_documents(slug)
-        proj["feature_count"] = await self._count_features(slug)
-        proj["status"] = await self._compute_project_status(slug)
-        return proj
+        # Update cached registry name if linked
+        entry = self._get_linked_entry(slug)
+        if entry is not None:
+            registry = self._load_registry()
+            for e in registry["linked"]:
+                if e.get("slug") == slug:
+                    e["name"] = name
+            self._persist_registry(registry)
+        return await self.get_project(slug)
 
-    async def delete_project(self, slug: str) -> None:
+    async def delete_project(self, slug: str, *, remove_files: bool = False) -> None:
+        """Delete project. For linked projects, by default only removes from registry.
+        With remove_files=True, also removes .context/ on disk (linked) or rmtree (local).
+        """
+        entry = self._get_linked_entry(slug)
+        if entry is not None:
+            if remove_files:
+                ctx_dir = Path(entry["external_path"]) / ".context"
+                if ctx_dir.exists():
+                    shutil.rmtree(ctx_dir)
+            self._unregister_link(slug)
+            return
+
         project_dir = self._project_dir(slug)
         if project_dir.exists():
             shutil.rmtree(project_dir)

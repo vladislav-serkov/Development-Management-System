@@ -9,6 +9,7 @@ from starlette.responses import StreamingResponse
 
 from app.schemas.extraction import FeaturePatchRequest, FeatureResponse, ProjectResponse
 from app.services.export import create_project_zip
+from app.services.import_context import adapt_feature, load_wiki_sections, merge_wiki_into_rules
 from app.storage import ProjectStore
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,108 @@ class PatchProjectRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
+class LinkProjectRequest(BaseModel):
+    path: str = Field(min_length=1)
+
+
 @router.post("/", response_model=ProjectResponse)
 async def create_project(req: CreateProjectRequest):
     proj = await store.create_project(req.name)
     logger.info("create_project: name=%s, slug=%s", req.name, proj["slug"])
     return ProjectResponse(**proj)
+
+
+@router.post("/link", response_model=ProjectResponse)
+async def link_project(req: LinkProjectRequest):
+    try:
+        proj = await store.link_project(req.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    logger.info("link_project: path=%s, slug=%s", req.path, proj["slug"])
+    return ProjectResponse(**proj)
+
+
+class ImportContextResponse(BaseModel):
+    project: ProjectResponse
+    adapted_features: int
+    merged_wiki_sections: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+@router.post("/import-context", response_model=ImportContextResponse)
+async def import_context(req: LinkProjectRequest):
+    """Link a DMS-produced `.context/` directory and migrate its feature.json
+    files to extract-agent's canonical shape (renames, legacy-field cleanup,
+    flat-mapping nulling, `source` provenance). If ``.context/wiki/*.md``
+    exists, merge it into the project's rules.json (empty sections only)."""
+    try:
+        proj = await store.link_project(req.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    slug = proj["slug"]
+    features_dir = store.get_context_dir(slug) / "features"
+    warnings: list[str] = []
+    adapted = 0
+
+    # Walk feature directories directly — DMS writes them keyed by feature_id
+    # (e.g. `feat_abc123/feature.json`), whereas extract-agent keys them by
+    # feature name. We rename the directory in place before saving, so we don't
+    # leave duplicates behind.
+    if features_dir.is_dir():
+        for feat_dir in list(features_dir.iterdir()):
+            if not feat_dir.is_dir():
+                continue
+            fp = feat_dir / "feature.json"
+            if not fp.exists():
+                continue
+            try:
+                raw = json.loads(fp.read_text(encoding="utf-8"))
+            except Exception as exc:
+                warnings.append(f"skipped {feat_dir.name}: cannot parse feature.json ({exc})")
+                continue
+            name = raw.get("name")
+            if not name:
+                warnings.append(f"skipped {feat_dir.name}: missing 'name' field")
+                continue
+            canonical = store._sanitize_feature_name(name)
+            if feat_dir.name != canonical:
+                target = features_dir / canonical
+                if target.exists():
+                    warnings.append(f"{feat_dir.name} → {canonical}: target exists, removed before rename")
+                    import shutil as _shutil
+                    _shutil.rmtree(target)
+                feat_dir.rename(target)
+                feat_dir = target
+            migrated = adapt_feature(raw, warnings=warnings)
+            await store.save_feature(slug, migrated)
+            adapted += 1
+
+    # Wiki → project rules.json (only fills empty sections)
+    context_dir = store.get_context_dir(slug)
+    wiki = load_wiki_sections(context_dir)
+    merged_sections = 0
+    if wiki:
+        current_rules = await store.get_project_rules(slug)
+        new_rules = merge_wiki_into_rules(current_rules, wiki, warnings=warnings)
+        merged_sections = sum(
+            1 for k, v in new_rules.items() if v and not current_rules.get(k, "").strip()
+        )
+        if merged_sections > 0:
+            await store.save_project_rules(slug, new_rules)
+
+    logger.info(
+        "import_context: path=%s, slug=%s, adapted=%d, merged_sections=%d, warnings=%d",
+        req.path, slug, adapted, merged_sections, len(warnings),
+    )
+    # Re-read project so document_count/feature_count reflect the imported state
+    proj = await store.get_project(slug)
+    return ImportContextResponse(
+        project=ProjectResponse(**proj),
+        adapted_features=adapted,
+        merged_wiki_sections=merged_sections,
+        warnings=warnings,
+    )
 
 
 @router.get("/", response_model=list[ProjectResponse])
@@ -57,12 +155,12 @@ async def patch_project(project_slug: str, patch: PatchProjectRequest):
 
 
 @router.delete("/{project_slug}")
-async def delete_project(project_slug: str):
+async def delete_project(project_slug: str, remove_files: bool = False):
     proj = await store.get_project(project_slug)
     if proj is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
-    logger.info("delete_project: slug=%s", project_slug)
-    await store.delete_project(project_slug)
+    logger.info("delete_project: slug=%s, remove_files=%s", project_slug, remove_files)
+    await store.delete_project(project_slug, remove_files=remove_files)
     return {"ok": True}
 
 
@@ -240,7 +338,8 @@ def _feature_to_response(
     return FeatureResponse(
         name=f["name"],
         display_name=f.get("display_name"),
-        source_document=f.get("source_document", ""),
+        source_document=f.get("source_document") or None,
+        source=f.get("source"),
         type=f.get("type", "unknown"),
         confidence=f.get("confidence", 0.0),
         summary=f.get("summary"),

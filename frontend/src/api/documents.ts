@@ -1,4 +1,4 @@
-import type { DocumentResponse, DocumentPatchRequest, FeatureResponse, FeaturePatchRequest, ExportRequest, ExportResponse, ProjectResponse, CreateProjectRequest, PatchProjectRequest, ProjectDependency, CreateDependencyRequest, PatchDependencyRequest } from "@/types/api"
+import type { DocumentResponse, DocumentPatchRequest, FeatureResponse, FeaturePatchRequest, ExportRequest, ExportResponse, ProjectResponse, CreateProjectRequest, PatchProjectRequest, LinkProjectRequest, ImportContextResponse, ProjectDependency, CreateDependencyRequest, PatchDependencyRequest } from "@/types/api"
 import { apiFetch } from "./client"
 
 // Projects
@@ -22,6 +22,46 @@ export async function createProject(req: CreateProjectRequest): Promise<ProjectR
   })
   if (!res.ok) throw new Error(`Failed to create project: ${res.status}`)
   return res.json()
+}
+
+export async function linkProject(req: LinkProjectRequest): Promise<ProjectResponse> {
+  const res = await apiFetch(`/projects/link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    let detail = `Failed to link project: ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function importContext(req: LinkProjectRequest): Promise<ImportContextResponse> {
+  const res = await apiFetch(`/projects/import-context`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    let detail = `Failed to import .context: ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function deleteProject(slug: string, removeFiles = false): Promise<void> {
+  const url = `/projects/${slug}${removeFiles ? "?remove_files=true" : ""}`
+  const res = await apiFetch(url, { method: "DELETE" })
+  if (!res.ok) throw new Error(`Failed to delete project: ${res.status}`)
 }
 
 export async function patchProject(slug: string, patch: PatchProjectRequest): Promise<ProjectResponse> {

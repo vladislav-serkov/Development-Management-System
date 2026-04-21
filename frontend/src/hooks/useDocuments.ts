@@ -4,6 +4,7 @@ import {
   fetchProjectFeatures,
   fetchDocuments, fetchDocument, uploadDocument, patchDocument,
   patchFeature, deleteFeature, importProjectZip,
+  linkProject, importContext, deleteProject,
 } from "@/api/documents"
 import type { ProjectResponse } from "@/types/api"
 import type { FeaturePatchRequest } from "@/types/api"
@@ -108,6 +109,31 @@ export function useImportProject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (file: File) => importProjectZip(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+  })
+}
+
+export function useLinkProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (path: string) => linkProject({ path }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+  })
+}
+
+export function useImportContext() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (path: string) => importContext({ path }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+  })
+}
+
+export function useDeleteProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ slug, removeFiles }: { slug: string; removeFiles?: boolean }) =>
+      deleteProject(slug, removeFiles),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
   })
 }

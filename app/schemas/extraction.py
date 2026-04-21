@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,6 +11,19 @@ class FeatureType(str, Enum):
     rest_endpoint = "rest_endpoint"
     scheduled_task = "scheduled_task"
     unknown = "unknown"
+
+
+class SourceInfo(BaseModel):
+    """Provenance of a feature: where it came from.
+
+    PDF-sourced features fill ``document`` (PDF slug). Code-sourced features
+    fill ``file`` and ``line`` (repo-relative path + 1-based annotation line).
+    """
+
+    kind: Literal["pdf", "code"]
+    document: str | None = Field(default=None, description="PDF document slug, for pdf-sourced features")
+    file: str | None = Field(default=None, description="Repo-relative path to the entry-point file, for code-sourced features")
+    line: int | None = Field(default=None, description="1-based annotation line number, for code-sourced features")
 
 
 class ParameterField(BaseModel):
@@ -124,6 +138,7 @@ class DetectedFeature(BaseModel):
     endpoint: str | None = Field(default=None, description="REST path like /v1/credit-line or Kafka topic like pay-later.flp.rbo-adapter.product.return.queue. Null for scheduled_task — use `schedule` instead.")
     schedule: str | None = Field(default=None, description="Trigger schedule verbatim from the spec (Russian). Examples: 'Ежедневно в 19:00 МСК', 'Каждый час'. Required for scheduled_task, null otherwise.")
     dependencies: list[str] = Field(default_factory=list)
+    source: SourceInfo | None = Field(default=None, description="Provenance: pdf or code. Null for legacy records where kind is inferred from source_document presence.")
     structured_logic: StructuredBusinessLogic = Field(default_factory=StructuredBusinessLogic)
 
 
@@ -142,6 +157,7 @@ class SingleFeatureExtraction(BaseModel):
     method: str | None = Field(default=None, description="HTTP method for REST (GET/POST/PUT/DELETE) or CONSUMER for Kafka")
     endpoint: str | None = Field(default=None, description="REST path like /v1/credit-line or Kafka topic like pay-later.flp.rbo-adapter.product.return.queue")
     dependencies: list[str] = Field(default_factory=list)
+    source: SourceInfo | None = Field(default=None)
     structured_logic: StructuredBusinessLogic = Field(default_factory=StructuredBusinessLogic)
 
 
@@ -173,7 +189,8 @@ class FeatureResponse(BaseModel):
 
     name: str
     display_name: str | None = None
-    source_document: str  # doc slug
+    source_document: str | None = None  # doc slug for pdf features; null for code features
+    source: SourceInfo | None = None
     type: str
     confidence: float
     summary: str | None = None
@@ -218,5 +235,8 @@ class ProjectResponse(BaseModel):
     document_count: int
     feature_count: int = 0
     status: str = "empty"
+    is_linked: bool = False
+    external_path: str | None = None
+    available: bool = True
 
     model_config = ConfigDict(from_attributes=True)

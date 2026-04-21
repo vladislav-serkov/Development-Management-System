@@ -70,11 +70,20 @@ export interface StructuredBusinessLogic {
   business_rules?: string[]
 }
 
+// Source provenance for a feature
+export interface SourceInfo {
+  kind: "pdf" | "code"
+  document: string | null
+  file: string | null
+  line: number | null
+}
+
 // Feature response — keyed by name (no numeric id)
 export interface FeatureResponse {
   name: string
   display_name: string | null
-  source_document: string  // doc slug
+  source_document: string | null  // doc slug for pdf features; null for code
+  source: SourceInfo | null
   type: FeatureType
   confidence: number
   summary: string | null
@@ -166,6 +175,19 @@ export interface ProjectResponse {
   document_count: number
   feature_count: number
   status: "empty" | "pending" | "processing" | "done" | "partial"
+  is_linked: boolean
+  external_path: string | null
+  available: boolean
+}
+
+export interface LinkProjectRequest {
+  path: string
+}
+
+export interface ImportContextResponse {
+  project: ProjectResponse
+  adapted_features: number
+  warnings: string[]
 }
 
 export interface CreateProjectRequest {
