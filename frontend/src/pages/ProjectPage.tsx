@@ -24,6 +24,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { dependencyPath, featurePath, isFeatureTab, projectPath, type FeatureTab } from "@/lib/routes"
+import { useConfirm } from "@/components/ConfirmDialog"
 import type {
   FeatureResponse,
   ProjectDependency,
@@ -80,7 +81,7 @@ export default function ProjectPage() {
 
   const { data: project, isLoading: projectLoading } = useProject(projectSlug)
   const { data: allFeatures } = useProjectFeatures(projectSlug, project?.status)
-  const features = allFeatures?.filter(f => f.status === "done" || f.status === "error")
+  const features = allFeatures?.filter(f => f.status === "done")
   const { data: dependencies } = useProjectDependencies(projectSlug)
   const uploadMutation = useUploadDocument(projectSlug!)
 
@@ -175,6 +176,7 @@ function ProjectContentArea({
   onFeatureTabChange: (tab: FeatureTab) => void
 }) {
   const navigate = useNavigate()
+  const askConfirm = useConfirm()
   const saveFeatureMutation = useSaveFeature(projectSlug)
   const deleteFeatureMutation = useDeleteFeature(projectSlug)
 
@@ -235,40 +237,16 @@ function ProjectContentArea({
     )
   }
 
-  if (selectedFeature && selectedFeature.status === "error") {
-    return (
-      <div className="space-y-6">
-        <Card className="border border-destructive/30 bg-destructive/5">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-destructive/10 p-2">
-                <AlertTriangle className="h-5 w-5 text-destructive" />
-              </div>
-              <div>
-                <CardTitle className="text-lg">Ошибка извлечения</CardTitle>
-                <CardDescription>Не удалось извлечь фичу «{selectedFeature.name}» из PDF</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {selectedFeature.error_message && (
-              <div className="rounded-lg border border-destructive/20 bg-background p-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Подробности</p>
-                <p className="mt-1 text-sm">{selectedFeature.error_message}</p>
-              </div>
-            )}
-            <p className="text-sm text-muted-foreground">
-              Попробуйте загрузить PDF повторно или убедитесь, что документ содержит читаемое техническое задание.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
   if (selectedFeature) {
     const displayLogic = isEditing ? (editedLogic ?? selectedFeature.structured_logic) : selectedFeature.structured_logic
-    const resolvedMethod = editMethod || selectedFeature.method || (selectedFeature.type === "kafka_consumer" ? "CONSUMER" : "GET")
+    const resolvedMethod =
+      editMethod ||
+      selectedFeature.method ||
+      (selectedFeature.type === "kafka_consumer"
+        ? "CONSUMER"
+        : selectedFeature.type === "scheduled_task"
+          ? "SCHEDULED"
+          : "GET")
     const integrationMeta = getFeatureIntegrationMeta(selectedFeature, isEditing ? editEndpoint : selectedFeature.endpoint)
     const integrationFieldLabel = selectedFeature.type === "rest_endpoint" ? "Маршрут" : "Точка интеграции"
     const integrationFieldPlaceholder =
@@ -310,7 +288,9 @@ function ProjectContentArea({
                       onChange={(e) => setEditName(e.target.value)}
                     />
                   ) : (
-                    <h2 className="min-w-0 text-2xl font-semibold tracking-tight">{selectedFeature.name}</h2>
+                    <h2 className="min-w-0 text-2xl font-semibold tracking-tight" title={selectedFeature.name}>
+                      {selectedFeature.display_name ?? selectedFeature.name}
+                    </h2>
                   )}
 
                   {isEditing ? (
@@ -319,7 +299,7 @@ function ProjectContentArea({
                       onChange={(e) => setEditMethod(e.target.value)}
                       className="rounded-md border border-border bg-transparent px-2 py-1 text-xs font-semibold font-mono"
                     >
-                      {["GET", "POST", "PUT", "DELETE", "PATCH", "CONSUMER"].map((method) => (
+                      {["GET", "POST", "PUT", "DELETE", "PATCH", "CONSUMER", "SCHEDULED"].map((method) => (
                         <option key={method} value={method}>{method}</option>
                       ))}
                     </select>
@@ -375,8 +355,14 @@ function ProjectContentArea({
                   variant="outline"
                   size="sm"
                   className="border-destructive/20 text-destructive shadow-none hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => {
-                    if (window.confirm(`Удалить фичу "${selectedFeature.name}"?`)) {
+                  onClick={async () => {
+                    const ok = await askConfirm({
+                      title: `Удалить фичу "${selectedFeature.display_name ?? selectedFeature.name}"?`,
+                      description: "Действие нельзя отменить.",
+                      confirmText: "Удалить",
+                      destructive: true,
+                    })
+                    if (ok) {
                       deleteFeatureMutation.mutate(selectedFeature.name, {
                         onSuccess: () => navigate(projectPath(projectSlug)),
                       })
@@ -652,6 +638,14 @@ function ContentLoadingState({ label }: { label: string }) {
 }
 
 function getFeatureIntegrationMeta(feature: FeatureResponse, endpointValue: string | null | undefined) {
+  if (feature.type === "scheduled_task") {
+    const schedule = feature.schedule?.trim()
+    if (schedule) {
+      return { label: "Расписание", value: schedule }
+    }
+    return { label: "Тип сценария", value: "Планировщик" }
+  }
+
   const normalizedEndpoint = endpointValue?.trim()
   if (normalizedEndpoint) {
     return {

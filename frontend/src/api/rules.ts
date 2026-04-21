@@ -1,16 +1,18 @@
+import { apiFetch } from "./client"
+
 export type AgentName = "extraction" | "gaps" | "test_cases" | "bugs" | "enrichment"
 export type RulesData = Record<AgentName, string>
 
 export const EMPTY_RULES: RulesData = { extraction: "", gaps: "", test_cases: "", bugs: "", enrichment: "" }
 
 export async function fetchGlobalRules(): Promise<RulesData> {
-  const res = await fetch("/api/rules/global")
+  const res = await apiFetch("/rules/global")
   if (!res.ok) throw new Error(`Failed to fetch global rules: ${res.status}`)
   return res.json()
 }
 
 export async function saveGlobalRules(rules: RulesData): Promise<RulesData> {
-  const res = await fetch("/api/rules/global", {
+  const res = await apiFetch("/rules/global", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(rules),
@@ -20,13 +22,13 @@ export async function saveGlobalRules(rules: RulesData): Promise<RulesData> {
 }
 
 export async function fetchProjectRules(projectSlug: string): Promise<RulesData> {
-  const res = await fetch(`/api/rules/projects/${projectSlug}`)
+  const res = await apiFetch(`/rules/projects/${projectSlug}`)
   if (!res.ok) throw new Error(`Failed to fetch project rules: ${res.status}`)
   return res.json()
 }
 
 export async function saveProjectRules(projectSlug: string, rules: RulesData): Promise<RulesData> {
-  const res = await fetch(`/api/rules/projects/${projectSlug}`, {
+  const res = await apiFetch(`/rules/projects/${projectSlug}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(rules),

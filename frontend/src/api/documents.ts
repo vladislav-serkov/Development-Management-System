@@ -1,22 +1,21 @@
 import type { DocumentResponse, DocumentPatchRequest, FeatureResponse, FeaturePatchRequest, ExportRequest, ExportResponse, ProjectResponse, CreateProjectRequest, PatchProjectRequest, ProjectDependency, CreateDependencyRequest, PatchDependencyRequest } from "@/types/api"
-
-const API_BASE = "/api"
+import { apiFetch } from "./client"
 
 // Projects
 export async function fetchProjects(): Promise<ProjectResponse[]> {
-  const res = await fetch(`${API_BASE}/projects/`)
+  const res = await apiFetch(`/projects/`)
   if (!res.ok) throw new Error(`Failed to fetch projects: ${res.status}`)
   return res.json()
 }
 
 export async function fetchProject(slug: string): Promise<ProjectResponse> {
-  const res = await fetch(`${API_BASE}/projects/${slug}`)
+  const res = await apiFetch(`/projects/${slug}`)
   if (!res.ok) throw new Error(`Failed to fetch project ${slug}: ${res.status}`)
   return res.json()
 }
 
 export async function createProject(req: CreateProjectRequest): Promise<ProjectResponse> {
-  const res = await fetch(`${API_BASE}/projects/`, {
+  const res = await apiFetch(`/projects/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -26,7 +25,7 @@ export async function createProject(req: CreateProjectRequest): Promise<ProjectR
 }
 
 export async function patchProject(slug: string, patch: PatchProjectRequest): Promise<ProjectResponse> {
-  const res = await fetch(`${API_BASE}/projects/${slug}`, {
+  const res = await apiFetch(`/projects/${slug}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -36,20 +35,20 @@ export async function patchProject(slug: string, patch: PatchProjectRequest): Pr
 }
 
 export async function fetchProjectFeatures(projectSlug: string): Promise<FeatureResponse[]> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/features`)
+  const res = await apiFetch(`/projects/${projectSlug}/features`)
   if (!res.ok) throw new Error(`Failed to fetch features: ${res.status}`)
   return res.json()
 }
 
 // Documents
 export async function fetchDocuments(): Promise<DocumentResponse[]> {
-  const res = await fetch(`${API_BASE}/documents/`)
+  const res = await apiFetch(`/documents/`)
   if (!res.ok) throw new Error(`Failed to fetch documents: ${res.status}`)
   return res.json()
 }
 
 export async function fetchDocument(slug: string, projectSlug: string): Promise<DocumentResponse> {
-  const res = await fetch(`${API_BASE}/documents/${slug}?project_slug=${projectSlug}`)
+  const res = await apiFetch(`/documents/${slug}?project_slug=${projectSlug}`)
   if (!res.ok) throw new Error(`Failed to fetch document ${slug}: ${res.status}`)
   return res.json()
 }
@@ -57,13 +56,13 @@ export async function fetchDocument(slug: string, projectSlug: string): Promise<
 export async function uploadDocument(projectSlug: string, file: File): Promise<DocumentResponse> {
   const fd = new FormData()
   fd.append("file", file)
-  const res = await fetch(`${API_BASE}/documents/upload?project_slug=${projectSlug}`, { method: "POST", body: fd })
+  const res = await apiFetch(`/documents/upload?project_slug=${projectSlug}`, { method: "POST", body: fd })
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   return res.json()
 }
 
 export async function patchDocument(slug: string, projectSlug: string, patch: DocumentPatchRequest): Promise<DocumentResponse> {
-  const res = await fetch(`${API_BASE}/documents/${slug}?project_slug=${projectSlug}`, {
+  const res = await apiFetch(`/documents/${slug}?project_slug=${projectSlug}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -73,7 +72,7 @@ export async function patchDocument(slug: string, projectSlug: string, patch: Do
 }
 
 export async function exportDocument(projectSlug: string, docSlug: string, request: ExportRequest): Promise<ExportResponse> {
-  const res = await fetch(`${API_BASE}/documents/${docSlug}/export?project_slug=${projectSlug}`, {
+  const res = await apiFetch(`/documents/${docSlug}/export?project_slug=${projectSlug}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -87,7 +86,7 @@ export async function patchFeature(
   featureName: string,
   patch: FeaturePatchRequest
 ): Promise<FeatureResponse> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}`, {
+  const res = await apiFetch(`/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -97,14 +96,14 @@ export async function patchFeature(
 }
 
 export async function deleteFeature(projectSlug: string, featureName: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}`, {
+  const res = await apiFetch(`/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}`, {
     method: "DELETE",
   })
   if (!res.ok) throw new Error(`Failed to delete feature: ${res.status}`)
 }
 
 export async function createDependency(projectSlug: string, req: CreateDependencyRequest): Promise<ProjectDependency> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/dependencies/`, {
+  const res = await apiFetch(`/projects/${projectSlug}/dependencies/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -119,7 +118,7 @@ export async function patchDependency(
   depType: string,
   patch: PatchDependencyRequest
 ): Promise<ProjectDependency> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/dependencies/${encodeURIComponent(depName)}?dep_type=${depType}`, {
+  const res = await apiFetch(`/projects/${projectSlug}/dependencies/${encodeURIComponent(depName)}?dep_type=${depType}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -129,7 +128,7 @@ export async function patchDependency(
 }
 
 export async function deleteDependency(projectSlug: string, depName: string, depType: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/dependencies/${encodeURIComponent(depName)}?dep_type=${depType}`, {
+  const res = await apiFetch(`/projects/${projectSlug}/dependencies/${encodeURIComponent(depName)}?dep_type=${depType}`, {
     method: "DELETE",
   })
   if (!res.ok) throw new Error(`Failed to delete dependency: ${res.status}`)
@@ -137,7 +136,7 @@ export async function deleteDependency(projectSlug: string, depName: string, dep
 
 // Project zip export / import
 export async function exportProjectZip(projectSlug: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/export/zip`)
+  const res = await apiFetch(`/projects/${projectSlug}/export/zip`)
   if (!res.ok) throw new Error(`Export failed: ${res.status}`)
   return res.blob()
 }
@@ -145,14 +144,14 @@ export async function exportProjectZip(projectSlug: string): Promise<Blob> {
 export async function importProjectZip(file: File): Promise<ProjectResponse> {
   const fd = new FormData()
   fd.append("file", file)
-  const res = await fetch(`${API_BASE}/projects/import`, { method: "POST", body: fd })
+  const res = await apiFetch(`/projects/import`, { method: "POST", body: fd })
   if (!res.ok) throw new Error(`Import failed: ${res.status}`)
   return res.json()
 }
 
 // Dependencies
 export async function fetchProjectDependencies(projectSlug: string): Promise<ProjectDependency[]> {
-  const res = await fetch(`${API_BASE}/projects/${projectSlug}/dependencies/`)
+  const res = await apiFetch(`/projects/${projectSlug}/dependencies/`)
   if (!res.ok) throw new Error(`Failed to fetch dependencies: ${res.status}`)
   return res.json()
 }
@@ -162,14 +161,14 @@ export async function enrichDependency(
   depType: string,
   file: File,
   depName?: string,
-): Promise<ProjectDependency[]> {
+): Promise<{ status: string }> {
   const fd = new FormData()
   fd.append("file", file)
-  let url = `${API_BASE}/projects/${projectSlug}/dependencies/enrich?dep_type=${depType}`
+  let url = `/projects/${projectSlug}/dependencies/enrich?dep_type=${depType}`
   if (depName) {
     url += `&dep_name=${encodeURIComponent(depName)}`
   }
-  const res = await fetch(url, { method: "POST", body: fd })
+  const res = await apiFetch(url, { method: "POST", body: fd })
   if (!res.ok) throw new Error(`Enrichment failed: ${res.status}`)
   return res.json()
 }

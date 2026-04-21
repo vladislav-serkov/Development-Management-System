@@ -1,16 +1,15 @@
 import type { GapsResponse, GapItem, StructuredBusinessLogic, ApplyPreviewData } from "@/types/api"
-
-const API = "/api"
+import { apiFetch } from "./client"
 
 export async function fetchGaps(projectSlug: string, featureName: string): Promise<GapsResponse> {
-  const res = await fetch(`${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/`)
+  const res = await apiFetch(`/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/`)
   if (!res.ok) throw new Error(`Fetch gaps failed: ${res.status}`)
   return res.json()
 }
 
 export async function runGapsAnalysis(projectSlug: string, featureName: string): Promise<{ status: string }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/run`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/run`,
     { method: "POST" }
   )
   if (!res.ok) {
@@ -21,8 +20,8 @@ export async function runGapsAnalysis(projectSlug: string, featureName: string):
 }
 
 export async function deleteGap(projectSlug: string, featureName: string, gapIndex: number): Promise<{ gaps: GapItem[] }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/${gapIndex}`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/${gapIndex}`,
     { method: "DELETE" }
   )
   if (!res.ok) throw new Error(`Gap delete failed: ${res.status}`)
@@ -35,8 +34,8 @@ export async function patchGap(
   gapIndex: number,
   patch: { status: string; analyst_text?: string | null }
 ): Promise<GapItem[]> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/${gapIndex}`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/${gapIndex}`,
     { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }
   )
   if (!res.ok) throw new Error(`Gap patch failed: ${res.status}`)
@@ -47,8 +46,8 @@ export async function runApplyPreview(
   projectSlug: string,
   featureName: string,
 ): Promise<{ status: string }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-preview`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-preview`,
     { method: "POST" }
   )
   if (!res.ok) {
@@ -62,8 +61,8 @@ export async function fetchApplyPreview(
   projectSlug: string,
   featureName: string,
 ): Promise<ApplyPreviewData & { status: string }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-preview`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-preview`,
   )
   if (!res.ok) return { status: null } as unknown as ApplyPreviewData & { status: string }
   return res.json()
@@ -74,8 +73,8 @@ export async function applyConfirm(
   featureName: string,
   proposed: StructuredBusinessLogic,
 ): Promise<{ status: string }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-confirm`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-confirm`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proposed }) }
   )
   if (!res.ok) {

@@ -6,26 +6,28 @@ import { DbSchemaView } from "./DbSchemaView"
 import { ApiEndpointsView } from "./ApiEndpointsView"
 import { CacheStructureView } from "./CacheStructureView"
 import { KafkaTopicView } from "./KafkaTopicView"
+import { ExternalDocView } from "./ExternalDocView"
 import { EnrichUploadZone } from "./EnrichUploadZone"
 import { AnimatedDots } from "./AnimatedDots"
-import { useUIStore } from "@/stores/uiStore"
 import { usePatchDependency, useDeleteDependency } from "@/hooks/useDependencies"
 import { Pencil, Trash2 } from "lucide-react"
 import { dependencyPath, projectPath } from "@/lib/routes"
-import type { ProjectDependency, DbTableEnrichment, ExternalApiEnrichment, CacheEnrichment, KafkaTopicEnrichment } from "@/types/api"
+import { useConfirm } from "@/components/ConfirmDialog"
+import type { ProjectDependency, DbTableEnrichment, ExternalApiEnrichment, CacheEnrichment, KafkaTopicEnrichment, ExternalDocEnrichment } from "@/types/api"
 
 const typeLabels: Record<string, string> = {
   db_table: "Таблица БД",
   external_api: "Внешний API",
   cache: "Кэш",
   kafka_topic: "Kafka-топик",
+  external_doc: "Документ",
 }
 
 export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency; projectSlug: string }) {
   const navigate = useNavigate()
+  const askConfirm = useConfirm()
   const isEnriched = dep.enrichment_status === "enriched" && dep.enriched_data
-  const enrichingDepTypes = useUIStore((s) => s.enrichingDepTypes)
-  const isEnriching = enrichingDepTypes.includes(dep.dep_type)
+  const isEnriching = dep.enrichment_status === "running"
 
   const patchDep = usePatchDependency(projectSlug)
   const deleteDep = useDeleteDependency(projectSlug)
@@ -65,8 +67,14 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
     )
   }
 
-  const handleDelete = () => {
-    if (window.confirm(`Удалить зависимость "${dep.name}"?`)) {
+  const handleDelete = async () => {
+    const ok = await askConfirm({
+      title: `Удалить зависимость "${dep.name}"?`,
+      description: "Действие нельзя отменить.",
+      confirmText: "Удалить",
+      destructive: true,
+    })
+    if (ok) {
       deleteDep.mutate(
         { depName: dep.name, depType: dep.dep_type },
         { onSuccess: () => navigate(projectPath(projectSlug)) }
@@ -99,8 +107,8 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
             <h2 className="text-xl font-semibold">{dep.name}</h2>
           )}
           <Badge variant="secondary" className="text-xs">{typeLabels[dep.dep_type] ?? dep.dep_type}</Badge>
-          <Badge variant={isEnriched ? "default" : "outline"} className="text-xs">
-            {isEnriched ? "Обогащена" : "Черновик"}
+          <Badge variant={isEnriched ? "default" : isEnriching ? "secondary" : "outline"} className="text-xs">
+            {isEnriched ? "Обогащена" : isEnriching ? "Обогащение..." : "Черновик"}
           </Badge>
 
           {!isEditing && (
@@ -137,6 +145,7 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
           {dep.dep_type === "external_api" && <ApiEndpointsView data={dep.enriched_data as ExternalApiEnrichment} />}
           {dep.dep_type === "cache" && <CacheStructureView data={dep.enriched_data as CacheEnrichment} />}
           {dep.dep_type === "kafka_topic" && <KafkaTopicView data={dep.enriched_data as KafkaTopicEnrichment} />}
+          {dep.dep_type === "external_doc" && <ExternalDocView data={dep.enriched_data as ExternalDocEnrichment} />}
         </div>
       ) : isEnriching ? (
         <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">

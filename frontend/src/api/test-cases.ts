@@ -1,16 +1,15 @@
 import type { TestCasesResponse, TestCaseItem } from "@/types/api"
-
-const API = "/api"
+import { apiFetch } from "./client"
 
 export async function fetchTestCases(projectSlug: string, featureName: string): Promise<TestCasesResponse> {
-  const res = await fetch(`${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/`)
+  const res = await apiFetch(`/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/`)
   if (!res.ok) throw new Error(`Fetch test cases failed: ${res.status}`)
   return res.json()
 }
 
 export async function runTestCases(projectSlug: string, featureName: string): Promise<{ status: string }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/run`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/run`,
     { method: "POST" }
   )
   if (!res.ok) {
@@ -21,8 +20,8 @@ export async function runTestCases(projectSlug: string, featureName: string): Pr
 }
 
 export async function deleteTestCase(projectSlug: string, featureName: string, tcIndex: number): Promise<{ test_cases: TestCaseItem[] }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}`,
     { method: "DELETE" }
   )
   if (!res.ok) throw new Error(`Test case delete failed: ${res.status}`)
@@ -35,8 +34,8 @@ export async function patchTestCase(
   tcIndex: number,
   patch: { status: string; analyst_text?: string | null }
 ): Promise<{ test_cases: TestCaseItem[] }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}`,
     { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }
   )
   if (!res.ok) throw new Error(`Test case patch failed: ${res.status}`)

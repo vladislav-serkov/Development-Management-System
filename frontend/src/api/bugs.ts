@@ -1,9 +1,8 @@
 import type { BugsResponse, BugItem } from "@/types/api"
-
-const API = "/api"
+import { apiFetch } from "./client"
 
 export async function fetchBugs(projectSlug: string, featureName: string): Promise<BugsResponse> {
-  const res = await fetch(`${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/`)
+  const res = await apiFetch(`/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/`)
   if (!res.ok) throw new Error(`Fetch bugs failed: ${res.status}`)
   return res.json()
 }
@@ -14,8 +13,8 @@ export async function generateBug(
   tcIndex: number,
   analystText?: string | null,
 ): Promise<{ bugs: BugItem[] }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/generate`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/generate`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -35,8 +34,8 @@ export async function patchBug(
   bugIndex: number,
   patch: { status: string; analyst_text?: string | null },
 ): Promise<{ bugs: BugItem[] }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/${bugIndex}`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/${bugIndex}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -52,8 +51,8 @@ export async function deleteBug(
   featureName: string,
   bugIndex: number,
 ): Promise<{ bugs: BugItem[] }> {
-  const res = await fetch(
-    `${API}/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/${bugIndex}`,
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/${bugIndex}`,
     { method: "DELETE" }
   )
   if (!res.ok) throw new Error(`Bug delete failed: ${res.status}`)
