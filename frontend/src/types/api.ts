@@ -3,6 +3,14 @@ export type DocumentStatus = "pending" | "processing" | "extracting" | "done" | 
 export type FeatureStatus = "extracting" | "done"
 export type FeatureType = "kafka_consumer" | "rest_endpoint" | "scheduled_task" | "unknown"
 
+// Source link for a response/error field — references one used_dependencies entry
+export interface FieldSource {
+  type: "external_api" | "db_table" | "cache" | "kafka_topic"
+  name: string
+  method?: string | null
+  path?: string | null
+}
+
 // Structured business logic from 1st Claude call
 export interface ParameterField {
   name: string
@@ -12,6 +20,7 @@ export interface ParameterField {
   validation_rules: string[]
   param_in: string | null
   example?: string | null
+  source?: FieldSource | null
   children: ParameterField[]
 }
 

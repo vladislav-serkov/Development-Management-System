@@ -7,15 +7,136 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { X, Plus } from "lucide-react"
+import { X, Plus, Globe, Database, Archive, Radio, AlertTriangle } from "lucide-react"
 import { Fragment } from "react"
-import type { ParameterField } from "@/types/api"
+import type { ParameterField, FieldSource, UsedDependency } from "@/types/api"
 
 interface ParametersTableProps {
   parameters: ParameterField[]
   showParamIn?: boolean
+  showSource?: boolean
+  availableDependencies?: UsedDependency[]
+  onSourceClick?: (source: FieldSource) => void
   isEditing?: boolean
   onChange?: (params: ParameterField[]) => void
+}
+
+const SOURCE_ICONS = {
+  external_api: Globe,
+  db_table: Database,
+  cache: Archive,
+  kafka_topic: Radio,
+} as const
+
+function findDependency(source: FieldSource, deps: UsedDependency[]): UsedDependency | undefined {
+  return deps.find((d) => d.type === source.type && d.name === source.name)
+}
+
+function sourceLabel(source: FieldSource): string {
+  if (source.type === "external_api") {
+    const method = source.method ?? ""
+    const path = source.path ?? source.name
+    return method ? `${method} ${path}` : path
+  }
+  return source.name
+}
+
+function SourceCell({
+  source,
+  availableDependencies,
+  onSourceClick,
+}: {
+  source: FieldSource | null | undefined
+  availableDependencies: UsedDependency[]
+  onSourceClick?: (source: FieldSource) => void
+}) {
+  if (!source) {
+    return <span className="text-muted-foreground text-xs">—</span>
+  }
+  const Icon = SOURCE_ICONS[source.type]
+  const found = findDependency(source, availableDependencies)
+  const label = sourceLabel(source)
+
+  if (!found) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded border border-yellow-300 bg-yellow-50 px-1.5 py-0.5 text-xs text-yellow-900"
+        title={`Зависимость "${source.name}" не найдена в used_dependencies этой фичи`}
+      >
+        <AlertTriangle className="h-3 w-3" />
+        <span className="font-mono">{label}</span>
+      </span>
+    )
+  }
+
+  const content = (
+    <span className="inline-flex items-center gap-1 text-xs font-mono">
+      <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span>{label}</span>
+    </span>
+  )
+
+  if (!onSourceClick) {
+    return content
+  }
+  return (
+    <button
+      className="text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+      onClick={() => onSourceClick(source)}
+      title="Открыть зависимость"
+    >
+      {content}
+    </button>
+  )
+}
+
+function EditableSourceCell({
+  source,
+  availableDependencies,
+  onChange,
+}: {
+  source: FieldSource | null | undefined
+  availableDependencies: UsedDependency[]
+  onChange: (next: FieldSource | null) => void
+}) {
+  const selectable = availableDependencies.filter(
+    (d) => d.type === "external_api" || d.type === "db_table" || d.type === "cache" || d.type === "kafka_topic"
+  )
+  const currentKey = source ? `${source.type}::${source.name}` : ""
+
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        className="text-xs bg-transparent border-b border-border outline-none w-full"
+        value={currentKey}
+        onChange={(e) => {
+          if (!e.target.value) {
+            onChange(null)
+            return
+          }
+          const [type, ...nameParts] = e.target.value.split("::")
+          const name = nameParts.join("::")
+          const dep = selectable.find((d) => d.type === type && d.name === name)
+          if (!dep) return
+          onChange({
+            type: dep.type as FieldSource["type"],
+            name: dep.name,
+            method: dep.method ?? null,
+            path: dep.path ?? null,
+          })
+        }}
+      >
+        <option value="">—</option>
+        {selectable.map((d) => (
+          <option key={`${d.type}::${d.name}`} value={`${d.type}::${d.name}`}>
+            {d.type === "external_api"
+              ? `${d.method ? d.method + " " : ""}${d.path ?? d.name}`
+              : `${d.type}: ${d.name}`}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
 }
 
 function emptyParam(): ParameterField {
@@ -35,11 +156,15 @@ function EditableParameterRows({
   parameters,
   depth,
   showParamIn,
+  showSource,
+  availableDependencies,
   onChange,
 }: {
   parameters: ParameterField[]
   depth: number
   showParamIn: boolean
+  showSource: boolean
+  availableDependencies: UsedDependency[]
   onChange: (params: ParameterField[]) => void
 }) {
   const updateParam = (i: number, updated: ParameterField) => {
@@ -94,6 +219,15 @@ function EditableParameterRows({
                   <option value="path">path</option>
                   <option value="header">header</option>
                 </select>
+              </TableCell>
+            )}
+            {showSource && (
+              <TableCell>
+                <EditableSourceCell
+                  source={param.source}
+                  availableDependencies={availableDependencies}
+                  onChange={(next) => updateParam(i, { ...param, source: next })}
+                />
               </TableCell>
             )}
             <TableCell>
@@ -161,6 +295,8 @@ function EditableParameterRows({
               parameters={param.children}
               depth={depth + 1}
               showParamIn={showParamIn}
+              showSource={showSource}
+              availableDependencies={availableDependencies}
               onChange={(updatedChildren) =>
                 updateParam(i, { ...param, children: updatedChildren })
               }
@@ -176,10 +312,16 @@ function ParameterRows({
   parameters,
   depth,
   showParamIn,
+  showSource,
+  availableDependencies,
+  onSourceClick,
 }: {
   parameters: ParameterField[]
   depth: number
   showParamIn: boolean
+  showSource: boolean
+  availableDependencies: UsedDependency[]
+  onSourceClick?: (source: FieldSource) => void
 }) {
   return (
     <>
@@ -203,6 +345,15 @@ function ParameterRows({
                 ) : (
                   <span className="text-muted-foreground text-xs">—</span>
                 )}
+              </TableCell>
+            )}
+            {showSource && (
+              <TableCell>
+                <SourceCell
+                  source={param.source}
+                  availableDependencies={availableDependencies}
+                  onSourceClick={onSourceClick}
+                />
               </TableCell>
             )}
             <TableCell>
@@ -231,6 +382,9 @@ function ParameterRows({
               parameters={param.children}
               depth={depth + 1}
               showParamIn={showParamIn}
+              showSource={showSource}
+              availableDependencies={availableDependencies}
+              onSourceClick={onSourceClick}
             />
           )}
         </Fragment>
@@ -242,6 +396,9 @@ function ParameterRows({
 export function ParametersTable({
   parameters,
   showParamIn = false,
+  showSource = false,
+  availableDependencies = [],
+  onSourceClick,
   isEditing = false,
   onChange,
 }: ParametersTableProps) {
@@ -262,6 +419,7 @@ export function ParametersTable({
             <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Имя</TableHead>
             <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Тип</TableHead>
             {showParamIn && <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Расположение</TableHead>}
+            {showSource && <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Источник</TableHead>}
             <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Обязательность</TableHead>
             <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Описание</TableHead>
             <TableHead className="bg-muted/60 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Пример</TableHead>
@@ -275,6 +433,8 @@ export function ParametersTable({
               parameters={parameters}
               depth={0}
               showParamIn={showParamIn}
+              showSource={showSource}
+              availableDependencies={availableDependencies}
               onChange={onChange ?? (() => {})}
             />
           ) : (
@@ -282,6 +442,9 @@ export function ParametersTable({
               parameters={parameters}
               depth={0}
               showParamIn={showParamIn}
+              showSource={showSource}
+              availableDependencies={availableDependencies}
+              onSourceClick={onSourceClick}
             />
           )}
         </TableBody>

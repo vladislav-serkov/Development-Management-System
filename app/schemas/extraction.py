@@ -26,6 +26,20 @@ class SourceInfo(BaseModel):
     line: int | None = Field(default=None, description="1-based annotation line number, for code-sourced features")
 
 
+class FieldSource(BaseModel):
+    """Source of a response/error field value: which dependency produces it.
+
+    Must reference one of the entries in the feature's ``used_dependencies``.
+    Type/name pair is used to resolve the link; method/path duplicated from
+    the dependency to support rendering without lookup.
+    """
+
+    type: Literal["external_api", "db_table", "cache", "kafka_topic"]
+    name: str = Field(description="Dependency name verbatim from used_dependencies")
+    method: str | None = Field(default=None, description="HTTP method for external_api")
+    path: str | None = Field(default=None, description="Endpoint path for external_api")
+
+
 class ParameterField(BaseModel):
     name: str = Field(description="Parameter name in Latin")
     field_type: str = Field(description="Data type: string, integer, boolean, object, array, etc.")
@@ -34,6 +48,7 @@ class ParameterField(BaseModel):
     validation_rules: list[str] = Field(default_factory=list, description="Validation rules in Russian, e.g. 'Не более 50 символов'")
     param_in: str | None = Field(default=None, description="For REST: body, header, query, path. Null for Kafka.")
     example: str | None = Field(default=None, description="Sample value for this field. Extract from spec if given, otherwise synthesise a realistic one based on type. Null for container fields (object/array) whose value is represented by children.")
+    source: FieldSource | None = Field(default=None, description="For response/error fields: which used_dependencies entry produces this value. Null for input parameters and for fields computed by feature logic.")
     children: list["ParameterField"] = Field(default_factory=list, description="Nested fields for object/array types")
 
 

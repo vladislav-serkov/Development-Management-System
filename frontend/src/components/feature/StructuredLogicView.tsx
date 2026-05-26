@@ -5,7 +5,7 @@ import { ParametersTable } from "@/components/feature/ParametersTable"
 import { LogicTree } from "@/components/feature/LogicTree"
 import { DependencyCards } from "@/components/feature/DependencyCards"
 import { AlertTriangle, GitBranch, ListTree, Network, X, Plus } from "lucide-react"
-import type { StructuredBusinessLogic, ProjectDependency, ErrorResponseSchema, ParameterField } from "@/types/api"
+import type { StructuredBusinessLogic, ProjectDependency, ErrorResponseSchema, ParameterField, FieldSource } from "@/types/api"
 
 interface StructuredLogicViewProps {
   logic: StructuredBusinessLogic
@@ -82,6 +82,14 @@ export function StructuredLogicView({
     onChange?.({ ...logic, business_rules: [...(logic.business_rules ?? []), ""] })
   }
 
+  const usedDependencies = logic.used_dependencies ?? []
+  const handleSourceClick = (source: FieldSource) => {
+    const dep = projectDependencies?.find(
+      (pd) => pd.dep_type === source.type && pd.name === source.name
+    )
+    if (dep && onDepClick) onDepClick(dep)
+  }
+
   return (
     <Tabs defaultValue="input_params" className="gap-4">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -126,6 +134,9 @@ export function StructuredLogicView({
               <ParametersTable
                 parameters={logic.success_response ?? logic.output_parameters ?? []}
                 showParamIn={false}
+                showSource
+                availableDependencies={usedDependencies}
+                onSourceClick={handleSourceClick}
                 isEditing={isEditing}
                 onChange={isEditing ? (params) => onChange?.({ ...logic, success_response: params }) : undefined}
               />
@@ -174,6 +185,9 @@ export function StructuredLogicView({
                           <ParametersTable
                             parameters={err.parameters ?? []}
                             showParamIn={false}
+                            showSource
+                            availableDependencies={usedDependencies}
+                            onSourceClick={handleSourceClick}
                             isEditing={isEditing}
                             onChange={(params) => updateErrorResponse(i, { ...err, parameters: params as ParameterField[] })}
                           />
@@ -184,7 +198,13 @@ export function StructuredLogicView({
                             <span className="text-xs font-mono bg-red-100 text-red-800 px-2 py-0.5 rounded">{err.status_codes}</span>
                             <span className="text-sm text-muted-foreground">{err.description}</span>
                           </div>
-                          <ParametersTable parameters={err.parameters ?? []} showParamIn={false} />
+                          <ParametersTable
+                            parameters={err.parameters ?? []}
+                            showParamIn={false}
+                            showSource
+                            availableDependencies={usedDependencies}
+                            onSourceClick={handleSourceClick}
+                          />
                         </>
                       )}
                     </div>

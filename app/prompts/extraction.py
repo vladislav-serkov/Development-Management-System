@@ -64,13 +64,15 @@ DETECT_FEATURE_PROMPT = """
     example (пример значения — см. секцию rules),
     children (вложенные поля для object/array типов)
 
-  - success_response: параметры успешного ответа (2xx) — те же поля что input_parameters.
+  - success_response: параметры успешного ответа (2xx) — те же поля что input_parameters,
+    плюс опциональное поле `source` (см. правило 8 ниже).
     Только для REST, для Kafka оставь пустым
 
   - error_responses: массив объектов ошибок (4xx/5xx), каждый с полями
     status_codes (например '400', '404', '500'),
     description (когда возникает, на русском),
-    parameters (поля тела ответа при ошибке, те же поля что input_parameters, включая example).
+    parameters (поля тела ответа при ошибке, те же поля что input_parameters,
+    включая example и опциональный `source` — см. правило 8).
     Только для REST, для Kafka оставь пустым
 
   - logic_steps: шаги обработки с полями
@@ -221,6 +223,32 @@ DETECT_FEATURE_PROMPT = """
    в) Если один документ упомянут в нескольких шагах — в `used_dependencies`
       он появляется один раз, но в `external_doc_refs` прописывается в
       каждом шаге, где упоминается.
+
+9. SOURCE для полей ответа (success_response и error_responses.parameters):
+   Для каждого ЛИСТОВОГО поля (без children) попытайся указать `source` —
+   ссылку на запись из `used_dependencies` этой же фичи, откуда берётся значение.
+   Структура `source`:
+     - type: один из external_api / db_table / cache / kafka_topic
+       (external_doc как источник значения не допускается)
+     - name: ПОСИМВОЛЬНО совпадает с `name` в used_dependencies
+     - method, path: для external_api продублируй из used_dependencies (для остальных типов — null)
+
+   Когда заполнять:
+     - Значение поля приходит из ответа внешнего API → source указывает на тот external_api
+     - Значение читается из таблицы БД → db_table
+     - Значение берётся из кеша → cache
+     - Значение приходит из сообщения Kafka → kafka_topic
+
+   Когда оставлять source = null:
+     - Поле вычисляется бизнес-логикой фичи (id заявки, сгенерированный uuid, текущее время, статус из enum)
+     - Поле — это эхо входного параметра запроса
+     - Источник неоднозначен или явно не указан в документе
+     - Поле — контейнер (object/array с children); source не нужен на контейнерах
+
+   Не выдумывай источник: если в `used_dependencies` нет подходящей записи —
+   оставляй source = null. Лучше пусто, чем неверная ссылка.
+
+   У input_parameters source ВСЕГДА null — поле смысла не имеет.
 </rules>
 """.strip()
 
