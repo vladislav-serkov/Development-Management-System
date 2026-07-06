@@ -38,16 +38,6 @@ async def create_project(req: CreateProjectRequest):
     return ProjectResponse(**proj)
 
 
-@router.post("/link", response_model=ProjectResponse)
-async def link_project(req: LinkProjectRequest):
-    try:
-        proj = await store.link_project(req.path)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    logger.info("link_project: path=%s, slug=%s", req.path, proj["slug"])
-    return ProjectResponse(**proj)
-
-
 class ImportContextResponse(BaseModel):
     project: ProjectResponse
     adapted_features: int

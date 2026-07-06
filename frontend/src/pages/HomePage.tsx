@@ -5,7 +5,6 @@ import {
   useProjects,
   useCreateProject,
   useImportProject,
-  useLinkProject,
   useImportContext,
   useDeleteProject,
 } from "@/hooks/useDocuments"
@@ -15,27 +14,29 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { projectPath, rulesPath } from "@/lib/routes"
-import { isDesktop } from "@/lib/platform"
 import type { ProjectResponse } from "@/types/api"
 
 export default function HomePage() {
   const { data: projects, isLoading, error } = useProjects()
   const createMutation = useCreateProject()
   const importMutation = useImportProject()
-  const linkMutation = useLinkProject()
   const importContextMutation = useImportContext()
   const deleteMutation = useDeleteProject()
   const navigate = useNavigate()
-  const desktop = isDesktop()
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newName, setNewName] = useState("")
   const [importError, setImportError] = useState<string | null>(null)
-  const [linkError, setLinkError] = useState<string | null>(null)
+  const [importContextPath, setImportContextPath] = useState("")
   const [importContextError, setImportContextError] = useState<string | null>(null)
   const [importSummary, setImportSummary] = useState<{ slug: string; adapted: number; warnings: string[] } | null>(null)
   const [projectToRemove, setProjectToRemove] = useState<ProjectResponse | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const resetDialogErrors = () => {
+    setImportError(null)
+    setImportContextError(null)
+  }
 
   const handleCreate = () => {
     if (!newName.trim()) return
@@ -68,60 +69,31 @@ export default function HomePage() {
     })
   }
 
-  const handleLinkDirectory = async () => {
-    setLinkError(null)
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog")
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Выберите директорию проекта",
-      })
-      if (!selected || typeof selected !== "string") return
-      linkMutation.mutate(selected, {
-        onSuccess: (project) => {
-          setDialogOpen(false)
-          navigate(projectPath(project.slug))
-        },
-        onError: (err) => {
-          setLinkError(err instanceof Error ? err.message : "Не удалось подключить директорию")
-        },
-      })
-    } catch (err) {
-      setLinkError(err instanceof Error ? err.message : "Не удалось открыть диалог выбора папки")
+  const handleImportContext = () => {
+    const path = importContextPath.trim()
+    if (!path) {
+      setImportContextError("Укажите путь к директории с .context")
+      return
     }
-  }
-
-  const handleImportContextDirectory = async () => {
     setImportContextError(null)
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog")
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Выберите директорию с .context (сгенерирован DMS)",
-      })
-      if (!selected || typeof selected !== "string") return
-      importContextMutation.mutate(selected, {
-        onSuccess: (result) => {
-          setDialogOpen(false)
-          if (result.warnings.length > 0) {
-            setImportSummary({
-              slug: result.project.slug,
-              adapted: result.adapted_features,
-              warnings: result.warnings,
-            })
-          } else {
-            navigate(projectPath(result.project.slug))
-          }
-        },
-        onError: (err) => {
-          setImportContextError(err instanceof Error ? err.message : "Не удалось импортировать .context")
-        },
-      })
-    } catch (err) {
-      setImportContextError(err instanceof Error ? err.message : "Не удалось открыть диалог выбора папки")
-    }
+    importContextMutation.mutate(path, {
+      onSuccess: (result) => {
+        setDialogOpen(false)
+        setImportContextPath("")
+        if (result.warnings.length > 0) {
+          setImportSummary({
+            slug: result.project.slug,
+            adapted: result.adapted_features,
+            warnings: result.warnings,
+          })
+        } else {
+          navigate(projectPath(result.project.slug))
+        }
+      },
+      onError: (err) => {
+        setImportContextError(err instanceof Error ? err.message : "Не удалось импортировать .context")
+      },
+    })
   }
 
   const handleRemoveProject = (removeFiles: boolean) => {
@@ -155,11 +127,7 @@ export default function HomePage() {
             open={dialogOpen}
             onOpenChange={(open) => {
               setDialogOpen(open)
-              if (!open) {
-                setImportError(null)
-                setLinkError(null)
-                setImportContextError(null)
-              }
+              if (!open) resetDialogErrors()
             }}
           >
             <DialogTrigger render={<Button />}>+ Новый проект</DialogTrigger>
@@ -188,63 +156,52 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {desktop ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={handleLinkDirectory}
-                      disabled={linkMutation.isPending}
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      {linkMutation.isPending ? "Подключение..." : "Подключить директорию"}
-                    </Button>
-                    <p className="text-xs text-muted-foreground">
-                      Папка <code>.context</code> будет создана внутри выбранной директории.
-                      Добавьте её в git, чтобы делиться контекстом с командой.
-                    </p>
-                    {linkError && (
-                      <p className="text-xs text-destructive">{linkError}</p>
-                    )}
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={handleImportContextDirectory}
-                      disabled={importContextMutation.isPending}
-                    >
-                      <DownloadCloud className="mr-2 h-4 w-4" />
-                      {importContextMutation.isPending ? "Импорт..." : "Импортировать .context (от DMS)"}
-                    </Button>
-                    <p className="text-xs text-muted-foreground">
-                      Подключит существующую <code>.context</code>, собранную плагином DMS,
-                      и мигрирует feature.json в канонический формат.
-                    </p>
-                    {importContextError && (
-                      <p className="text-xs text-destructive">{importContextError}</p>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={handleImportClick}
-                      disabled={importMutation.isPending}
-                    >
-                      {importMutation.isPending ? "Импорт..." : "Импортировать из .zip"}
-                    </Button>
-                    {importError && (
-                      <p className="text-xs text-destructive">{importError}</p>
-                    )}
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".zip"
-                      className="hidden"
-                      onChange={handleFileChange}
-                    />
-                  </>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleImportClick}
+                  disabled={importMutation.isPending}
+                >
+                  {importMutation.isPending ? "Импорт..." : "Импортировать из .zip"}
+                </Button>
+                {importError && (
+                  <p className="text-xs text-destructive">{importError}</p>
                 )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".zip"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+
+                <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <DownloadCloud className="h-4 w-4" />
+                    Импортировать .context (от DMS)
+                  </div>
+                  <Input
+                    placeholder="Путь к директории проекта, например /Users/me/repo"
+                    value={importContextPath}
+                    onChange={(e) => setImportContextPath(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleImportContext()}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Подключит существующую <code>.context</code> внутри указанной директории (собранную плагином DMS)
+                    и мигрирует feature.json в канонический формат. Путь читается на стороне backend.
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleImportContext}
+                    disabled={!importContextPath.trim() || importContextMutation.isPending}
+                  >
+                    {importContextMutation.isPending ? "Импорт..." : "Импортировать .context"}
+                  </Button>
+                  {importContextError && (
+                    <p className="text-xs text-destructive">{importContextError}</p>
+                  )}
+                </div>
               </div>
             </DialogContent>
           </Dialog>
