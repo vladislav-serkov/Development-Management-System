@@ -164,6 +164,7 @@ export interface DocumentResponse {
   project_slug: string
   filename: string
   status: DocumentStatus
+  source_type?: "pdf" | "confluence"
   pdf_size_bytes: number
   feature_count: number
   features: FeatureResponse[]

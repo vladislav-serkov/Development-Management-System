@@ -149,13 +149,13 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
         </div>
       ) : isEnriching ? (
         <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
-          <p className="text-sm text-muted-foreground">Загружаем PDF...</p>
+          <p className="text-sm text-muted-foreground">Обогащаем из Confluence...</p>
           <AnimatedDots className="text-lg" />
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
           <p className="text-sm text-muted-foreground">
-            Зависимость ещё не обогащена. Загрузите PDF со спецификацией.
+            Зависимость ещё не обогащена. Укажите ссылку на страницу Confluence со спецификацией.
           </p>
           <EnrichUploadZone projectSlug={dep.project_slug} depType={dep.dep_type} depName={dep.name} />
         </div>

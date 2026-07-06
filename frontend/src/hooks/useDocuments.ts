@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   fetchProjects, fetchProject, createProject, patchProject,
   fetchProjectFeatures,
-  fetchDocuments, fetchDocument, uploadDocument, patchDocument,
+  fetchDocuments, fetchDocument, importConfluencePage, patchDocument,
   patchFeature, deleteFeature, importProjectZip,
   importContext, deleteProject,
 } from "@/api/documents"
@@ -81,10 +81,10 @@ export function useDocument(slug: string | null, projectSlug: string | null) {
   })
 }
 
-export function useUploadDocument(projectSlug: string) {
+export function useImportConfluence(projectSlug: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (file: File) => uploadDocument(projectSlug, file),
+    mutationFn: (url: string) => importConfluencePage(projectSlug, url),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects", projectSlug] })
       qc.invalidateQueries({ queryKey: ["projects"] })

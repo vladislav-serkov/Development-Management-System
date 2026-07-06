@@ -126,7 +126,7 @@ DETECT_FEATURE_PROMPT = """
    - Обычные шаги (has_detailed_mapping: false): копируй ДОСЛОВНО текст из документа, не перефразируй.
    - Шаги с маппингом (has_detailed_mapping: true): пиши ТОЛЬКО краткое описание действия
      (например «Сформировать XML-сообщение с типом LoanAddRq и отправить в очередь»),
-     БЕЗ перечисления полей — детальный маппинг будет извлечён отдельным вызовом.
+     БЕЗ перечисления полей — поля извлекаются кодом из таблиц по mapping_table_ids.
 
 6. EXAMPLE (пример значения) — обязательное поле для ЛИСТОВЫХ параметров (не контейнеров):
    - Если в документе указан пример — копируй дословно.
@@ -147,14 +147,14 @@ DETECT_FEATURE_PROMPT = """
    - Перечисление полей для INSERT/UPDATE записи в БД-таблицу (например: id = ..., name = ..., status = ...)
    - Список полей для формирования объекта/структуры с указанием источников значений
    - Ссылку на таблицу маппинга в другом месте документа (например «заполнить согласно таблице N»)
-   - Таблицу в PDF рядом с шагом, содержащую колонки с именами полей, типами или источниками значений —
+   - Таблицу в документе рядом с шагом, содержащую колонки с именами полей, типами или источниками значений —
      даже если шаг явно не говорит «заполнить поля», наличие такой таблицы означает маппинг
    Общий признак: шаг содержит 2+ пар «поле = значение/источник» в ЛЮБОМ формате —
    таблица, список, проза, подшаги с отдельными полями.
 
    ПОДШАГИ С ПОЛЯМИ: если маппинг разбит по подшагам (например 7.1 → поле id, 7.2 → поле name),
-   пометь РОДИТЕЛЬСКИЙ шаг как has_detailed_mapping: true, а подшаги включи как children
-   с has_detailed_mapping: false. Call 2 извлечёт поля из родительского шага целиком.
+   пометь РОДИТЕЛЬСКИЙ шаг как has_detailed_mapping: true (и mapping_table_ids на нём же),
+   а подшаги включи как children с has_detailed_mapping: false.
 
    НЕ ЯВЛЯЕТСЯ field mapping (has_detailed_mapping ДОЛЖЕН быть false, таблица идёт в reference_tables,
    см. правило 7a):
@@ -168,7 +168,19 @@ DETECT_FEATURE_PROMPT = """
    нет колонки «Тип данных» — вместо неё перечисление значений/действий/количеств.
 
    Если сомневаешься между field mapping и reference table — склоняйся к reference_tables.
-   Лучше потерять маппинг (Call 2 его просто не найдёт) чем засорить его таблицей соответствий.
+   Лучше сохранить таблицу дословно в reference_tables, чем засорить маппинг таблицей соответствий.
+
+7b. МАРКЕРЫ ТАБЛИЦ [TABLE:Tn]. Если в документе перед таблицами стоят маркеры вида
+   [TABLE:T3] — таблицы уже извлечены кодом дословно, и для шагов с
+   has_detailed_mapping=true ты НЕ должен переписывать поля. Вместо этого:
+   - в `mapping_table_ids` шага укажи id маркеров таблиц с маппингом полей
+     этого шага (например ["T3"]);
+   - заполни `message_type` шага — имя целевого сообщения/таблицы из текста;
+   - сами поля НЕ перечисляй, они будут извлечены из таблицы кодом.
+   Правило 7 (что является field mapping, а что reference-таблица) действует
+   без изменений: reference-таблицы по-прежнему копируй в reference_tables
+   дословно и НЕ указывай их id в mapping_table_ids.
+   Если маркеров в документе нет — оставляй mapping_table_ids пустым списком.
 
 7a. REFERENCE_TABLES — для каждого шага извлеки все reference-таблицы из секции
    «НЕ ЯВЛЯЕТСЯ field mapping» выше в поле `reference_tables` как список объектов:
@@ -210,6 +222,20 @@ DETECT_FEATURE_PROMPT = """
    отнести её к external_api / db_table / kafka_topic / cache — ставь
    external_doc. Лучше лишний external_doc, чем потерянная ссылка.
 
+   SOURCE_DOC_TITLE: для КАЖДОЙ записи в used_dependencies (ЛЮБОГО типа,
+   не только external_doc), которая упомянута в тексте ссылкой на другой
+   документ/страницу — заполни поле `source_doc_title` ТОЧНЫМ текстом этой
+   ссылки, посимвольно, как он написан в документе. Если артефакт упомянут
+   без ссылки — оставь source_doc_title = null. Это поле используется для
+   автоматического скачивания документа и обогащения зависимости.
+
+   ОДНА ССЫЛКА = ОДНА ЗАПИСЬ. Правила (1) и (2) взаимоисключающие:
+   если ссылка уже классифицирована как external_api / db_table /
+   kafka_topic / cache, НЕ добавляй её же второй раз как external_doc.
+   Типовая ошибка: страница «Описание метода getX» породила и
+   external_api (path /api/getX), и external_doc («getX — Получение …») —
+   это дубль, external_doc здесь создавать НЕЛЬЗЯ.
+
    Для external_doc выполни:
    а) Добавь запись в `used_dependencies` с type="external_doc", name=<точное
       название документа из текста ссылки>, description=<кратко на русском,
@@ -249,130 +275,5 @@ DETECT_FEATURE_PROMPT = """
    оставляй source = null. Лучше пусто, чем неверная ссылка.
 
    У input_parameters source ВСЕГДА null — поле смысла не имеет.
-</rules>
-""".strip()
-
-
-def _collect_step_texts(steps, result: list[str] | None = None) -> list[str]:
-    """Recursively collect 'number: text' for steps with has_detailed_mapping=True."""
-    if result is None:
-        result = []
-    for step in steps:
-        if step.has_detailed_mapping:
-            result.append(f"  - Шаг {step.number}: {step.text}")
-        _collect_step_texts(step.children, result)
-    return result
-
-
-def _collect_dep_texts(deps) -> list[str]:
-    """Format used_dependencies as context lines."""
-    lines = []
-    for dep in deps:
-        parts = [f"{dep.type}: {dep.name}"]
-        if dep.description:
-            parts.append(dep.description)
-        lines.append(f"  - {' — '.join(parts)}")
-    return lines
-
-
-def build_mapping_prompt(
-    feature_name: str,
-    feature_type: str,
-    steps_list: str,
-    step_texts: list[str] | None = None,
-    dep_texts: list[str] | None = None,
-) -> str:
-    """Build the user message for Call 2 (message mapping extraction).
-
-    Args:
-        feature_name: Name of the feature being processed.
-        feature_type: Type value of the feature (e.g. 'kafka_consumer').
-        steps_list: Comma-separated step numbers that have has_detailed_mapping=True.
-        step_texts: Optional context lines from Call 1 (step number + text).
-        dep_texts: Optional context lines for dependencies from Call 1.
-    """
-    context_section = ""
-    if step_texts or dep_texts:
-        context_parts = []
-        if step_texts:
-            context_parts.append("Шаги, для которых нужно извлечь маппинг:\n" + "\n".join(step_texts))
-        if dep_texts:
-            context_parts.append("Зависимости фичи (для контекста):\n" + "\n".join(dep_texts))
-        context_section = f"\n<context>\n{chr(10).join(context_parts)}\n</context>\n"
-
-    return f"""
-<task>
-Сфокусируйся на feature «{feature_name}» (тип: {feature_type}).
-Для следующих шагов обработки: {steps_list}
-
-Каждый из этих шагов содержит структурированный маппинг полей —
-таблицу маппинга XML/JSON сообщения, перечисление полей для INSERT/UPDATE в БД-таблицу,
-или список полей формируемого объекта.
-
-Извлеки структуру маппинга для каждого шага.
-</task>
-{context_section}
-<output_fields>
-Для каждого шага верни объект с полями:
-- step_number: номер шага (например, '7.b')
-- message_type: имя типа сообщения или имя БД-таблицы (например, 'AgreemtListMod' или 'product_schedule_date')
-- queue_or_endpoint: очередь или эндпоинт (если указан, null для DB-операций)
-- fields: список полей/элементов с иерархией:
-  - element: имя поля/элемента
-  - parent: имя родительского элемента (null если корневой)
-  - field_type: тип данных
-  - required: если в таблице маппинга есть колонка обязательности (Обяз., Required, М) — копируй дословно (true/false). Если такой колонки нет — null. Не угадывай
-  - cardinality: кратность ДОСЛОВНО из таблицы спецификации ('1', '0-1', '1-N', '0-N'). Null если нет колонки кратности
-  - is_collection: true если поле является списком/массивом (см. rules)
-  - description: что это за поле (на русском из ТЗ, null если не указано)
-  - source: откуда берётся значение (на русском из ТЗ, null если не указано)
-  - example: пример значения — см. секцию rules
-  - children: вложенные поля
-</output_fields>
-
-<rules>
-1. ЯЗЫК: все описания (description, source) пиши НА РУССКОМ, сохраняя терминологию из ТЗ.
-
-2. ОТСУТСТВУЮЩАЯ ИНФОРМАЦИЯ: если описание или источник поля не указаны в документе — возвращай null.
-   Никогда не выдумывай значения. Лучше null, чем догадка.
-
-3. is_collection — определяй ТОЛЬКО по прямым текстовым признакам:
-   а) Тип содержит List, Array, []
-   б) Описание содержит «список», «массив», «набор», «коллекция», «перечень»
-   в) Контекст указывает «для каждого», «может повторяться»
-   НЕ выводи is_collection из кратности дочерних элементов — это делается постобработкой.
-
-4. CARDINALITY: копируй дословно из таблицы спецификации. Не угадывай, если нет колонки — null.
-
-5. ИЕРАРХИЯ: сохраняй вложенность полей через children. Если поле является контейнером
-   для других полей — помести дочерние в children, а не на один уровень с родителем.
-
-6. EXAMPLE (пример значения) — обязательное поле для ЛИСТОВЫХ полей (не контейнеров):
-   - Если в source указан конкретный литерал (например «Константа 'MRP_REGISTRY'», «Текущая дата и время»)
-     — используй его как example: 'MRP_REGISTRY', '2025-03-15T14:30:00Z'.
-   - Если значение берётся из входного сообщения ($.principal, $.id) — синтезируй правдоподобное
-     значение согласно типу (см. ниже).
-   - Если ни в source, ни в документе примера нет — синтезируй по field_type:
-     • UUID → '550e8400-e29b-41d4-a716-446655440000'
-     • DATE → '2025-03-15'; TIMESTAMP → '2025-03-15T14:30:00Z'
-     • NUMERIC/DECIMAL → '12500.50'; INTEGER → '12345'
-     • VARCHAR/TEXT → правдоподобная строка в контексте домена
-     • BOOLEAN → 'true' или 'false'
-   - Для контейнеров (есть children) — example=null. Пример собирается из children.
-   - Значение example всегда строка.
-
-7. НЕСКОЛЬКО ЦЕЛЕВЫХ ТАБЛИЦ/СООБЩЕНИЙ В ОДНОМ ШАГЕ: если один шаг содержит операции
-   с разными таблицами или сообщениями (например UPDATE payment + INSERT outbox_payment),
-   верни ОТДЕЛЬНЫЙ объект MappingExtractionResult для каждой целевой таблицы/сообщения
-   с тем же step_number. Не сливай разные таблицы в один маппинг.
-
-8. ИСКЛЮЧЕНИЕ — reference/lookup-таблицы НЕ ИЗВЛЕКАЙ.
-   Если у шага рядом находится только таблица соответствия значений enum/кодов
-   (например "$.type=INITIAL_PAYMENT → APPLICATION+CREDIT+PAYOFF"), справочник кодов,
-   матрица соответствий и в ней НЕТ колонок с именами полей структуры и типами данных —
-   это НЕ field mapping. Для такого шага ПРОПУСТИ извлечение: не возвращай
-   MappingExtractionResult для этого step_number вовсе (или верни пустой fields=[]).
-   Такие таблицы уже извлечены в Call 1 в поле step.reference_tables и здесь их
-   дублировать нельзя.
 </rules>
 """.strip()

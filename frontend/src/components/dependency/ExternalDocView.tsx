@@ -182,7 +182,7 @@ export function ExternalDocView({ data }: { data: ExternalDocEnrichment }) {
       <div className="rounded-xl border border-dashed px-4 py-10 text-center">
         <p className="text-sm font-medium">Содержимое документа пусто</p>
         <p className="mt-2 text-xs text-muted-foreground">
-          Обогащение прошло, но HTML-контент не извлёкся. Попробуйте загрузить PDF заново.
+          Обогащение прошло, но контент не извлёкся. Попробуйте импортировать страницу заново.
         </p>
       </div>
     )

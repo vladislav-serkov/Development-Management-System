@@ -76,11 +76,20 @@ export async function fetchDocument(slug: string, projectSlug: string): Promise<
   return res.json()
 }
 
-export async function uploadDocument(projectSlug: string, file: File): Promise<DocumentResponse> {
-  const fd = new FormData()
-  fd.append("file", file)
-  const res = await apiFetch(`/documents/upload?project_slug=${projectSlug}`, { method: "POST", body: fd })
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+export async function importConfluencePage(projectSlug: string, url: string): Promise<DocumentResponse> {
+  const res = await apiFetch(`/documents/import-confluence?project_slug=${projectSlug}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  })
+  if (!res.ok) {
+    let detail = `Confluence import failed: ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore */ }
+    throw new Error(detail)
+  }
   return res.json()
 }
 
@@ -182,16 +191,25 @@ export async function fetchProjectDependencies(projectSlug: string): Promise<Pro
 export async function enrichDependency(
   projectSlug: string,
   depType: string,
-  file: File,
+  pageUrl: string,
   depName?: string,
 ): Promise<{ status: string }> {
-  const fd = new FormData()
-  fd.append("file", file)
   let url = `/projects/${projectSlug}/dependencies/enrich?dep_type=${depType}`
   if (depName) {
     url += `&dep_name=${encodeURIComponent(depName)}`
   }
-  const res = await apiFetch(url, { method: "POST", body: fd })
-  if (!res.ok) throw new Error(`Enrichment failed: ${res.status}`)
+  const res = await apiFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: pageUrl }),
+  })
+  if (!res.ok) {
+    let detail = `Enrichment failed: ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore */ }
+    throw new Error(detail)
+  }
   return res.json()
 }

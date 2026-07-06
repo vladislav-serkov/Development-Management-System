@@ -99,7 +99,7 @@ export function FeatureList({
 
         {(!features || features.length === 0) && !search && (
           <div className="rounded-xl border border-dashed px-3 py-4 text-xs text-muted-foreground">
-            После загрузки первого PDF здесь появятся извлеченные фичи.
+            После импорта первой страницы Confluence здесь появятся извлеченные фичи.
           </div>
         )}
       </div>

@@ -1,13 +1,19 @@
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
-from app.config import settings
 from app.routers.projects import _feature_to_response, store
 from app.schemas.export import ExportRequest, ExportResponse
-from app.schemas.extraction import DocumentPatchRequest, DocumentResponse, FeaturePatchRequest, FeatureResponse
+from app.schemas.extraction import (
+    ConfluenceImportRequest,
+    DocumentPatchRequest,
+    DocumentResponse,
+    FeaturePatchRequest,
+    FeatureResponse,
+)
+from app.services.confluence import ConfluenceError, fetch_page
 from app.services.export import export_document_context
 from app.services.extraction import run_extraction_pipeline
 from app.services.task_manager import task_manager
@@ -30,6 +36,7 @@ def _doc_to_response(
         project_slug=doc.get("project_slug", ""),
         filename=doc["filename"],
         status=doc.get("status", "pending"),
+        source_type=doc.get("source_type", "pdf"),
         pdf_size_bytes=doc.get("pdf_size_bytes", 0),
         feature_count=doc.get("feature_count", 0),
         features=[_feature_to_response(f, active_tasks=active_tasks) for f in features],
@@ -38,37 +45,27 @@ def _doc_to_response(
     )
 
 
-@router.post("/upload", response_model=DocumentResponse)
-async def upload_document(
+@router.post("/import-confluence", response_model=DocumentResponse)
+async def import_confluence_page(
+    request: ConfluenceImportRequest,
     project_slug: str = Query(...),
-    file: UploadFile = File(...),
 ):
-    # Verify project exists
+    """Import a Confluence page as a document: fetch via PAT, convert to markdown, extract."""
     proj = await store.get_project(project_slug)
     if proj is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
 
-    contents = await file.read()
+    try:
+        page = await fetch_page(request.url)
+    except ConfluenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    logger.info("upload_document: project=%s, file=%s, size=%.1fKB", project_slug, file.filename, len(contents) / 1024)
+    logger.info(
+        "import_confluence: project=%s, page_id=%s, title='%s'",
+        project_slug, page["id"], page["title"],
+    )
 
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
-
-    if not contents[:5] == b"%PDF-":
-        raise HTTPException(
-            status_code=400,
-            detail="File does not appear to be a valid PDF (missing %PDF- header)",
-        )
-
-    if len(contents) > settings.max_pdf_size_mb * 1024 * 1024:
-        raise HTTPException(
-            status_code=413,
-            detail=f"PDF exceeds {settings.max_pdf_size_mb}MB limit",
-        )
-
-    # Create document record immediately, launch extraction in background
-    filename = file.filename or "unnamed.pdf"
+    filename = page["title"]
     doc_slug = store.make_doc_slug(project_slug, filename)
     from datetime import UTC, datetime
     now_iso = datetime.now(UTC).isoformat()
@@ -76,7 +73,11 @@ async def upload_document(
         "slug": doc_slug,
         "project_slug": project_slug,
         "filename": filename,
-        "pdf_size_bytes": len(contents),
+        "source_type": "confluence",
+        "confluence_page_id": page["id"],
+        "confluence_url": request.url,
+        "confluence_version": page["version"],
+        "pdf_size_bytes": len(page["markdown"].encode("utf-8")),
         "uploaded_at": now_iso,
         "status": "processing",
         "error_message": None,
@@ -84,17 +85,24 @@ async def upload_document(
     }
     await store.save_document(project_slug, doc_data)
 
-    task_key = f"extraction:{project_slug}/{doc_slug}"
-    task_manager.launch(
-        task_key,
-        run_extraction_pipeline(
+    async def _import_chain():
+        await run_extraction_pipeline(
             filename=filename,
-            pdf_bytes=contents,
+            text_content=page["markdown"],
             store=store,
             project_slug=project_slug,
             doc_slug=doc_slug,
-        ),
-    )
+            tables=page["tables"],
+        )
+        # Auto-enrich stub deps linked from the imported page (non-fatal)
+        try:
+            from app.services.auto_enrich import auto_enrich_from_links
+            await auto_enrich_from_links(project_slug, page["links"], page["space_key"], store)
+        except Exception as exc:
+            logger.warning("Auto-enrich after import failed (non-fatal): %s", exc)
+
+    task_key = f"extraction:{project_slug}/{doc_slug}"
+    task_manager.launch(task_key, _import_chain())
 
     return _doc_to_response(doc_data, [], active_tasks=[])
 

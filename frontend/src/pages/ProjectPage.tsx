@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useUIStore } from "@/stores/uiStore"
-import { useProject, useUploadDocument, useProjectFeatures, useSaveFeature, useDeleteFeature } from "@/hooks/useDocuments"
+import { useProject, useImportConfluence, useProjectFeatures, useSaveFeature, useDeleteFeature } from "@/hooks/useDocuments"
 import { useProjectDependencies } from "@/hooks/useDependencies"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -83,7 +83,7 @@ export default function ProjectPage() {
   const { data: allFeatures } = useProjectFeatures(projectSlug, project?.status)
   const features = allFeatures?.filter(f => f.status === "done")
   const { data: dependencies } = useProjectDependencies(projectSlug)
-  const uploadMutation = useUploadDocument(projectSlug!)
+  const confluenceMutation = useImportConfluence(projectSlug!)
 
   const activeFeatureTab: FeatureTab = isFeatureTab(tabParam) ? tabParam : "logic"
   const selectedFeature = features?.find((feature) => feature.name === featureNameParam) ?? null
@@ -123,8 +123,9 @@ export default function ProjectPage() {
         dependencies={dependencies}
         selectedFeatureName={selectedFeature?.name ?? null}
         selectedDep={selectedDep}
-        onUpload={(file) => uploadMutation.mutate(file)}
-        isUploading={uploadMutation.isPending}
+        onImportConfluence={(url) => confluenceMutation.mutate(url)}
+        isImporting={confluenceMutation.isPending}
+        importError={confluenceMutation.error?.message ?? null}
         sidebarWidth={sidebarWidth}
         onStartDrag={() => { isDragging.current = true }}
       />
@@ -455,7 +456,7 @@ function ProjectContentArea({
               ) : (
                 <EmptyPanel
                   title="Структурированная логика пока не заполнена"
-                  description="Загрузите более полный PDF или отредактируйте фичу вручную, чтобы заполнить этот блок."
+                  description="Импортируйте более полную страницу или отредактируйте фичу вручную, чтобы заполнить этот блок."
                 />
               )}
             </Suspense>
@@ -505,9 +506,9 @@ function ProjectContentArea({
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <ProjectOverviewCard icon={<FolderKanban className="h-4 w-4" />} label="Фичи" value={String(totalFeatures)} helper={`${completedFeatures} готовы, ${pendingFeatures} в работе`} />
-        <ProjectOverviewCard icon={<Files className="h-4 w-4" />} label="Источники" value={String(projectDocumentCount)} helper="Загруженные PDF" />
+        <ProjectOverviewCard icon={<Files className="h-4 w-4" />} label="Источники" value={String(projectDocumentCount)} helper="Импортированные страницы" />
         <ProjectOverviewCard icon={<Workflow className="h-4 w-4" />} label="Зависимости" value={String(totalDependencies)} helper="DB, API, кэш, топики" />
-        <ProjectOverviewCard icon={<Sparkles className="h-4 w-4" />} label="Следующий шаг" value={totalFeatures > 0 ? "Выбрать фичу" : "Загрузить PDF"} helper={totalFeatures > 0 ? "Перейдите к логике, пробелам и тест-кейсам" : "После загрузки появятся фичи и зависимости"} />
+        <ProjectOverviewCard icon={<Sparkles className="h-4 w-4" />} label="Следующий шаг" value={totalFeatures > 0 ? "Выбрать фичу" : "Импортировать страницу"} helper={totalFeatures > 0 ? "Перейдите к логике, пробелам и тест-кейсам" : "После импорта появятся фичи и зависимости"} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
@@ -519,7 +520,7 @@ function ProjectContentArea({
           <CardContent className="space-y-3">
             <NextStepCard
               title="1. Обновить исходники проекта"
-              description="Загрузите новый PDF, если нужно переизвлечь фичи или пополнить модель зависимостей."
+              description="Импортируйте страницу Confluence, если нужно переизвлечь фичи или пополнить модель зависимостей."
               icon={<Files className="h-4 w-4" />}
             />
             <NextStepCard

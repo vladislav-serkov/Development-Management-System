@@ -47,7 +47,7 @@ export function ProjectGrid() {
                     {project.feature_count} фич
                   </Badge>
                   <Badge variant="outline" className="text-xs">
-                    {project.document_count} PDF
+                    {project.document_count} документов
                   </Badge>
                 </div>
               </CardContent>

@@ -20,8 +20,9 @@ interface ProjectSidebarProps {
   dependencies: ProjectDependency[] | undefined
   selectedFeatureName: string | null
   selectedDep: ProjectDependency | null
-  onUpload: (file: File) => void
-  isUploading: boolean
+  onImportConfluence: (url: string) => void
+  isImporting: boolean
+  importError?: string | null
   sidebarWidth: number
   onStartDrag: () => void
 }
@@ -33,8 +34,9 @@ export function ProjectSidebar({
   dependencies,
   selectedFeatureName,
   selectedDep,
-  onUpload,
-  isUploading,
+  onImportConfluence,
+  isImporting,
+  importError,
   sidebarWidth,
   onStartDrag,
 }: ProjectSidebarProps) {
@@ -91,9 +93,13 @@ export function ProjectSidebar({
       <div className="border-b p-4">
         <div className="mb-2 px-1">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Источники</p>
-          <p className="mt-1 text-xs text-muted-foreground">Загрузите PDF, чтобы обновить фичи и зависимости проекта.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Импортируйте страницу Confluence, чтобы обновить фичи и зависимости проекта.</p>
         </div>
-        <UploadZone onUpload={onUpload} isUploading={isUploading} />
+        <UploadZone
+          onImportConfluence={onImportConfluence}
+          isImporting={isImporting}
+          importError={importError}
+        />
       </div>
 
       <ScrollArea className="flex-1 min-h-0 p-4">

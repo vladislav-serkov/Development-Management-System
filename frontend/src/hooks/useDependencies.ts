@@ -51,8 +51,8 @@ export function useDeleteDependency(projectSlug: string) {
 export function useEnrichDependency(projectSlug: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ depType, file, depName }: { depType: string; file: File; depName?: string }) =>
-      enrichDependency(projectSlug, depType, file, depName),
+    mutationFn: ({ depType, url, depName }: { depType: string; url: string; depName?: string }) =>
+      enrichDependency(projectSlug, depType, url, depName),
     onSuccess: () => {
       // Trigger immediate refetch — polling will pick up "running" status
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "dependencies"] })

@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     test_cases_model: str = "claude-sonnet-4-6"
     bugs_model: str = "claude-sonnet-4-6"
     data_dir: str = "./data/projects"
-    max_pdf_size_mb: int = 32
+    confluence_base_url: str = ""
+    confluence_pat: str = ""
     cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")

@@ -1,46 +1,44 @@
-import { useDropzone } from "react-dropzone"
-import { cn } from "@/lib/utils"
+import { useState } from "react"
 
 interface UploadZoneProps {
-  onUpload: (file: File) => void
-  isUploading: boolean
+  onImportConfluence: (url: string) => void
+  isImporting: boolean
+  importError?: string | null
 }
 
-export function UploadZone({ onUpload, isUploading }: UploadZoneProps) {
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    accept: { "application/pdf": [".pdf"] },
-    multiple: false,
-    disabled: isUploading,
-    onDrop: (acceptedFiles) => {
-      if (acceptedFiles.length > 0) {
-        onUpload(acceptedFiles[0])
-      }
-    },
-  })
+export function UploadZone({ onImportConfluence, isImporting, importError }: UploadZoneProps) {
+  const [confluenceUrl, setConfluenceUrl] = useState("")
+
+  const submitConfluence = () => {
+    const url = confluenceUrl.trim()
+    if (!url || isImporting) return
+    onImportConfluence(url)
+    setConfluenceUrl("")
+  }
 
   return (
-    <div
-      {...getRootProps()}
-      className={cn(
-        "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors",
-        isDragActive
-          ? "border-primary bg-primary/5"
-          : "border-muted-foreground/25 hover:border-muted-foreground/50",
-        isUploading && "opacity-50 cursor-not-allowed"
-      )}
-    >
-      <input {...getInputProps({ className: "hidden" })} />
-      {isUploading ? (
-        <p className="text-sm text-muted-foreground">Загрузка PDF...</p>
-      ) : isDragActive ? (
-        <p className="text-sm text-primary">Отпустите PDF, чтобы загрузить</p>
-      ) : (
-        <div className="space-y-1">
-          <p className="text-sm text-muted-foreground">
-            Перетащите PDF сюда или нажмите для загрузки
-          </p>
-          <p className="text-xs text-muted-foreground/60">Поддерживаются только PDF</p>
-        </div>
+    <div className="space-y-2">
+      <div className="flex gap-1.5">
+        <input
+          type="text"
+          value={confluenceUrl}
+          onChange={(e) => setConfluenceUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submitConfluence() }}
+          placeholder="Ссылка на страницу Confluence"
+          disabled={isImporting}
+          className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary disabled:opacity-50"
+        />
+        <button
+          type="button"
+          onClick={submitConfluence}
+          disabled={isImporting || !confluenceUrl.trim()}
+          className="h-8 shrink-0 rounded-md border px-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+        >
+          {isImporting ? "Импорт..." : "Импорт"}
+        </button>
+      </div>
+      {importError && (
+        <p className="px-1 text-xs text-destructive">{importError}</p>
       )}
     </div>
   )

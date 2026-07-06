@@ -44,7 +44,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
       </CardHeader>
       <CardContent>
         <div className="text-xs text-muted-foreground">
-          {project.feature_count} feature{project.feature_count !== 1 ? "s" : ""} · {project.document_count} PDF
+          {project.feature_count} feature{project.feature_count !== 1 ? "s" : ""} · {project.document_count} doc{project.document_count !== 1 ? "s" : ""}
         </div>
       </CardContent>
     </Card>

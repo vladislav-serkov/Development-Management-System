@@ -1,10 +1,12 @@
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, HTTPException, Query
 
 from app.routers.projects import store
 from app.schemas.enrichment import CreateDependencyRequest, DependencyResponse
+from app.schemas.extraction import ConfluenceImportRequest
+from app.services.confluence import ConfluenceError, fetch_page
 from app.services.enrichment import EXTERNAL_DOC_TARGETED_ONLY_MSG, run_enrichment_pipeline
 from app.services.required_sync import sync_required_after_enrichment
 from app.services.task_manager import task_manager
@@ -158,8 +160,8 @@ async def _run_enrichment_background(
     project_slug: str,
     dep_type: str,
     dep_name: str | None,
-    pdf_bytes: bytes,
-    pdf_filename: str,
+    text_content: str,
+    source_name: str,
     *,
     task_id: str | None = None,
 ) -> None:
@@ -168,8 +170,8 @@ async def _run_enrichment_background(
         enriched_deps = await run_enrichment_pipeline(
             project_slug=project_slug,
             dep_type=dep_type,
-            pdf_bytes=pdf_bytes,
-            pdf_filename=pdf_filename,
+            text_content=text_content,
+            source_name=source_name,
             store=store,
             target_dep_name=dep_name,
         )
@@ -221,11 +223,11 @@ async def _run_enrichment_background(
 @router.post("/enrich")
 async def enrich_dependency(
     project_slug: str,
+    request: ConfluenceImportRequest,
     dep_type: str = Query(..., description="db_table | external_api | cache | kafka_topic | external_doc"),
     dep_name: str | None = Query(None, description="Target specific dependency by name"),
-    file: UploadFile = File(...),
 ):
-    """Upload a PDF to enrich dependencies of the given type (async)."""
+    """Enrich dependencies of the given type from a Confluence page URL (async)."""
     proj = await store.get_project(project_slug)
     if proj is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
@@ -237,17 +239,18 @@ async def enrich_dependency(
             detail=f"Invalid dep_type: {dep_type}. Must be one of: {', '.join(valid_types)}",
         )
 
-    # external_doc supports only targeted enrichment — fail-fast before reading PDF
+    # external_doc supports only targeted enrichment — fail-fast before fetching
     if dep_type == "external_doc" and not dep_name:
         raise HTTPException(status_code=400, detail=EXTERNAL_DOC_TARGETED_ONLY_MSG)
 
-    contents = await file.read()
+    try:
+        page = await fetch_page(request.url)
+    except ConfluenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     logger.info(
-        "enrich_dependency: project=%s, dep_type=%s, dep_name=%s, file=%s, size=%.1fKB",
-        project_slug, dep_type, dep_name, file.filename, len(contents) / 1024,
+        "enrich_dependency: project=%s, dep_type=%s, dep_name=%s, page='%s' (%.1fKB)",
+        project_slug, dep_type, dep_name, page["title"], len(page["markdown"]) / 1024,
     )
-    if not contents[:5] == b"%PDF-":
-        raise HTTPException(status_code=400, detail="File does not appear to be a valid PDF")
 
     # Mark targeted dep as "running" immediately (dep-level data state — kept
     # alongside the tasks log so the dep card keeps its running indicator).
@@ -291,8 +294,8 @@ async def enrich_dependency(
     task_manager.launch(
         task_key,
         _run_enrichment_background(
-            project_slug, dep_type, dep_name, contents,
-            file.filename or "unnamed.pdf", task_id=task["id"],
+            project_slug, dep_type, dep_name, page["markdown"],
+            page["title"], task_id=task["id"],
         ),
     )
 

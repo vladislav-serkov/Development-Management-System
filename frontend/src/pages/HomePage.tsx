@@ -210,7 +210,7 @@ export default function HomePage() {
 
       <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={<FolderKanban className="h-4 w-4" />} label="Проекты" value={totalProjects} helper="Всего рабочих пространств" />
-        <SummaryCard icon={<FileText className="h-4 w-4" />} label="PDF" value={totalDocuments} helper="Загруженные документы" />
+        <SummaryCard icon={<FileText className="h-4 w-4" />} label="Документы" value={totalDocuments} helper="Импортированные страницы" />
         <SummaryCard icon={<Workflow className="h-4 w-4" />} label="Фичи" value={totalFeatures} helper="Извлеченные сущности" />
         <SummaryCard icon={<Sparkles className="h-4 w-4" />} label="Готово" value={readyProjects} helper="Проекты со статусом done" />
       </div>
@@ -294,7 +294,7 @@ export default function HomePage() {
                       {project.feature_count} фич
                     </Badge>
                     <Badge variant="outline" className="text-xs">
-                      {project.document_count} PDF
+                      {project.document_count} документов
                     </Badge>
                   </div>
                   <div className="flex items-center justify-between text-sm">

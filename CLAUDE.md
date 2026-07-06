@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Extract Agent — AI-powered platform that extracts structured feature specifications from PDF documents using Claude API, then generates gaps analysis, test cases, and bug reports. Users upload PDFs, the system extracts features with their logic/parameters/dependencies via Claude, and provides review/editing UI. Supports project-level validation rules.
+Extract Agent — AI-powered platform that extracts structured feature specifications from Confluence pages using Claude API, then generates gaps analysis, test cases, and bug reports. Users paste a Confluence page URL, the system extracts features with their logic/parameters/dependencies via Claude, auto-enriches linked dependencies, and provides review/editing UI. Supports project-level validation rules.
 
 ## Commands
 
@@ -40,19 +40,22 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 - **`app/storage.py`** — `ProjectStore` — file-based JSON storage (replaced SQLite). All persistence goes through this class. Data lives in `./data/projects/{slug}/`
 - **`app/routers/`** — API endpoints:
   - `projects.py` — CRUD, import/export zip, list features (`/projects/...`)
-  - `documents.py` — PDF upload, extraction progress SSE, feature editing (`/documents/...`)
+  - `documents.py` — Confluence page import, extraction progress SSE, feature editing (`/documents/...`)
   - `dependencies.py` — dependency listing/enrichment (`/projects/{slug}/dependencies/...`)
   - `gaps.py` — gaps analysis per feature (`/projects/{slug}/features/{name}/gaps/...`)
   - `test_cases.py` — test case generation per feature (`/projects/{slug}/features/{name}/test-cases/...`)
   - `bugs.py` — bug reports derived from test cases (`/projects/{slug}/features/{name}/bugs/...`)
   - `rules.py` — project-level validation rules (`/projects/{slug}/rules/...`)
 - **`app/services/`** — Business logic:
-  - `extraction.py` — Claude API calls: PDF → feature detection (Call 1) → message mapping extraction (Call 2, conditional). Uses `anthropic.AsyncAnthropic` with tool_use for structured output
+  - `extraction.py` — single Claude call: markdown document → feature detection via `detect_features` tool. Message mappings are built deterministically by `table_mapping.py` from parsed tables (no LLM call). Uses `anthropic.AsyncAnthropic` with tool_use for structured output
+  - `table_mapping.py` — deterministic conversion of parsed spec tables ([TABLE:Tn] markers) into MessageField trees: header synonyms → column roles, colspan depth → nesting
+  - `auto_enrich.py` — after import, auto-enriches stub dependencies from Confluence pages linked in the spec (`source_doc_title` ← link text)
+  - `confluence.py` — Confluence DC integration: fetch page by URL via PAT (Bearer), convert storage XHTML → markdown for extraction (`POST /documents/import-confluence`)
   - `gaps.py` — Gaps analysis via Claude
   - `test_cases.py` — Test case generation via Claude
   - `bugs.py` — Bug report generation from test case review via Claude
   - `rules.py` — Validation rules management
-  - `enrichment.py` — Dependency enrichment via Claude (PDF-based)
+  - `enrichment.py` — Dependency enrichment via Claude (Confluence page markdown)
   - `export.py` — Project zip export
 - **`app/schemas/`** — Pydantic response/request models
 
@@ -86,8 +89,8 @@ data/projects/{project-slug}/
 
 ### LLM Integration
 - Uses **Anthropic Claude API** via `anthropic` Python SDK
-- Extraction pipeline: 2-call pattern — Call 1 detects features via `detect_feature` tool, Call 2 extracts detailed mappings via `extract_message_mappings` tool (conditional)
-- PDF sent as base64 document blocks with `cache_control: ephemeral` for prompt caching
+- Extraction pipeline: single call — features detected via `detect_features` tool; field mappings come from deterministic table parsing, not the LLM
+- Document sent as plain-text document block with `cache_control: ephemeral` for prompt caching
 - Models configured in `app/config.py`: `claude_model` (extraction), `gaps_model`, `test_cases_model`
 
 ### Key Patterns
@@ -100,4 +103,5 @@ data/projects/{project-slug}/
 - `ANTHROPIC_API_KEY` — required, set in `.env`
 - `CLAUDE_MODEL` / `GAPS_MODEL` / `TEST_CASES_MODEL` — optional model overrides
 - `DATA_DIR` — data directory (default: `./data/projects`)
+- `CONFLUENCE_BASE_URL` / `CONFLUENCE_PAT` — optional, enable importing Confluence pages as documents (Data Center PAT, Bearer auth)
 - Python 3.12+, Node 22+

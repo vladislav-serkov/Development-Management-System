@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useEnrichDependency } from "@/hooks/useDependencies"
 import { AnimatedDots } from "./AnimatedDots"
@@ -11,32 +11,50 @@ interface EnrichUploadZoneProps {
 }
 
 export function EnrichUploadZone({ projectSlug, depType, depName, isRunning }: EnrichUploadZoneProps) {
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [editing, setEditing] = useState(false)
+  const [url, setUrl] = useState("")
   const enrichMutation = useEnrichDependency(projectSlug)
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      enrichMutation.mutate({ depType, file, depName })
-      e.target.value = ""  // reset for re-upload
+  const submit = () => {
+    const trimmed = url.trim()
+    if (trimmed) {
+      enrichMutation.mutate({ depType, url: trimmed, depName })
     }
+    setUrl("")
+    setEditing(false)
+  }
+
+  if (isRunning || enrichMutation.isPending) {
+    return <AnimatedDots className="text-xs px-2" />
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="text"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit()
+          if (e.key === "Escape") { setUrl(""); setEditing(false) }
+        }}
+        onBlur={submit}
+        placeholder="Ссылка на Confluence"
+        className="h-6 w-44 rounded border bg-background px-1.5 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+        onClick={(e) => e.stopPropagation()}
+      />
+    )
   }
 
   return (
-    <>
-      <input ref={inputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileChange} />
-      {isRunning || enrichMutation.isPending ? (
-        <AnimatedDots className="text-xs px-2" />
-      ) : (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 px-2 text-xs"
-          onClick={() => inputRef.current?.click()}
-        >
-          + PDF
-        </Button>
-      )}
-    </>
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-6 px-2 text-xs"
+      onClick={(e) => { e.stopPropagation(); setEditing(true) }}
+    >
+      + Confluence
+    </Button>
   )
 }

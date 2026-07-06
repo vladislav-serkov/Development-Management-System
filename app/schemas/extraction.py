@@ -80,9 +80,13 @@ class GenericTable(BaseModel):
 
 class LogicStep(BaseModel):
     number: str = Field(description="Step number like '1', '1.1', '1.1.2'")
-    text: str = Field(description="VERBATIM text from the PDF specification in Russian")
+    text: str = Field(description="VERBATIM text from the specification document in Russian")
     has_detailed_mapping: bool = Field(default=False, description="True if this step contains XML/JSON message mapping table")
-    message_type: str | None = Field(default=None, description="Target table/message type name from Call 2, e.g. 'outbox_payment'")
+    mapping_table_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs from [TABLE:Tn] markers in the document whose tables contain this step's field mapping, e.g. ['T3']. Fill ONLY when such markers exist in the document; otherwise leave empty.",
+    )
+    message_type: str | None = Field(default=None, description="Target table/message type name, e.g. 'outbox_payment'")
     message_mapping: list[MessageField] | None = Field(default=None, description="Extracted message mapping fields")
     reference_tables: list[GenericTable] = Field(
         default_factory=list,
@@ -102,6 +106,7 @@ class UsedDependency(BaseModel):
     method: str | None = Field(default=None, description="HTTP method for external_api: GET/POST/PUT/DELETE/PATCH")
     service_name: str | None = Field(default=None, description="Service name for external_api, e.g. flp-credit-line")
     path: str | None = Field(default=None, description="Endpoint path for external_api, e.g. /v1/credit-line")
+    source_doc_title: str | None = Field(default=None, description="If this dependency is referenced in the document via a link to another document/page — the EXACT link text, character-for-character. Null if mentioned without a link.")
 
 
 ParameterField.model_rebuild()
@@ -109,15 +114,6 @@ MessageField.model_rebuild()
 LogicStep.model_rebuild()
 
 
-class MappingExtractionResult(BaseModel):
-    step_number: str = Field(description="Step number like '7.b'")
-    message_type: str = Field(description="Message type name like 'AgreemtListMod'")
-    queue_or_endpoint: str | None = Field(default=None)
-    fields: list[MessageField] = Field(default_factory=list)
-
-
-class MappingExtractionBatch(BaseModel):
-    mappings: list[MappingExtractionResult]
 
 
 class ErrorResponseSchema(BaseModel):
@@ -139,6 +135,10 @@ class StructuredBusinessLogic(BaseModel):
 
 class DocumentPatchRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
+
+
+class ConfluenceImportRequest(BaseModel):
+    url: str = Field(min_length=1, description="Confluence page URL (or bare pageId)")
 
 
 class DetectedFeature(BaseModel):
@@ -232,6 +232,7 @@ class DocumentResponse(BaseModel):
     project_slug: str
     filename: str
     status: str
+    source_type: str = "pdf"  # "pdf" | "confluence"
     pdf_size_bytes: int
     feature_count: int
     features: list[FeatureResponse]

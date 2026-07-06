@@ -1,5 +1,4 @@
-"""Enrichment pipeline: Claude tool_use extraction for dependency PDFs."""
-import base64
+"""Enrichment pipeline: Claude tool_use extraction for dependency documents (Confluence markdown)."""
 import json
 import logging
 from datetime import UTC, datetime
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Single source of truth for the "external_doc needs a specific dep_name" error —
 # used by both the HTTP guard in the router and the runtime guard in this service.
 EXTERNAL_DOC_TARGETED_ONLY_MSG = (
-    "external_doc requires dep_name: 1 PDF enriches exactly one named document"
+    "external_doc requires dep_name: 1 page enriches exactly one named document"
 )
 
 
@@ -61,15 +60,23 @@ def _dep_to_response(dep: dict, project_slug: str) -> DependencyResponse:
 
 
 
-async def run_enrichment_pipeline(
+def _match_table(tables, dep_name: str):
+    """Find an extracted table matching a dependency name (normalized, case-insensitive)."""
+    want = _normalize_dep_name(dep_name).lower()
+    return next(
+        (t for t in tables if _normalize_dep_name(t.table_name).lower() == want),
+        None,
+    )
+
+
+async def _extract_enrichment(
     project_slug: str,
     dep_type: str,
-    pdf_bytes: bytes,
-    pdf_filename: str,
+    text_content: str,
+    source_name: str,
     store,
-    target_dep_name: str | None = None,
-) -> list[DependencyResponse]:
-    """Run Claude tool_use enrichment for a dependency PDF."""
+):
+    """Single Claude tool_use call: document markdown → validated batch schema for dep_type."""
     if dep_type not in ENRICHMENT_SCHEMAS:
         raise ValueError(f"Invalid dep_type: {dep_type}. Must be one of: {list(ENRICHMENT_SCHEMAS)}")
 
@@ -79,13 +86,12 @@ async def run_enrichment_pipeline(
     prompt_text = cfg["prompt"]
 
     logger.info(
-        "=== Enrichment pipeline started: dep_type=%s, pdf=%s (%.1fKB) ===",
+        "=== Enrichment pipeline started: dep_type=%s, doc=%s (%.1fKB) ===",
         dep_type,
-        pdf_filename,
-        len(pdf_bytes) / 1024,
+        source_name,
+        len(text_content) / 1024,
     )
 
-    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
     model = settings.claude_model
 
     global_rules = await store.get_global_rules()
@@ -98,13 +104,13 @@ async def run_enrichment_pipeline(
 
     tool = {
         "name": tool_name,
-        "description": f"Extract structured {dep_type} data from the PDF",
+        "description": f"Extract structured {dep_type} data from the document",
         "input_schema": schema_class.model_json_schema(),
     }
 
     create_kwargs_enr: dict = dict(
         model=model,
-        max_tokens=8192,
+        max_tokens=16384,
         tools=[tool],
         tool_choice={"type": "tool", "name": tool_name},
     )
@@ -118,7 +124,7 @@ async def run_enrichment_pipeline(
             {
                 "role": "user",
                 "content": [
-                    _build_document_block(pdf_b64, cache=True),
+                    _build_document_block(text_content, cache=True),
                     {"type": "text", "text": prompt_text},
                 ],
             }
@@ -136,8 +142,98 @@ async def run_enrichment_pipeline(
     if tool_block is None:
         raise ValueError("No tool_use block in Claude response for enrichment")
 
+    if response.stop_reason == "max_tokens":
+        raise ValueError(
+            f"Claude response truncated by max_tokens for enrichment:{dep_type} — document too large"
+        )
+
     result = schema_class.model_validate(tool_block.input)
     logger.info("Enrichment extraction complete for dep_type=%s", dep_type)
+    return result
+
+
+async def enrich_db_tables_from_page(
+    project_slug: str,
+    dep_names: list[str],
+    text_content: str,
+    source_name: str,
+    store,
+) -> tuple[dict[str, DependencyResponse | None], list[str]]:
+    """One Claude call over a page describing many tables → upsert ALL of them.
+
+    Requested stubs (dep_names) are updated in place; every other table extracted
+    from the page is upserted as a new enriched dependency (the page describes the
+    whole DB, so all its tables belong to the project).
+
+    Returns (outcomes, extracted_table_names): outcomes maps each requested dep name to
+    its updated DependencyResponse, or None when no table on the page matched it.
+    """
+    result = await _extract_enrichment(project_slug, "db_table", text_content, source_name, store)
+    extracted_names = [t.table_name for t in result.tables]
+    now_iso = datetime.now(UTC).isoformat()
+
+    outcomes: dict[str, DependencyResponse | None] = {}
+    matched_tables: set[int] = set()
+    for dep_name in dep_names:
+        table = _match_table(result.tables, dep_name)
+        if table is None and len(result.tables) == 1 and len(dep_names) == 1:
+            table = result.tables[0]
+        if table is None:
+            outcomes[dep_name] = None
+            continue
+        matched_tables.add(id(table))
+        updated_dep = await store.update_dependency(
+            project_slug,
+            "db_table",
+            dep_name,
+            {
+                "enriched_data": table.model_dump(),
+                "enrichment_status": "enriched",
+                "source_pdf_name": source_name,
+                "enriched_at": now_iso,
+            },
+        )
+        outcomes[dep_name] = _dep_to_response(updated_dep, project_slug) if updated_dep else None
+
+    # The page describes the whole DB — upsert the remaining tables too
+    # (enriches same-named stubs from other groups thanks to case-insensitive merge).
+    for table in result.tables:
+        if id(table) in matched_tables:
+            continue
+        normalized_name = _normalize_dep_name(table.table_name)
+        await store.upsert_dependency(
+            project_slug=project_slug,
+            dep_type="db_table",
+            name=normalized_name,
+            data={
+                "dep_type": "db_table",
+                "name": normalized_name,
+                "enriched_data": table.model_dump(),
+                "enrichment_status": "enriched",
+                "source_pdf_name": source_name,
+                "enriched_at": now_iso,
+            },
+        )
+
+    logger.info(
+        "DB group enrichment: page='%s', extracted=%d tables, matched %d/%d deps, upserted %d extra",
+        source_name, len(extracted_names),
+        sum(1 for v in outcomes.values() if v is not None), len(dep_names),
+        len(result.tables) - len(matched_tables),
+    )
+    return outcomes, extracted_names
+
+
+async def run_enrichment_pipeline(
+    project_slug: str,
+    dep_type: str,
+    text_content: str,
+    source_name: str,
+    store,
+    target_dep_name: str | None = None,
+) -> list[DependencyResponse]:
+    """Run Claude tool_use enrichment for a dependency document (markdown text)."""
+    result = await _extract_enrichment(project_slug, dep_type, text_content, source_name, store)
 
     now = datetime.now(UTC)
     now_iso = now.isoformat()
@@ -146,7 +242,15 @@ async def run_enrichment_pipeline(
     if target_dep_name is not None:
         logger.info("Targeted enrichment: dep_type=%s, target=%s", dep_type, target_dep_name)
         if dep_type == "db_table":
-            enriched_data = result.tables[0].model_dump() if result.tables else {}
+            table = _match_table(result.tables, target_dep_name)
+            if table is None and len(result.tables) == 1:
+                table = result.tables[0]
+            if table is None:
+                raise ValueError(
+                    f"Таблица '{target_dep_name}' не найдена в документе; "
+                    f"извлечены: {[t.table_name for t in result.tables]}"
+                )
+            enriched_data = table.model_dump()
         elif dep_type == "external_api":
             enriched_data = result.model_dump()
         elif dep_type == "cache":
@@ -165,7 +269,7 @@ async def run_enrichment_pipeline(
             {
                 "enriched_data": enriched_data,
                 "enrichment_status": "enriched",
-                "source_pdf_name": pdf_filename,
+                "source_pdf_name": source_name,
                 "enriched_at": now_iso,
             },
         )
@@ -195,7 +299,7 @@ async def run_enrichment_pipeline(
                     "name": normalized_name,
                     "enriched_data": table.model_dump(),
                     "enrichment_status": "enriched",
-                    "source_pdf_name": pdf_filename,
+                    "source_pdf_name": source_name,
                     "enriched_at": now_iso,
                 },
             )
@@ -222,7 +326,7 @@ async def run_enrichment_pipeline(
                         "name": stub["name"],
                         "enriched_data": enriched_data,
                         "enrichment_status": "enriched",
-                        "source_pdf_name": pdf_filename,
+                        "source_pdf_name": source_name,
                         "enriched_at": now_iso,
                         "method": stub.get("method"),
                         "service_name": stub.get("service_name"),
@@ -241,7 +345,7 @@ async def run_enrichment_pipeline(
                     "name": api_name,
                     "enriched_data": enriched_data,
                     "enrichment_status": "enriched",
-                    "source_pdf_name": pdf_filename,
+                    "source_pdf_name": source_name,
                     "enriched_at": now_iso,
                     "method": None,
                     "service_name": api_name,
@@ -262,7 +366,7 @@ async def run_enrichment_pipeline(
                     "name": normalized_name,
                     "enriched_data": cache.model_dump(),
                     "enrichment_status": "enriched",
-                    "source_pdf_name": pdf_filename,
+                    "source_pdf_name": source_name,
                     "enriched_at": now_iso,
                 },
             )
@@ -280,7 +384,7 @@ async def run_enrichment_pipeline(
                     "name": normalized_name,
                     "enriched_data": topic.model_dump(),
                     "enrichment_status": "enriched",
-                    "source_pdf_name": pdf_filename,
+                    "source_pdf_name": source_name,
                     "enriched_at": now_iso,
                 },
             )
