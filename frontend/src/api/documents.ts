@@ -24,23 +24,6 @@ export async function createProject(req: CreateProjectRequest): Promise<ProjectR
   return res.json()
 }
 
-export async function linkProject(req: LinkProjectRequest): Promise<ProjectResponse> {
-  const res = await apiFetch(`/projects/link`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  })
-  if (!res.ok) {
-    let detail = `Failed to link project: ${res.status}`
-    try {
-      const body = await res.json()
-      if (body?.detail) detail = body.detail
-    } catch { /* ignore */ }
-    throw new Error(detail)
-  }
-  return res.json()
-}
-
 export async function importContext(req: LinkProjectRequest): Promise<ImportContextResponse> {
   const res = await apiFetch(`/projects/import-context`, {
     method: "POST",
