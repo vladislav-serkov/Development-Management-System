@@ -3,13 +3,13 @@ from datetime import UTC, datetime
 
 from app.config import settings
 from app.prompts.extraction import DETECT_FEATURE_PROMPT
-from app.services.claude_client import call_claude, log_cache_stats
-from app.services.rules import build_system_prompt
 from app.schemas.extraction import (
     DetectedFeature,
     FeatureDetectionResult,
     GenericTable,
 )
+from app.services.claude_client import call_claude, log_cache_stats
+from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
 

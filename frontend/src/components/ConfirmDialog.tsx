@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-export interface ConfirmOptions {
+interface ConfirmOptions {
   title: string
   description?: string
   confirmText?: string

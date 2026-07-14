@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useGlobalRules, useProjectRules, useSaveGlobalRules, useSaveProjectRules } from "@/hooks/useRules"
 import { useProjects } from "@/hooks/useDocuments"
 import { homePath } from "@/lib/routes"
-import type { AgentName, RulesData } from "@/api/rules"
+import { EMPTY_RULES, type AgentName, type RulesData } from "@/api/rules"
 
 const AGENT_TABS: { id: AgentName; label: string }[] = [
   { id: "extraction", label: "Извлечение" },
@@ -16,8 +16,6 @@ const AGENT_TABS: { id: AgentName; label: string }[] = [
   { id: "bugs", label: "Баги" },
   { id: "enrichment", label: "Обогащение" },
 ]
-
-const EMPTY_RULES: RulesData = { extraction: "", gaps: "", test_cases: "", bugs: "", enrichment: "" }
 
 export default function RulesPage() {
   const navigate = useNavigate()

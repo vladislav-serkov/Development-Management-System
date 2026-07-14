@@ -8,11 +8,9 @@ from app.prompts.gaps import (
     ANALYSIS_PROMPT,
     APPLY_SYSTEM_PROMPT,
     FEW_SHOT_EXAMPLES,
-    FORMAT_RULE,
     SYSTEM_PROMPT,
     build_apply_user_message,
 )
-from app.schemas.extraction import StructuredBusinessLogic
 from app.schemas.gaps import ApplyResult, GapsAnalysisResult
 from app.services.claude_client import call_claude, log_cache_stats
 from app.services.context_builder import build_feature_context
@@ -101,8 +99,6 @@ def _smart_merge_gaps(existing_gaps: list[dict], new_gaps: list[dict]) -> list[d
     - Approved/clarified gaps not in new results: keep (don't delete stale reviewed gaps).
     - Pending gaps not in new results: remove (stale unreviewed).
     """
-    new_identity_set = {(g["gap_type"], g["question"][:80]) for g in new_gaps}
-
     merged: list[dict] = []
 
     # Pass 1: keep existing approved/clarified gaps (whether in new results or not)

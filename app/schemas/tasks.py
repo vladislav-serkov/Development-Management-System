@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class TaskKind(str, Enum):
@@ -42,11 +42,3 @@ class TaskRecord(BaseModel):
 
 class TaskListResponse(BaseModel):
     tasks: list[TaskRecord]
-
-
-class TaskCreateParams(BaseModel):
-    """Internal helper — not an HTTP body. Used by services to spawn a task row."""
-
-    kind: TaskKind
-    target_type: TaskTargetType
-    target_id: str = Field(min_length=1)

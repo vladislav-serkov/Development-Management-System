@@ -7,7 +7,6 @@ from app.schemas.enrichment import (
     KafkaTopicEnrichmentBatch,
 )
 
-
 ENRICHMENT_SCHEMAS = {
     "db_table": {
         "schema": DbEnrichmentBatch,

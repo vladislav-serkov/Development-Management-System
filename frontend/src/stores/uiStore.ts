@@ -1,6 +1,6 @@
 import { create } from "zustand"
 
-export type AppView = "home" | "project" | "rules"
+type AppView = "home" | "project" | "rules"
 
 interface UIState {
   currentView: AppView

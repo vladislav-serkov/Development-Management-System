@@ -13,9 +13,11 @@ Create `.env` on the server:
 ```env
 ANTHROPIC_API_KEY=...
 CLAUDE_MODEL=claude-sonnet-4-6
-MAX_PDF_SIZE_MB=32
 DATA_DIR=/app/data/projects
 CORS_ORIGINS=
+# Optional — enable Confluence import:
+CONFLUENCE_BASE_URL=
+CONFLUENCE_PAT=
 ```
 
 `CORS_ORIGINS` can stay empty when frontend and API are served from the same host through nginx.

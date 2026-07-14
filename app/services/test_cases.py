@@ -389,8 +389,6 @@ def _smart_merge_test_cases(existing: list[dict], new: list[dict]) -> list[dict]
     - Approved/edited test cases not in new results: keep (don't delete reviewed).
     - Pending test cases not in new results: remove (stale unreviewed).
     """
-    new_identity_set = {(tc["category"], tc["name"][:80]) for tc in new}
-
     merged: list[dict] = []
 
     # Pass 1: keep existing approved/edited test cases
@@ -511,8 +509,6 @@ async def _run_test_cases_pipeline_inner(
     # Get feature's used_dependencies list for scoped filtering
     sl = feature.get("structured_logic_json") or feature.get("structured_logic") or {}
     used_deps_list = sl.get("used_dependencies", []) if isinstance(sl, dict) else []
-
-    norm_flat: dict[str, dict] = {_norm(name): dep for name, dep in flat_deps.items()}
 
     # Collect names of deps actually used by this feature
     used_dep_names: set[str] = set()

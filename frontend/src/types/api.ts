@@ -172,11 +172,6 @@ export interface DocumentResponse {
   error_message: string | null
 }
 
-// Document patch
-export interface DocumentPatchRequest {
-  filename: string
-}
-
 // Project — keyed by slug
 export interface ProjectResponse {
   slug: string
@@ -206,18 +201,6 @@ export interface CreateProjectRequest {
 
 export interface PatchProjectRequest {
   name: string
-}
-
-// Export
-export interface ExportRequest {
-  target_path?: string
-  feature_name?: string
-}
-
-export interface ExportResponse {
-  exported_features: string[]
-  target_path: string
-  files_written: string[]
 }
 
 // Dependency types (v1.1)
@@ -259,7 +242,7 @@ export interface DbTableEnrichment {
 }
 
 // API enrichment types
-export interface ApiParamInfo {
+interface ApiParamInfo {
   name: string
   param_in: string
   param_type: string

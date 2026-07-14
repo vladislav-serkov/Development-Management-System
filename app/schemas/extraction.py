@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 from enum import Enum
 from typing import Literal
@@ -133,10 +132,6 @@ class StructuredBusinessLogic(BaseModel):
     business_rules: list[str] = Field(default_factory=list)
 
 
-class DocumentPatchRequest(BaseModel):
-    filename: str = Field(min_length=1, max_length=255)
-
-
 class ConfluenceImportRequest(BaseModel):
     url: str = Field(min_length=1, description="Confluence page URL (or bare pageId)")
 
@@ -161,19 +156,6 @@ class FeatureDetectionResult(BaseModel):
     """Root model for 1st Claude call structured output."""
 
     features: list[DetectedFeature]
-
-
-class SingleFeatureExtraction(BaseModel):
-    """Combined schema: feature metadata + structured logic in one call."""
-
-    name: str = Field(description="Feature name in Latin")
-    type: FeatureType = Field(description="kafka_consumer or rest_endpoint")
-    summary: str = Field(description="Brief description in Russian")
-    method: str | None = Field(default=None, description="HTTP method for REST (GET/POST/PUT/DELETE) or CONSUMER for Kafka")
-    endpoint: str | None = Field(default=None, description="REST path like /v1/credit-line or Kafka topic like pay-later.flp.rbo-adapter.product.return.queue")
-    dependencies: list[str] = Field(default_factory=list)
-    source: SourceInfo | None = Field(default=None)
-    structured_logic: StructuredBusinessLogic = Field(default_factory=StructuredBusinessLogic)
 
 
 class DocumentStatus(str, Enum):

@@ -90,12 +90,18 @@ def slugify(name: str) -> str:
 
 
 class ProjectStore:
-    """Async file-based storage for projects, documents, features, and dependencies."""
+    """Async file-based storage for projects, documents, features, and dependencies.
+
+    Routers instantiate their own ``ProjectStore``, so all shared coordination
+    state (file locks, dependency locks, the linked-project registry cache) is
+    held at class level to stay consistent across instances within one process.
+    """
+
+    _dep_locks: dict[str, asyncio.Lock] = {}
+    _registry_cache: dict | None = None
 
     def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir or settings.data_dir)
-        self._dep_locks: dict[str, asyncio.Lock] = {}
-        self._registry_cache: dict | None = None
 
     def _get_dep_lock(self, project_slug: str, dep_type: str) -> asyncio.Lock:
         """Get or create an asyncio.Lock for a specific project+dep_type combination."""
@@ -126,18 +132,18 @@ class ProjectStore:
         return self._data_dir / "registry.json"
 
     def _load_registry(self) -> dict:
-        if self._registry_cache is None:
+        if ProjectStore._registry_cache is None:
             path = self._registry_path()
+            cache: dict = {"linked": []}
             if path.exists():
                 try:
-                    self._registry_cache = json.loads(path.read_text(encoding="utf-8"))
+                    cache = json.loads(path.read_text(encoding="utf-8"))
                 except Exception as exc:
                     logger.warning("Could not read registry: %s", exc)
-                    self._registry_cache = {"linked": []}
-            else:
-                self._registry_cache = {"linked": []}
-            self._registry_cache.setdefault("linked", [])
-        return self._registry_cache
+                    cache = {"linked": []}
+            cache.setdefault("linked", [])
+            ProjectStore._registry_cache = cache
+        return ProjectStore._registry_cache
 
     def _persist_registry(self, registry: dict) -> None:
         path = self._registry_path()
@@ -145,7 +151,7 @@ class ProjectStore:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(str(tmp), str(path))
-        self._registry_cache = registry
+        ProjectStore._registry_cache = registry
 
     def _get_linked_entry(self, slug: str) -> dict | None:
         for entry in self._load_registry().get("linked", []):
@@ -197,8 +203,15 @@ class ProjectStore:
 
     @staticmethod
     def _sanitize_feature_name(feature_name: str) -> str:
-        """Replace characters unsafe for filesystem paths (e.g. slashes)."""
-        return feature_name.replace("/", "__")
+        """Map a feature name to a single safe path segment.
+
+        Slashes become ``__``; traversal/empty names are rejected so the
+        result can never escape the features/ directory.
+        """
+        safe = feature_name.replace("/", "__")
+        if not safe or safe in (".", "..") or "/" in safe or "\\" in safe:
+            raise ValueError(f"Invalid feature name: {feature_name!r}")
+        return safe
 
     def _feature_dir(self, project_slug: str, feature_name: str) -> Path:
         """Return path to the feature folder: features/{safe_name}/."""
@@ -1270,23 +1283,6 @@ class ProjectStore:
             tasks.append(task)
             await self._write_tasks(project_slug, tasks)
             return task
-
-    async def update_task(
-        self,
-        project_slug: str,
-        task_id: str,
-        updates: dict,
-    ) -> dict | None:
-        """Merge updates into a task by id. Returns the updated task or None."""
-        lock = self._get_lock(self._tasks_path(project_slug))
-        async with lock:
-            tasks = await self._read_tasks(project_slug)
-            for i, t in enumerate(tasks):
-                if t.get("id") == task_id:
-                    tasks[i] = {**t, **updates}
-                    await self._write_tasks(project_slug, tasks)
-                    return tasks[i]
-            return None
 
     async def finish_task(
         self,
