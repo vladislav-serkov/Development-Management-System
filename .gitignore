@@ -16,3 +16,4 @@ data/
 .playwright-mcp/
 *.png
 !frontend/src/assets/*.png
+fixtures/

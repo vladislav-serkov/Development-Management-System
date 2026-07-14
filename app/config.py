@@ -7,6 +7,10 @@ class Settings(BaseSettings):
     gaps_model: str = "claude-sonnet-4-6"
     test_cases_model: str = "claude-sonnet-4-6"
     bugs_model: str = "claude-sonnet-4-6"
+    # Feature detection of a large spec easily emits >16K output tokens; a truncated
+    # tool_use block arrives as an empty/partial input and looks like "Claude found
+    # nothing". Sonnet 4.6 allows up to 128K output.
+    extraction_max_tokens: int = 32000
     data_dir: str = "./data/projects"
     confluence_base_url: str = ""
     confluence_pat: str = ""

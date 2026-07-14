@@ -533,6 +533,28 @@ class ProjectStore:
         await self._write_json(path, to_write)
         return doc_data
 
+    def _doc_source_path(self, project_slug: str, doc_slug: str) -> Path:
+        # Kept in a subdirectory: list_documents() globs documents/*.json non-recursively,
+        # so a source file must not sit next to the document records.
+        return self._documents_dir(project_slug) / "sources" / f"{doc_slug}.json"
+
+    async def save_document_source(self, project_slug: str, doc_slug: str, source: dict) -> None:
+        """Persist the raw imported page (markdown + links + tables).
+
+        This is the input the extraction pipeline actually saw. Keeping it makes an
+        import reproducible: re-running extraction, diffing prompt changes and building
+        eval fixtures all work off this file instead of re-fetching from Confluence.
+        """
+        path = self._doc_source_path(project_slug, doc_slug)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await self._write_json(path, source)
+
+    async def get_document_source(self, project_slug: str, doc_slug: str) -> dict | None:
+        path = self._doc_source_path(project_slug, doc_slug)
+        if not path.exists():
+            return None
+        return await self._read_json(path)
+
     async def update_document(self, project_slug: str, doc_slug: str, updates: dict) -> dict | None:
         path = self._documents_dir(project_slug) / f"{doc_slug}.json"
         async with self._get_lock(path):

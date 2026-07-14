@@ -78,6 +78,21 @@ async def import_confluence_page(
         "feature_count": 0,
     }
     await store.save_document(project_slug, doc_data)
+    await store.save_document_source(
+        project_slug,
+        doc_slug,
+        {
+            "confluence_page_id": page["id"],
+            "confluence_url": request.url,
+            "confluence_version": page["version"],
+            "title": page["title"],
+            "space_key": page["space_key"],
+            "fetched_at": now_iso,
+            "markdown": page["markdown"],
+            "links": page["links"],
+            "tables": page["tables"],
+        },
+    )
 
     async def _import_chain():
         await run_extraction_pipeline(

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.config import settings
@@ -63,6 +64,8 @@ def _dedupe_external_docs(structured_logic) -> list[str]:
             removed.append(dep.name)
             # Doc dup carries the link to the page describing the executable dep —
             # keep it for auto-enrichment instead of losing it with the dup.
+            if not match.link_ids:
+                match.link_ids = dep.link_ids
             if not match.source_doc_title:
                 match.source_doc_title = dep.source_doc_title or dep.name
     if removed:
@@ -87,7 +90,73 @@ def _propagate_is_collection(fields: list) -> None:
                         break
 
 
-def _apply_table_mappings(steps, tables_by_id: dict[str, dict]) -> list[str]:
+def _build_link_resolver(used_dependencies) -> Callable[[str], tuple[str, str] | None]:
+    """[LINK:Ln] → the dependency Claude attached that link to.
+
+    Both sides key off the same marker ids, so a source cell linking to the
+    "[flp-credit-line] DB" page resolves to the exact db_table dependency without
+    any name matching.
+    """
+    by_link: dict[str, tuple[str, str]] = {}
+    for dep in used_dependencies:
+        dep_name = dep.name if dep.type == "external_doc" else _normalize_dep_name(dep.name)
+        for link_id in dep.link_ids:
+            by_link.setdefault(link_id, (dep.type, dep_name))
+    return by_link.get
+
+
+def _apply_response_param_in(structured_logic, tables_by_id: dict[str, dict]) -> None:
+    """Fill param_in (body/header) on response fields from the caption above their table.
+
+    The spec states it plainly right above the grid — "HTTP 200 | Тело ответа в формате
+    JSON" — so it is read, not guessed. Only top-level fields carry param_in: children
+    are nested inside the body, not a separate location.
+    """
+    from app.services.table_mapping import param_in_from_context
+
+    fields = structured_logic.success_response
+    if not fields:
+        return
+
+    tables = [
+        tables_by_id[tid.strip().upper()]
+        for tid in structured_logic.success_response_table_ids
+        if tid.strip().upper() in tables_by_id
+    ]
+
+    # No table to read from (spec without tables): the response body is the safe default.
+    if not tables:
+        for field in fields:
+            if field.param_in is None:
+                field.param_in = "body"
+        return
+
+    # One table → one location for every field. Several (body + headers separately) →
+    # match each field to the table that actually lists it.
+    if len(tables) == 1:
+        param_in = param_in_from_context(tables[0].get("context", "")) or "body"
+        for field in fields:
+            field.param_in = param_in
+        return
+
+    for table in tables:
+        param_in = param_in_from_context(table.get("context", "")) or "body"
+        listed = set()
+        for row in table.get("rows", []):
+            for cell in row[:2]:  # name column, plus its first nesting column
+                name = " ".join(cell.split()).strip("* ").lower()
+                if name:
+                    listed.add(name)
+        for field in fields:
+            if field.name.lower() in listed:
+                field.param_in = param_in
+
+    for field in fields:
+        if field.param_in is None:
+            field.param_in = "body"
+
+
+def _apply_table_mappings(steps, tables_by_id: dict[str, dict], resolve_link=None) -> list[str]:
     """Fill message_mapping from parsed document tables for steps that reference
     [TABLE:Tn] markers. Returns filled step numbers.
 
@@ -105,7 +174,7 @@ def _apply_table_mappings(steps, tables_by_id: dict[str, dict]) -> list[str]:
                 if table is None:
                     logger.warning("Step %s references unknown table id %s", step.number, tid)
                     continue
-                parsed = table_to_message_fields(table)
+                parsed = table_to_message_fields(table, resolve_link=resolve_link)
                 if parsed is None:
                     logger.warning("Table %s (step %s) is not a parseable mapping — kept verbatim in reference_tables", tid, step.number)
                     step.reference_tables.append(
@@ -118,7 +187,7 @@ def _apply_table_mappings(steps, tables_by_id: dict[str, dict]) -> list[str]:
                 step.message_mapping = fields
                 step.has_detailed_mapping = True
                 filled.append(step.number)
-        filled.extend(_apply_table_mappings(step.children, tables_by_id))
+        filled.extend(_apply_table_mappings(step.children, tables_by_id, resolve_link))
     return filled
 
 
@@ -141,7 +210,7 @@ async def _detect_features(
 
     create_kwargs: dict = dict(
         model=model,
-        max_tokens=16384,
+        max_tokens=settings.extraction_max_tokens,
         tools=[tool],
         tool_choice={"type": "tool", "name": "detect_features"},
     )
@@ -164,6 +233,14 @@ async def _detect_features(
             }
         ],
     )
+
+    if response.stop_reason == "max_tokens":
+        # The tool_use block is cut off mid-JSON: its input is empty or partial, which
+        # would otherwise surface as the misleading "Claude извлёк 0 features".
+        raise ValueError(
+            f"Ответ Claude обрезан лимитом в {settings.extraction_max_tokens} токенов "
+            f"(документ слишком большой). Увеличьте EXTRACTION_MAX_TOKENS или разбейте документ."
+        )
 
     tool_block = None
     for block in response.content:
@@ -211,9 +288,14 @@ async def _process_single_feature(
         logger.info("Dropped %d duplicate external_doc dep(s) for '%s': %s", len(removed_docs), detected.name, removed_docs)
 
     if tables_by_id:
-        filled = _apply_table_mappings(detected.structured_logic.logic_steps, tables_by_id)
+        resolve_link = _build_link_resolver(detected.structured_logic.used_dependencies)
+        filled = _apply_table_mappings(
+            detected.structured_logic.logic_steps, tables_by_id, resolve_link
+        )
         if filled:
             logger.info("Deterministic mappings for '%s': %d step(s) %s", detected.name, len(filled), filled)
+
+    _apply_response_param_in(detected.structured_logic, tables_by_id)
 
     feature_data = {
         "name": detected.name,
@@ -255,6 +337,7 @@ async def _process_single_feature(
                     "method": dep.method,
                     "service_name": dep.service_name,
                     "path": dep.path,
+                    "link_ids": dep.link_ids,
                     "source_doc_title": dep.source_doc_title,
                 },
             )

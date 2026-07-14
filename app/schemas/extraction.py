@@ -51,6 +51,20 @@ class ParameterField(BaseModel):
     children: list["ParameterField"] = Field(default_factory=list, description="Nested fields for object/array types")
 
 
+class FieldSourceRef(BaseModel):
+    """Machine-readable origin of a mapped field, parsed from a link in the spec's
+    "Источник" cell: "credit_line[→DB page].id" → this table's ``id`` column.
+
+    Unlike the free-text ``source``, this survives as a link: the UI can jump to the
+    dependency, and a field pointing at a column the enriched dependency doesn't have
+    is a spec/DB mismatch that needs no LLM to detect.
+    """
+
+    dep_type: str = Field(description="db_table, external_api, cache, kafka_topic, external_doc")
+    dep_name: str = Field(description="Dependency name verbatim from used_dependencies")
+    field: str | None = Field(default=None, description="Field/column inside the dependency, e.g. 'mrp_day'")
+
+
 class MessageField(BaseModel):
     element: str = Field(description="Field/element name")
     parent: str | None = Field(default=None, description="Parent element name")
@@ -60,6 +74,10 @@ class MessageField(BaseModel):
     is_collection: bool = Field(default=False, description="True if this field is a list/array based on direct textual cues in the spec")
     description: str | None = Field(default=None, description="What this field is, in Russian from the spec")
     source: str | None = Field(default=None, description="Where the value comes from, in Russian from the spec")
+    source_refs: list[FieldSourceRef] = Field(
+        default_factory=list,
+        description="Dependencies the source cell links to, parsed deterministically from the spec table. A field can draw on several (availableLimit = credit_line.limit - Debt.totalDebt).",
+    )
     example: str | None = Field(default=None, description="Sample value for this field. Extract from spec if given, otherwise synthesise a realistic one based on type. Null for container fields whose value is represented by children.")
     children: list["MessageField"] = Field(default_factory=list)
 
@@ -105,7 +123,11 @@ class UsedDependency(BaseModel):
     method: str | None = Field(default=None, description="HTTP method for external_api: GET/POST/PUT/DELETE/PATCH")
     service_name: str | None = Field(default=None, description="Service name for external_api, e.g. flp-credit-line")
     path: str | None = Field(default=None, description="Endpoint path for external_api, e.g. /v1/credit-line")
-    source_doc_title: str | None = Field(default=None, description="If this dependency is referenced in the document via a link to another document/page — the EXACT link text, character-for-character. Null if mentioned without a link.")
+    link_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs from [LINK:Ln] markers in the document pointing at the page that documents this dependency, e.g. ['L5']. Fill for every dependency mentioned via a link. Empty if mentioned without a link.",
+    )
+    source_doc_title: str | None = Field(default=None, description="Legacy fallback for link_ids: the EXACT link text when the document has no [LINK:Ln] markers. Null otherwise.")
 
 
 ParameterField.model_rebuild()
@@ -125,6 +147,10 @@ class StructuredBusinessLogic(BaseModel):
     input_parameters: list[ParameterField] = Field(default_factory=list)
     output_parameters: list[ParameterField] | None = Field(default=None)  # kept for backward compat with old data
     success_response: list[ParameterField] = Field(default_factory=list)
+    success_response_table_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs from [TABLE:Tn] markers whose tables describe the successful (2xx) response, e.g. ['T3']. Used to derive each field's param_in (body/header) from the table's caption.",
+    )
     error_responses: list[ErrorResponseSchema] = Field(default_factory=list)
     logic_steps: list[LogicStep] = Field(default_factory=list)
     used_dependencies: list[UsedDependency] = Field(default_factory=list)

@@ -9,10 +9,14 @@ encoded by column position: the name of a nested field sits one column deeper
 
 import logging
 import re
+from collections.abc import Callable
 
-from app.schemas.extraction import MessageField
+from app.schemas.extraction import FieldSourceRef, MessageField
 
 logger = logging.getLogger(__name__)
+
+# Resolves a [LINK:Ln] id to the dependency it points at, or None if unknown.
+LinkResolver = Callable[[str], tuple[str, str] | None]
 
 NAME_HEADERS = {
     "параметр", "параметры", "поле", "поля", "элемент", "атрибут",
@@ -36,6 +40,30 @@ EXAMPLE_HEADERS = {"пример", "пример значения", "example"}
 CONSTRAINT_HEADERS = {"ограничения", "ограничение", "валидация", "validation"}
 
 _CARDINALITY_RE = re.compile(r"^\d+\s*(?:-|\.\.)\s*(?:\d+|n)$", re.IGNORECASE)
+
+# Where a table's fields live, read off the line the spec puts above the table
+# ("query", "HTTP 200 | Тело ответа в формате JSON"). Order matters: a body caption
+# often also mentions the HTTP status, and "header" must not be shadowed by "body".
+_PARAM_IN_MARKERS: list[tuple[str, tuple[str, ...]]] = [
+    ("header", ("заголовк", "заголовок", "header")),
+    ("path", ("path", "путь", "path-параметр")),
+    ("query", ("query", "параметры запроса", "строка запроса")),
+    ("body", ("тело", "body", "payload", "json")),
+]
+
+
+def param_in_from_context(context: str) -> str | None:
+    """Infer body/header/query/path from the text introducing a table. None if unclear."""
+    text = (context or "").lower()
+    if not text:
+        return None
+    for param_in, markers in _PARAM_IN_MARKERS:
+        if any(m in text for m in markers):
+            return param_in
+    # "HTTP 200" with no further hint: a response table with no caption is the body.
+    if re.search(r"http\s*[1-5]\d\d", text):
+        return "body"
+    return None
 
 
 def _norm(header: str) -> str:
@@ -73,16 +101,28 @@ def _is_collection(field_type: str | None, cardinality: str | None) -> bool:
     return False
 
 
-def table_to_message_fields(table: dict) -> list[MessageField] | None:
+def table_to_message_fields(
+    table: dict,
+    resolve_link: LinkResolver | None = None,
+) -> list[MessageField] | None:
     """Convert a parsed table grid into a MessageField tree.
 
+    ``resolve_link`` maps a [LINK:Ln] id from a source cell to the (dep_type, dep_name)
+    it points at, turning the free-text source into a structured ``source_refs`` link.
+
+    Rows the spec struck through are skipped: a retired field must not reappear in the
+    mapping as a live one.
+
     Returns None when the table doesn't look like a field mapping (no name
-    column, or neither type nor requiredness column) — caller falls back to Call 2.
+    column, or neither type nor requiredness column) — caller keeps it verbatim.
     """
     headers = [_norm(h) for h in table.get("headers", [])]
     rows = table.get("rows", [])
     if not headers or not rows:
         return None
+
+    row_links: list[list[list[dict]]] = table.get("row_links") or []
+    deprecated_rows: set[int] = set(table.get("deprecated_rows") or [])
 
     name_start = next((i for i, h in enumerate(headers) if h in NAME_HEADERS), None)
     if name_start is None:
@@ -122,9 +162,34 @@ def table_to_message_fields(table: dict) -> list[MessageField] | None:
                     return value
         return None
 
+    def source_refs(row_index: int) -> list[FieldSourceRef]:
+        """Dependencies linked from this row's source cell, deduped, order preserved."""
+        if resolve_link is None or row_index >= len(row_links):
+            return []
+        cells = row_links[row_index]
+        refs: list[FieldSourceRef] = []
+        seen: set[tuple[str, str, str | None]] = set()
+        for i, role in roles.items():
+            if role != "source" or i >= len(cells):
+                continue
+            for link in cells[i]:
+                dep = resolve_link(link["link_id"])
+                if dep is None:
+                    continue
+                key = (dep[0], dep[1], link.get("field"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                refs.append(FieldSourceRef(dep_type=dep[0], dep_name=dep[1], field=link.get("field")))
+        return refs
+
     roots: list[MessageField] = []
     stack: list[tuple[int, MessageField]] = []
-    for row in rows:
+    skipped_deprecated = 0
+    for row_index, row in enumerate(rows):
+        if row_index in deprecated_rows:
+            skipped_deprecated += 1
+            continue
         name_cells = row[name_start:name_end + 1]
         indent = next((i for i, c in enumerate(name_cells) if _clean_cell(c)), None)
         if indent is None:
@@ -145,6 +210,7 @@ def table_to_message_fields(table: dict) -> list[MessageField] | None:
             is_collection=_is_collection(field_type, cardinality),
             description=description,
             source=cell(row, "source"),
+            source_refs=source_refs(row_index),
             example=cell(row, "example"),
         )
 
@@ -156,5 +222,11 @@ def table_to_message_fields(table: dict) -> list[MessageField] | None:
         else:
             roots.append(field)
         stack.append((indent, field))
+
+    if skipped_deprecated:
+        logger.info(
+            "Table %s: skipped %d row(s) struck through in the spec",
+            table.get("id"), skipped_deprecated,
+        )
 
     return roots or None
