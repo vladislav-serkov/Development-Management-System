@@ -24,6 +24,12 @@ export interface ParameterField {
   children: ParameterField[]
 }
 
+export interface FieldSourceRef {
+  dep_type: string
+  dep_name: string
+  field: string | null
+}
+
 export interface MessageField {
   element: string
   parent: string | null
@@ -33,6 +39,8 @@ export interface MessageField {
   is_collection?: boolean
   description?: string | null
   source?: string | null
+  /** Dependencies the source cell linked to, parsed from the spec table. */
+  source_refs?: FieldSourceRef[]
   example?: string | null
   children: MessageField[]
 }

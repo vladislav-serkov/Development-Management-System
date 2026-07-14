@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,7 @@ import { KafkaTopicView } from "./KafkaTopicView"
 import { ExternalDocView } from "./ExternalDocView"
 import { EnrichUploadZone } from "./EnrichUploadZone"
 import { AnimatedDots } from "./AnimatedDots"
-import { usePatchDependency, useDeleteDependency } from "@/hooks/useDependencies"
+import { usePatchDependency, useDeleteDependency, useProjectDependencies } from "@/hooks/useDependencies"
 import { Pencil, Trash2 } from "lucide-react"
 import { dependencyPath, projectPath } from "@/lib/routes"
 import { useConfirm } from "@/components/ConfirmDialog"
@@ -31,6 +31,19 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
 
   const patchDep = usePatchDependency(projectSlug)
   const deleteDep = useDeleteDependency(projectSlug)
+
+  // An FK names its target table ("product_schedule.id"); a table the project actually
+  // has becomes a link. Case-insensitive: the FK text and the dependency name are both
+  // written by hand and need not agree on case.
+  const { data: allDeps } = useProjectDependencies(projectSlug)
+  const tableNames = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const d of allDeps ?? []) {
+      if (d.dep_type === "db_table") map.set(d.name.toLowerCase(), d.name)
+    }
+    return map
+  }, [allDeps])
+  const knownTables = useMemo(() => new Set(tableNames.keys()), [tableNames])
 
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState(dep.name)
@@ -141,7 +154,15 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
 
       {isEnriched ? (
         <div>
-          {dep.dep_type === "db_table" && <DbSchemaView data={dep.enriched_data as DbTableEnrichment} />}
+          {dep.dep_type === "db_table" && (
+            <DbSchemaView
+              data={dep.enriched_data as DbTableEnrichment}
+              knownTables={knownTables}
+              onNavigateToTable={(table) =>
+                navigate(dependencyPath(projectSlug, "db_table", tableNames.get(table.toLowerCase()) ?? table))
+              }
+            />
+          )}
           {dep.dep_type === "external_api" && <ApiEndpointsView data={dep.enriched_data as ExternalApiEnrichment} />}
           {dep.dep_type === "cache" && <CacheStructureView data={dep.enriched_data as CacheEnrichment} />}
           {dep.dep_type === "kafka_topic" && <KafkaTopicView data={dep.enriched_data as KafkaTopicEnrichment} />}

@@ -144,74 +144,109 @@ async def _extract_enrichment(
     return result
 
 
-async def enrich_db_tables_from_page(
+# Types whose page describes a LIST of entities (one page → many tables/topics/caches):
+# dep_type → (attribute holding the list, attribute holding each entity's name).
+# Types absent here (external_api, external_doc) describe exactly ONE entity per page,
+# so every dependency pointing at that page gets the whole extraction result.
+_GROUPABLE_ITEMS = {
+    "db_table": ("tables", "table_name"),
+    "kafka_topic": ("topics", "topic_name"),
+    "cache": ("caches", "cache_name"),
+}
+
+
+async def enrich_group_from_page(
     project_slug: str,
+    dep_type: str,
     dep_names: list[str],
     text_content: str,
     source_name: str,
     store,
 ) -> tuple[dict[str, DependencyResponse | None], list[str]]:
-    """One Claude call over a page describing many tables → upsert ALL of them.
+    """One Claude call over a page → enrich EVERY dependency of ``dep_type`` pointing at it.
 
-    Requested stubs (dep_names) are updated in place; every other table extracted
-    from the page is upserted as a new enriched dependency (the page describes the
-    whole DB, so all its tables belong to the project).
+    Several dependencies routinely share one page: eight tables documented in a single
+    "[flp-order] DB" page, four config parameters anchored on one service-configuration
+    page. Enriching them one by one would re-fetch and re-extract the same page N times.
 
-    Returns (outcomes, extracted_table_names): outcomes maps each requested dep name to
-    its updated DependencyResponse, or None when no table on the page matched it.
+    Returns (outcomes, extracted_names): outcomes maps each requested dep name to its
+    updated DependencyResponse, or None when the page yielded nothing matching it.
     """
-    result = await _extract_enrichment(project_slug, "db_table", text_content, source_name, store)
-    extracted_names = [t.table_name for t in result.tables]
+    result = await _extract_enrichment(project_slug, dep_type, text_content, source_name, store)
     now_iso = datetime.now(UTC).isoformat()
 
-    outcomes: dict[str, DependencyResponse | None] = {}
-    matched_tables: set[int] = set()
-    for dep_name in dep_names:
-        table = _match_table(result.tables, dep_name)
-        if table is None and len(result.tables) == 1 and len(dep_names) == 1:
-            table = result.tables[0]
-        if table is None:
-            outcomes[dep_name] = None
-            continue
-        matched_tables.add(id(table))
-        updated_dep = await store.update_dependency(
+    async def _write(dep_name: str, enriched_data: dict) -> DependencyResponse | None:
+        updated = await store.update_dependency(
             project_slug,
-            "db_table",
+            dep_type,
             dep_name,
             {
-                "enriched_data": table.model_dump(),
+                "enriched_data": enriched_data,
                 "enrichment_status": "enriched",
                 "source_pdf_name": source_name,
                 "enriched_at": now_iso,
             },
         )
-        outcomes[dep_name] = _dep_to_response(updated_dep, project_slug) if updated_dep else None
+        return _dep_to_response(updated, project_slug) if updated else None
 
-    # The page describes the whole DB — upsert the remaining tables too
-    # (enriches same-named stubs from other groups thanks to case-insensitive merge).
-    for table in result.tables:
-        if id(table) in matched_tables:
-            continue
-        normalized_name = _normalize_dep_name(table.table_name)
-        await store.upsert_dependency(
-            project_slug=project_slug,
-            dep_type="db_table",
-            name=normalized_name,
-            data={
-                "dep_type": "db_table",
-                "name": normalized_name,
-                "enriched_data": table.model_dump(),
-                "enrichment_status": "enriched",
-                "source_pdf_name": source_name,
-                "enriched_at": now_iso,
-            },
+    spec = _GROUPABLE_ITEMS.get(dep_type)
+    if spec is None:
+        # One page = one entity: every dependency on this page shares the same extraction.
+        enriched_data = result.model_dump()
+        outcomes = {name: await _write(name, enriched_data) for name in dep_names}
+        logger.info(
+            "Group enrichment: %s, page='%s', %d dep(s) from one extraction",
+            dep_type, source_name, len(dep_names),
         )
+        return outcomes, [source_name]
+
+    items_attr, name_attr = spec
+    items = getattr(result, items_attr)
+    extracted_names = [getattr(item, name_attr) for item in items]
+
+    outcomes: dict[str, DependencyResponse | None] = {}
+    matched: set[int] = set()
+    for dep_name in dep_names:
+        item = next(
+            (i for i in items
+             if _normalize_dep_name(getattr(i, name_attr)).lower() == _normalize_dep_name(dep_name).lower()),
+            None,
+        )
+        if item is None and len(items) == 1 and len(dep_names) == 1:
+            item = items[0]
+        if item is None:
+            outcomes[dep_name] = None
+            continue
+        matched.add(id(item))
+        outcomes[dep_name] = await _write(dep_name, item.model_dump())
+
+    # A DB page documents the whole schema — adopt the tables nobody asked for too
+    # (this is what rescues a table whose own page didn't mention it). Kafka/cache pages
+    # describe a single entity, so there is nothing extra worth adopting there.
+    if dep_type == "db_table":
+        for item in items:
+            if id(item) in matched:
+                continue
+            normalized_name = _normalize_dep_name(getattr(item, name_attr))
+            await store.upsert_dependency(
+                project_slug=project_slug,
+                dep_type=dep_type,
+                name=normalized_name,
+                data={
+                    "dep_type": dep_type,
+                    "name": normalized_name,
+                    "enriched_data": item.model_dump(),
+                    "enrichment_status": "enriched",
+                    "source_pdf_name": source_name,
+                    "enriched_at": now_iso,
+                },
+            )
 
     logger.info(
-        "DB group enrichment: page='%s', extracted=%d tables, matched %d/%d deps, upserted %d extra",
-        source_name, len(extracted_names),
+        "Group enrichment: %s, page='%s', extracted=%d, matched %d/%d dep(s), adopted %d extra",
+        dep_type, source_name, len(extracted_names),
         sum(1 for v in outcomes.values() if v is not None), len(dep_names),
-        len(result.tables) - len(matched_tables),
+        len(items) - len(matched),
     )
     return outcomes, extracted_names
 

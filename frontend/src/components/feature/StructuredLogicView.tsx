@@ -133,7 +133,7 @@ export function StructuredLogicView({
               <h3 className="mb-2 text-sm font-medium">Успешный ответ (2xx)</h3>
               <ParametersTable
                 parameters={logic.success_response ?? logic.output_parameters ?? []}
-                showParamIn={false}
+                showParamIn
                 showSource
                 availableDependencies={usedDependencies}
                 onSourceClick={handleSourceClick}
