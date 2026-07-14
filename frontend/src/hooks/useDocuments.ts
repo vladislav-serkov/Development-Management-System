@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   fetchProjects, fetchProject, createProject, patchProject,
   fetchProjectFeatures,
-  fetchDocuments, fetchDocument, importConfluencePage, patchDocument,
+  importConfluencePage,
   patchFeature, deleteFeature, importProjectZip,
   importContext, deleteProject,
 } from "@/api/documents"
@@ -66,21 +66,6 @@ export function useProjectFeatures(projectSlug: string | null, projectStatus?: P
 }
 
 // Documents
-export function useDocuments() {
-  return useQuery({
-    queryKey: ["documents"],
-    queryFn: fetchDocuments,
-  })
-}
-
-export function useDocument(slug: string | null, projectSlug: string | null) {
-  return useQuery({
-    queryKey: ["documents", slug],
-    queryFn: () => fetchDocument(slug!, projectSlug!),
-    enabled: slug !== null && projectSlug !== null,
-  })
-}
-
 export function useImportConfluence(projectSlug: string) {
   const qc = useQueryClient()
   return useMutation({
@@ -90,17 +75,6 @@ export function useImportConfluence(projectSlug: string) {
       qc.invalidateQueries({ queryKey: ["projects"] })
       qc.invalidateQueries({ queryKey: ["documents"] })
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
-    },
-  })
-}
-
-export function useRenameDocument(slug: string, projectSlug: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (filename: string) => patchDocument(slug, projectSlug, { filename }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["documents", slug] })
-      qc.invalidateQueries({ queryKey: ["documents"] })
     },
   })
 }

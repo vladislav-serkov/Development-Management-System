@@ -18,6 +18,10 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 store = ProjectStore()
 
+# Upload limits for project-zip import (guard against OOM / zip-bomb).
+MAX_IMPORT_ZIP_BYTES = 50 * 1024 * 1024  # 50 MB compressed
+MAX_IMPORT_UNCOMPRESSED_BYTES = 500 * 1024 * 1024  # 500 MB uncompressed
+
 
 class CreateProjectRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
@@ -172,6 +176,8 @@ async def import_project_zip(file: UploadFile = File(...)):
     contents = await file.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(contents) > MAX_IMPORT_ZIP_BYTES:
+        raise HTTPException(status_code=413, detail="Uploaded archive is too large")
 
     try:
         zf = zipfile.ZipFile(io.BytesIO(contents))
@@ -181,6 +187,10 @@ async def import_project_zip(file: UploadFile = File(...)):
     names = zf.namelist()
     if not names:
         raise HTTPException(status_code=400, detail="Zip archive is empty")
+
+    total_uncompressed = sum(info.file_size for info in zf.infolist())
+    if total_uncompressed > MAX_IMPORT_UNCOMPRESSED_BYTES:
+        raise HTTPException(status_code=413, detail="Archive contents are too large")
 
     # Detect top-level directory (first path component, e.g. ".context")
     top_dir = names[0].split("/")[0]
@@ -201,7 +211,7 @@ async def import_project_zip(file: UploadFile = File(...)):
     # Create a new project (handles slug collision)
     new_proj = await store.create_project(project_name)
     new_slug = new_proj["slug"]
-    target_dir = store.data_dir / new_slug
+    target_dir = (store.data_dir / new_slug).resolve()
 
     # Extract all files from zip, remapping top-level dir to new slug
     for member in zf.infolist():
@@ -217,7 +227,10 @@ async def import_project_zip(file: UploadFile = File(...)):
         if not rel_path:
             continue
 
-        dest = target_dir / rel_path
+        # Guard against zip-slip: the resolved destination must stay under target_dir
+        dest = (target_dir / rel_path).resolve()
+        if dest != target_dir and target_dir not in dest.parents:
+            raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member.filename}")
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(zf.read(member.filename))
 

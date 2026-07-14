@@ -17,15 +17,6 @@ class GapsAnalysisResult(BaseModel):
     gaps: list[SingleGapResult]
 
 
-class GapItem(BaseModel):
-    """Single gap stored in feature.json (per D-02)."""
-    gap_type: str  # one of 6 snake_case types
-    question: str
-    suggestion: str
-    status: str = "pending"  # "pending" | "approved" | "clarified" | "applied"
-    analyst_text: str | None = None
-
-
 class GapReviewRequest(BaseModel):
     """PATCH body for approving/clarifying/resetting a gap."""
     status: str = Field(pattern="^(pending|approved|clarified|applied)$")
@@ -44,15 +35,8 @@ class ApplyChange(BaseModel):
 
 class ApplyResult(BaseModel):
     """Tool output for apply-preview: updated logic + change descriptions."""
-    structured_logic: "StructuredBusinessLogic" = Field(description="Complete updated structured_logic with all changes applied. MUST preserve all existing data — only add/modify what gaps require.")
+    structured_logic: "StructuredBusinessLogic" = Field(description="Complete updated structured_logic with all changes applied. MUST preserve all existing data — only add/modify what gaps require.")  # noqa: F821 — resolved at runtime by _rebuild_apply_result()
     changes: list[ApplyChange] = Field(description="Human-readable list of every change made")
-
-
-class ApplyPreviewResponse(BaseModel):
-    """Response for apply-preview endpoint."""
-    original: dict
-    proposed: dict
-    changes: list[dict]
 
 
 class ApplyConfirmRequest(BaseModel):
@@ -60,9 +44,11 @@ class ApplyConfirmRequest(BaseModel):
     proposed: dict
 
 
-# Rebuild forward refs after StructuredBusinessLogic is importable
-def _rebuild_apply_result():
-    from app.schemas.extraction import StructuredBusinessLogic  # noqa: F811
-    ApplyResult.model_rebuild()
+# Rebuild forward refs once StructuredBusinessLogic is importable
+def _rebuild_apply_result() -> None:
+    from app.schemas.extraction import StructuredBusinessLogic
+
+    ApplyResult.model_rebuild(_types_namespace={"StructuredBusinessLogic": StructuredBusinessLogic})
+
 
 _rebuild_apply_result()

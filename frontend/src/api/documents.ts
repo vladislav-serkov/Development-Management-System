@@ -1,4 +1,4 @@
-import type { DocumentResponse, DocumentPatchRequest, FeatureResponse, FeaturePatchRequest, ExportRequest, ExportResponse, ProjectResponse, CreateProjectRequest, PatchProjectRequest, LinkProjectRequest, ImportContextResponse, ProjectDependency, CreateDependencyRequest, PatchDependencyRequest } from "@/types/api"
+import type { DocumentResponse, FeatureResponse, FeaturePatchRequest, ProjectResponse, CreateProjectRequest, PatchProjectRequest, LinkProjectRequest, ImportContextResponse, ProjectDependency, CreateDependencyRequest, PatchDependencyRequest } from "@/types/api"
 import { apiFetch } from "./client"
 
 // Projects
@@ -64,18 +64,6 @@ export async function fetchProjectFeatures(projectSlug: string): Promise<Feature
 }
 
 // Documents
-export async function fetchDocuments(): Promise<DocumentResponse[]> {
-  const res = await apiFetch(`/documents/`)
-  if (!res.ok) throw new Error(`Failed to fetch documents: ${res.status}`)
-  return res.json()
-}
-
-export async function fetchDocument(slug: string, projectSlug: string): Promise<DocumentResponse> {
-  const res = await apiFetch(`/documents/${slug}?project_slug=${projectSlug}`)
-  if (!res.ok) throw new Error(`Failed to fetch document ${slug}: ${res.status}`)
-  return res.json()
-}
-
 export async function importConfluencePage(projectSlug: string, url: string): Promise<DocumentResponse> {
   const res = await apiFetch(`/documents/import-confluence?project_slug=${projectSlug}`, {
     method: "POST",
@@ -90,26 +78,6 @@ export async function importConfluencePage(projectSlug: string, url: string): Pr
     } catch { /* ignore */ }
     throw new Error(detail)
   }
-  return res.json()
-}
-
-export async function patchDocument(slug: string, projectSlug: string, patch: DocumentPatchRequest): Promise<DocumentResponse> {
-  const res = await apiFetch(`/documents/${slug}?project_slug=${projectSlug}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  })
-  if (!res.ok) throw new Error(`Rename failed: ${res.status}`)
-  return res.json()
-}
-
-export async function exportDocument(projectSlug: string, docSlug: string, request: ExportRequest): Promise<ExportResponse> {
-  const res = await apiFetch(`/documents/${docSlug}/export?project_slug=${projectSlug}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  })
-  if (!res.ok) throw new Error(`Export failed: ${res.status}`)
   return res.json()
 }
 

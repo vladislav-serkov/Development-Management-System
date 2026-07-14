@@ -1,4 +1,3 @@
-import type { ReactNode } from "react"
 import { Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { DependencyStatus, FeatureStatus } from "@/types/api"
@@ -54,28 +53,6 @@ export function DepStatusDot({ status }: { status: DependencyStatus }) {
       aria-label={depStatusLabels[status] ?? status}
       title={depStatusLabels[status] ?? status}
     />
-  )
-}
-
-export function FeatureTabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
-        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-      )}
-    >
-      {children}
-    </button>
   )
 }
 

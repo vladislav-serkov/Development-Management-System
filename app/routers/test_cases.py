@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Path
 
 from app.schemas.test_cases import TestCaseReviewRequest
 from app.services.task_manager import task_manager
-from app.services.test_cases import run_test_cases_pipeline, _check_enrichment_gate
+from app.services.test_cases import _check_enrichment_gate, run_test_cases_pipeline
 from app.storage import ProjectStore
 
 logger = logging.getLogger(__name__)

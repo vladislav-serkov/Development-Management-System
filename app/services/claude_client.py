@@ -62,11 +62,11 @@ def _is_retryable(exc: Exception) -> bool:
     status = getattr(exc, "status_code", None)
     if status in _RETRYABLE_STATUS_CODES:
         return True
-    # Timeout errors
-    if isinstance(exc, (httpx.TimeoutException, asyncio.TimeoutError)):
+    # Timeout errors — SDK wrappers are NOT subclasses of the httpx types
+    if isinstance(exc, (anthropic.APITimeoutError, httpx.TimeoutException, asyncio.TimeoutError)):
         return True
-    # Connection errors
-    if isinstance(exc, (httpx.ConnectError, httpx.RemoteProtocolError)):
+    # Connection errors — same, cover the SDK wrapper explicitly
+    if isinstance(exc, (anthropic.APIConnectionError, httpx.ConnectError, httpx.RemoteProtocolError)):
         return True
     return False
 
@@ -109,7 +109,7 @@ async def call_claude(*, label: str = "claude", **kwargs) -> anthropic.types.Mes
 
             backoff = min(INITIAL_BACKOFF * (2 ** (attempt - 1)), MAX_BACKOFF)
             # Use Retry-After header if available (429 responses)
-            retry_after = getattr(exc, "headers", {}).get("retry-after") if hasattr(exc, "headers") else None
+            retry_after = (getattr(exc, "headers", None) or {}).get("retry-after")
             if retry_after:
                 try:
                     backoff = max(backoff, float(retry_after))

@@ -1,18 +1,10 @@
 """Enrichment pipeline: Claude tool_use extraction for dependency documents (Confluence markdown)."""
-import json
 import logging
 from datetime import UTC, datetime
 
 from app.config import settings
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
-from app.schemas.enrichment import (
-    CacheEnrichmentBatch,
-    DbEnrichmentBatch,
-    DependencyResponse,
-    ExternalApiEnrichment,
-    ExternalDocEnrichment,
-    KafkaTopicEnrichmentBatch,
-)
+from app.schemas.enrichment import DependencyResponse
 from app.services.claude_client import call_claude, log_cache_stats
 from app.services.extraction import (
     _build_document_block,

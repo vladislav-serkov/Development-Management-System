@@ -1,6 +1,6 @@
 # Extract Agent
 
-AI-powered web platform that extracts structured feature specifications from PDF documents using the Claude API, then generates gaps analysis, test cases, bug reports, and dependency enrichments.
+AI-powered web platform that extracts structured feature specifications from Confluence pages using the Claude API, then generates gaps analysis, test cases, bug reports, and dependency enrichments.
 
 ## Stack
 
@@ -26,8 +26,10 @@ Put the API key in a root `.env` file:
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
 CLAUDE_MODEL=claude-sonnet-4-6
-MAX_PDF_SIZE_MB=32
 DATA_DIR=./data/projects
+# Optional — enable Confluence import:
+CONFLUENCE_BASE_URL=https://confluence.example.com
+CONFLUENCE_PAT=...
 ```
 
 ## Running

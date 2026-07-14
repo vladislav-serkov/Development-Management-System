@@ -43,22 +43,6 @@ class TestCaseGenerationResult(BaseModel):
     test_cases: list[SingleTestCaseResult]
 
 
-class TestCaseItem(BaseModel):
-    """Single test case stored in feature.json."""
-    category: str  # "validation" | "positive" | "negative" | "edge_case"
-    name: str
-    preconditions: str
-    steps: list[TestStep]
-    expected_result: str
-    priority: str  # "high" | "medium" | "low"
-    status: str = "pending"  # "pending" | "approved" | "edited"
-    analyst_text: str | None = None
-    curl_command: str | None = None
-    kafka_message: KafkaMessage | None = None
-    sql_setup: str | None = None
-    mock_config: str | None = None
-
-
 class TestCaseReviewRequest(BaseModel):
     """PATCH body for approving/editing/resetting a test case."""
     status: str = Field(pattern="^(pending|approved|edited)$")

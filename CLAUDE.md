@@ -39,8 +39,8 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 - **`app/config.py`** — `pydantic-settings` config; reads `.env` for `ANTHROPIC_API_KEY`, model names, `DATA_DIR`
 - **`app/storage.py`** — `ProjectStore` — file-based JSON storage (replaced SQLite). All persistence goes through this class. Data lives in `./data/projects/{slug}/`
 - **`app/routers/`** — API endpoints:
-  - `projects.py` — CRUD, import/export zip, list features (`/projects/...`)
-  - `documents.py` — Confluence page import, extraction progress SSE, feature editing (`/documents/...`)
+  - `projects.py` — CRUD, import/export zip, `.context` import, list/patch/delete features (`/projects/...`)
+  - `documents.py` — Confluence page import → extraction (`POST /documents/import-confluence`)
   - `dependencies.py` — dependency listing/enrichment (`/projects/{slug}/dependencies/...`)
   - `gaps.py` — gaps analysis per feature (`/projects/{slug}/features/{name}/gaps/...`)
   - `test_cases.py` — test case generation per feature (`/projects/{slug}/features/{name}/test-cases/...`)
@@ -64,7 +64,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 - **`src/api/`** — API client functions (fetch-based, typed)
 - **`src/hooks/`** — TanStack Query hooks per domain (`useDocuments`, `useExtraction`, `useGaps`, `useTestCases`, `useDependencies`, `useExport`, `useBugs`, `useRules`)
 - **`src/stores/`** — Zustand store (`uiStore`) for UI state
-- **`src/components/`** — organized by domain: `project/`, `feature/`, `dependency/`, `artifact/`, `layout/`, `progress/`, `ui/` (shadcn)
+- **`src/components/`** — organized by domain: `project/`, `feature/`, `dependency/`, `sidebar/`, `ui/` (shadcn)
 - Path alias: `@` → `src/`
 - Vite proxy: `/api/*` → backend (strips `/api` prefix)
 
@@ -85,23 +85,24 @@ data/projects/{project-slug}/
     external_apis.json
     cache.json
     kafka_topics.json
+    external_docs.json
+  tasks.json
 ```
 
 ### LLM Integration
 - Uses **Anthropic Claude API** via `anthropic` Python SDK
 - Extraction pipeline: single call — features detected via `detect_features` tool; field mappings come from deterministic table parsing, not the LLM
 - Document sent as plain-text document block with `cache_control: ephemeral` for prompt caching
-- Models configured in `app/config.py`: `claude_model` (extraction), `gaps_model`, `test_cases_model`
+- Models configured in `app/config.py`: `claude_model` (extraction/enrichment), `gaps_model`, `test_cases_model`, `bugs_model`
 
 ### Key Patterns
-- All storage operations are async (`aiofiles`), go through `ProjectStore` singleton instantiated per router
+- All storage operations are async (`aiofiles`), go through `ProjectStore`. Routers instantiate their own store; shared coordination state (file/dep locks, linked-project registry cache) is class-level so it stays consistent across instances within one process. In-process locks assume a single worker — do not run uvicorn with `--workers > 1`.
 - Frontend uses TanStack Query for all server state; mutations invalidate queries automatically
-- SSE used for extraction progress streaming (`/documents/{slug}/progress`)
-- **Long-running LLM calls (1-2 min)**: backend MUST use `asyncio.create_task()` + immediate response; frontend MUST poll via `refetchInterval` while status is `"running"`. Never block the HTTP request. Loaders must survive navigation (check server status, not just mutation.isPending). Sidebar must show animated dots (`AnimatedDots`) for any feature with running gaps/tests.
+- **Long-running LLM calls (1-2 min)**: backend MUST use `task_manager.launch()` (wraps `asyncio.create_task()`) + immediate response; frontend MUST poll via `refetchInterval` while a task is `"running"` (see `/projects/{slug}/tasks`). Never block the HTTP request. Loaders must survive navigation (check server status, not just mutation.isPending). Sidebar must show animated dots (`AnimatedDots`) for any feature with running gaps/tests.
 
 ## Environment
 - `ANTHROPIC_API_KEY` — required, set in `.env`
-- `CLAUDE_MODEL` / `GAPS_MODEL` / `TEST_CASES_MODEL` — optional model overrides
+- `CLAUDE_MODEL` / `GAPS_MODEL` / `TEST_CASES_MODEL` / `BUGS_MODEL` — optional model overrides
 - `DATA_DIR` — data directory (default: `./data/projects`)
 - `CONFLUENCE_BASE_URL` / `CONFLUENCE_PAT` — optional, enable importing Confluence pages as documents (Data Center PAT, Bearer auth)
 - Python 3.12+, Node 22+

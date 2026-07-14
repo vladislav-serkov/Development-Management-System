@@ -1,13 +1,7 @@
 const WEB_API_PREFIX = "/api"
 
-export function getApiBase(): string {
-  return WEB_API_PREFIX
-}
-
-export function apiUrl(path: string): string {
-  const base = getApiBase()
-  if (path.startsWith("/")) return `${base}${path}`
-  return `${base}/${path}`
+function apiUrl(path: string): string {
+  return path.startsWith("/") ? `${WEB_API_PREFIX}${path}` : `${WEB_API_PREFIX}/${path}`
 }
 
 export function apiFetch(path: string, init?: RequestInit): Promise<Response> {

@@ -10,18 +10,26 @@ from app.routers.bugs import router as bugs_router
 from app.routers.dependencies import router as dependencies_router
 from app.routers.documents import router as documents_router
 from app.routers.gaps import router as gaps_router
+from app.routers.projects import router as projects_router
 from app.routers.rules import router as rules_router
 from app.routers.tasks import router as tasks_router
 from app.routers.test_cases import router as test_cases_router
-from app.routers.projects import router as projects_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
+    if settings.anthropic_api_key in ("", "sk-ant-xxx"):
+        logger.warning(
+            "ANTHROPIC_API_KEY is not configured — Claude-backed features will fail. "
+            "Set it in .env before serving traffic."
+        )
     yield
 
 
