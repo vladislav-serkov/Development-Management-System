@@ -61,7 +61,13 @@ async def import_confluence_page(
     )
 
     filename = page["title"]
-    doc_slug = store.make_doc_slug(project_slug, filename)
+    # Re-import of the same page must update the existing document, not spawn a copy
+    existing = next(
+        (d for d in await store.list_documents(project_slug)
+         if str(d.get("confluence_page_id")) == str(page["id"])),
+        None,
+    )
+    doc_slug = existing["slug"] if existing else await store.make_doc_slug(project_slug, filename)
     now_iso = datetime.now(UTC).isoformat()
     doc_data = {
         "slug": doc_slug,

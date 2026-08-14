@@ -5,12 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+COPY pyproject.toml alembic.ini ./
 COPY app ./app
+COPY alembic ./alembic
 
 RUN pip install --no-cache-dir . \
     && useradd --create-home --uid 10001 appuser \
-    && mkdir -p /app/data \
     && chown -R appuser:appuser /app
 
 USER appuser

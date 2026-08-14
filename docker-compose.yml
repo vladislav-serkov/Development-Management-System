@@ -1,4 +1,20 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: extract
+      POSTGRES_PASSWORD: extract
+      POSTGRES_DB: extract_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U extract -d extract_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: .
@@ -12,6 +28,10 @@ services:
         required: false
     environment:
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql+asyncpg://extract:extract@db:5432/extract_agent
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build:
@@ -26,3 +46,6 @@ services:
       - API_URL=http://backend:8000
     depends_on:
       - backend
+
+volumes:
+  pgdata:

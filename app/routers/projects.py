@@ -1,15 +1,17 @@
 import io
 import json
 import logging
+import tempfile
 import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from app.schemas.extraction import FeaturePatchRequest, FeatureResponse, ProjectResponse
+from app.services.context_serializer import dump_project, export_context_dir, load_context_project
 from app.services.export import create_project_zip
-from app.services.import_context import adapt_feature, load_wiki_sections, merge_wiki_into_rules
 from app.storage import ProjectStore
 
 logger = logging.getLogger(__name__)
@@ -51,71 +53,30 @@ class ImportContextResponse(BaseModel):
 
 @router.post("/import-context", response_model=ImportContextResponse)
 async def import_context(req: LinkProjectRequest):
-    """Link a DMS-produced `.context/` directory and migrate its feature.json
-    files to extract-agent's canonical shape (renames, legacy-field cleanup,
-    flat-mapping nulling, `source` provenance). If ``.context/wiki/*.md``
-    exists, merge it into the project's rules.json (empty sections only)."""
-    try:
-        proj = await store.link_project(req.path)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    """Import a DMS-produced `.context/` directory into the database as a new
+    project, migrating feature.json files to extract-agent's canonical shape
+    (renames, legacy-field cleanup, flat-mapping nulling, `source` provenance).
+    If ``.context/wiki/*.md`` exists, it is merged into the project's rules
+    (empty sections only). The source path is remembered so the project can be
+    synced back with `POST /projects/{slug}/export-context`."""
+    base = Path(req.path).expanduser()
+    if not base.exists() or not base.is_dir():
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {req.path}")
+    resolved = base.resolve()
+    context_dir = resolved / ".context"
+    if not context_dir.is_dir():
+        raise HTTPException(status_code=400, detail=f"No .context/ directory inside: {req.path}")
 
-    slug = proj["slug"]
-    features_dir = store.get_context_dir(slug) / "features"
     warnings: list[str] = []
-    adapted = 0
-
-    # Walk feature directories directly — DMS writes them keyed by feature_id
-    # (e.g. `feat_abc123/feature.json`), whereas extract-agent keys them by
-    # feature name. We rename the directory in place before saving, so we don't
-    # leave duplicates behind.
-    if features_dir.is_dir():
-        for feat_dir in list(features_dir.iterdir()):
-            if not feat_dir.is_dir():
-                continue
-            fp = feat_dir / "feature.json"
-            if not fp.exists():
-                continue
-            try:
-                raw = json.loads(fp.read_text(encoding="utf-8"))
-            except Exception as exc:
-                warnings.append(f"skipped {feat_dir.name}: cannot parse feature.json ({exc})")
-                continue
-            name = raw.get("name")
-            if not name:
-                warnings.append(f"skipped {feat_dir.name}: missing 'name' field")
-                continue
-            canonical = store._sanitize_feature_name(name)
-            if feat_dir.name != canonical:
-                target = features_dir / canonical
-                if target.exists():
-                    warnings.append(f"{feat_dir.name} → {canonical}: target exists, removed before rename")
-                    import shutil as _shutil
-                    _shutil.rmtree(target)
-                feat_dir.rename(target)
-                feat_dir = target
-            migrated = adapt_feature(raw, warnings=warnings)
-            await store.save_feature(slug, migrated)
-            adapted += 1
-
-    # Wiki → project rules.json (only fills empty sections)
-    context_dir = store.get_context_dir(slug)
-    wiki = load_wiki_sections(context_dir)
-    merged_sections = 0
-    if wiki:
-        current_rules = await store.get_project_rules(slug)
-        new_rules = merge_wiki_into_rules(current_rules, wiki, warnings=warnings)
-        merged_sections = sum(
-            1 for k, v in new_rules.items() if v and not current_rules.get(k, "").strip()
-        )
-        if merged_sections > 0:
-            await store.save_project_rules(slug, new_rules)
+    slug, adapted, merged_sections = await load_context_project(
+        store, context_dir, name=resolved.name, warnings=warnings,
+    )
+    await store.set_project_context_dir(slug, str(resolved))
 
     logger.info(
         "import_context: path=%s, slug=%s, adapted=%d, merged_sections=%d, warnings=%d",
         req.path, slug, adapted, merged_sections, len(warnings),
     )
-    # Re-read project so document_count/feature_count reflect the imported state
     proj = await store.get_project(slug)
     return ImportContextResponse(
         project=ProjectResponse(**proj),
@@ -123,6 +84,35 @@ async def import_context(req: LinkProjectRequest):
         merged_wiki_sections=merged_sections,
         warnings=warnings,
     )
+
+
+class ExportContextRequest(BaseModel):
+    path: str | None = Field(default=None, description="Project root; defaults to the imported-from directory")
+
+
+@router.post("/{project_slug}/export-context")
+async def export_context(project_slug: str, req: ExportContextRequest):
+    """Serialize the project's current DB state back into a `.context/`
+    directory (the DMS interop layout). Overwrites files it owns."""
+    proj = await store.get_project(project_slug)
+    if proj is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
+
+    target = req.path or await store.get_project_context_dir(project_slug)
+    if not target:
+        raise HTTPException(
+            status_code=400,
+            detail="No target directory: pass 'path' or import the project from a .context directory first",
+        )
+    base = Path(target).expanduser()
+    if not base.exists() or not base.is_dir():
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {target}")
+
+    context_dir = base.resolve() / ".context"
+    written = await export_context_dir(store, project_slug, context_dir)
+    await store.set_project_context_dir(project_slug, str(base.resolve()))
+    logger.info("export_context: slug=%s, dir=%s, files=%d", project_slug, context_dir, written)
+    return {"ok": True, "path": str(context_dir), "files_written": written}
 
 
 @router.get("/", response_model=list[ProjectResponse])
@@ -160,10 +150,10 @@ async def delete_project(project_slug: str, remove_files: bool = False):
 
 @router.get("/{project_slug}/export/zip")
 async def export_project_zip(project_slug: str):
-    proj = await store.get_project(project_slug)
-    if proj is None:
+    files = await dump_project(store, project_slug)
+    if files is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
-    zip_bytes = create_project_zip(store._project_dir(project_slug))
+    zip_bytes = create_project_zip(files)
     return StreamingResponse(
         io.BytesIO(zip_bytes),
         media_type="application/zip",
@@ -208,53 +198,38 @@ async def import_project_zip(file: UploadFile = File(...)):
     if not project_name:
         raise HTTPException(status_code=400, detail="project.json missing 'name' field")
 
-    # Create a new project (handles slug collision)
-    new_proj = await store.create_project(project_name)
-    new_slug = new_proj["slug"]
-    target_dir = (store.data_dir / new_slug).resolve()
-
-    # Extract all files from zip, remapping top-level dir to new slug
-    for member in zf.infolist():
-        if member.is_dir():
-            continue
-        # Strip top-level dir prefix
-        rel_path = member.filename
-        if rel_path.startswith(top_dir + "/"):
-            rel_path = rel_path[len(top_dir) + 1:]
-        else:
-            continue  # skip entries not under top_dir
-
-        if not rel_path:
-            continue
-
-        # Guard against zip-slip: the resolved destination must stay under target_dir
-        dest = (target_dir / rel_path).resolve()
-        if dest != target_dir and target_dir not in dest.parents:
-            raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member.filename}")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(zf.read(member.filename))
-
-    # Inject 'name' into feature.json files that lack it (Context Collector format)
-    features_dir = target_dir / "features"
-    if features_dir.is_dir():
-        for feat_dir in features_dir.iterdir():
-            if not feat_dir.is_dir():
+    # Extract to a temp dir (with zip-slip guard), then load into the DB
+    with tempfile.TemporaryDirectory(prefix="extract-agent-import-") as tmp:
+        target_dir = Path(tmp).resolve()
+        for member in zf.infolist():
+            if member.is_dir():
                 continue
-            feat_json = feat_dir / "feature.json"
-            if feat_json.exists():
-                fdata = json.loads(feat_json.read_text(encoding="utf-8"))
-                if "name" not in fdata:
-                    fdata["name"] = feat_dir.name
-                    feat_json.write_text(json.dumps(fdata, ensure_ascii=False, indent=2), encoding="utf-8")
+            # Strip top-level dir prefix
+            rel_path = member.filename
+            if rel_path.startswith(top_dir + "/"):
+                rel_path = rel_path[len(top_dir) + 1:]
+            else:
+                continue  # skip entries not under top_dir
 
-    # Update project.json with new slug
-    pjson_path = target_dir / "project.json"
-    if pjson_path.exists():
-        pdata = json.loads(pjson_path.read_text(encoding="utf-8"))
-        pdata["slug"] = new_slug
-        pjson_path.write_text(json.dumps(pdata, ensure_ascii=False, indent=2), encoding="utf-8")
+            if not rel_path:
+                continue
 
-    logger.info("import_project_zip: name=%s, slug=%s, files=%d", project_name, new_slug, len(names))
+            # Guard against zip-slip: the resolved destination must stay under target_dir
+            dest = (target_dir / rel_path).resolve()
+            if dest != target_dir and target_dir not in dest.parents:
+                raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member.filename}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(zf.read(member.filename))
+
+        warnings: list[str] = []
+        new_slug, adapted, _ = await load_context_project(
+            store, target_dir, name=project_name, warnings=warnings,
+        )
+
+    logger.info(
+        "import_project_zip: name=%s, slug=%s, features=%d, warnings=%d",
+        project_name, new_slug, adapted, len(warnings),
+    )
     result = await store.get_project(new_slug)
     return ProjectResponse(**result)
 

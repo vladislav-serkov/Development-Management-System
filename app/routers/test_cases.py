@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Path
 from app.schemas.test_cases import TestCaseReviewRequest
 from app.services.task_manager import task_manager
 from app.services.test_cases import _check_enrichment_gate, run_test_cases_pipeline
-from app.storage import ProjectStore
+from app.storage import ActiveTaskExistsError, ProjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +54,12 @@ async def run_test_cases(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    task = await store.create_task(
-        project_slug, kind="test_cases", target_type="feature", target_id=feature_name,
-    )
+    try:
+        task = await store.create_task(
+            project_slug, kind="test_cases", target_type="feature", target_id=feature_name,
+        )
+    except ActiveTaskExistsError:
+        return {"status": "already_running"}
     logger.info("run_test_cases: project=%s, feature=%s, task=%s", project_slug, feature_name, task["id"])
     task_manager.launch(
         task_key,

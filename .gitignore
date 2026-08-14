@@ -17,3 +17,6 @@ data/
 *.png
 !frontend/src/assets/*.png
 fixtures/
+
+# macOS
+.DS_Store

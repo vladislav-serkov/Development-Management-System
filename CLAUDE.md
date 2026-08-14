@@ -11,10 +11,19 @@ Extract Agent — AI-powered platform that extracts structured feature specifica
 ### Backend
 ```bash
 # Install (from repo root, uses .venv)
-pip install -e .
+pip install -e ".[dev]"
 
-# Run dev server
+# Start PostgreSQL (required)
+docker compose up -d db
+
+# Run dev server (applies Alembic migrations on startup)
 uvicorn app.main:app --reload --port 8000
+
+# Tests (need the db container running; they use a separate extract_agent_test DB)
+pytest
+
+# New migration after changing app/models.py
+alembic revision --autogenerate -m "message"
 ```
 
 ### Frontend
@@ -36,8 +45,11 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 
 ### Backend (Python/FastAPI)
 - **`app/main.py`** — FastAPI app, CORS, router registration, lifespan
-- **`app/config.py`** — `pydantic-settings` config; reads `.env` for `ANTHROPIC_API_KEY`, model names, `DATA_DIR`
-- **`app/storage.py`** — `ProjectStore` — file-based JSON storage (replaced SQLite). All persistence goes through this class. Data lives in `./data/projects/{slug}/`
+- **`app/config.py`** — `pydantic-settings` config; reads `.env` for `ANTHROPIC_API_KEY`, model names, `DATABASE_URL`
+- **`app/db.py`** — async SQLAlchemy engine + session factory (lazy, so imports never need a live DB)
+- **`app/models.py`** — SQLAlchemy models; entity payloads live in JSONB `data` columns so rows round-trip to the exact dict shapes the API serves
+- **`app/storage.py`** — `ProjectStore` — PostgreSQL-backed persistence facade. All persistence goes through this class; every public method is one transaction
+- **`alembic/`** — migrations, applied automatically in the app lifespan on startup
 - **`app/routers/`** — API endpoints:
   - `projects.py` — CRUD, import/export zip, `.context` import, list/patch/delete features (`/projects/...`)
   - `documents.py` — Confluence page import → extraction (`POST /documents/import-confluence`)
@@ -56,7 +68,9 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `bugs.py` — Bug report generation from test case review via Claude
   - `rules.py` — Validation rules management
   - `enrichment.py` — Dependency enrichment via Claude (Confluence page markdown)
-  - `export.py` — Project zip export
+  - `context_serializer.py` — bidirectional DB ⇄ `.context/` file-layout adapter (DMS interop contract): `dump_project` renders DB state as files, `load_context_project` imports a `.context/` directory as a new project
+  - `export.py` — packs `dump_project` output into a zip
+  - `import_context.py` — `adapt_feature` (DMS feature.json → canonical shape) + wiki→rules merge helpers
 - **`app/schemas/`** — Pydantic response/request models
 
 ### Frontend (React 19/Vite/TypeScript)
@@ -69,25 +83,17 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 - Vite proxy: `/api/*` → backend (strips `/api` prefix)
 
 ### Data Storage
-File-based JSON, no database. Structure per project:
-```
-data/projects/{project-slug}/
-  project.json
-  rules.json
-  documents/{doc-slug}.json
-  features/{feature-name}/
-    feature.json
-  gaps/{feature-name}.json
-  test-cases/{feature-name}.json
-  bugs/{feature-name}.json
-  dependencies/
-    db_tables.json
-    external_apis.json
-    cache.json
-    kafka_topics.json
-    external_docs.json
-  tasks.json
-```
+PostgreSQL (SQLAlchemy 2.0 async + asyncpg + Alembic). Moderate normalization: real tables + FKs for the entity graph, JSONB `data` columns for the deeply nested payloads (`structured_logic_json`, `enriched_data`, document source).
+
+Tables: `projects`, `documents` (+ raw `source` JSONB), `features` (+ `apply_preview`), `analysis_items` (one row per gap/test_case/bug, ordered by `position`), `dependencies` (case-insensitive unique per project+type), `rules` (`project_id IS NULL` = global), `tasks` (partial unique index enforces one running task per project+kind+target → `ActiveTaskExistsError` → HTTP 409).
+
+Feature counts (`gap_count`, `pending_gap_count`, …) are plain keys inside the feature's JSONB `data`, updated in the same transaction as `save_gaps`/`save_test_cases`/`save_bugs`.
+
+The `.context/` file layout (project.json, features/{name}/feature.json, gaps/, test-cases/, bugs/, dependencies/{type}.json) survives as the **import/export interop format** with the external DMS agent:
+- `POST /projects/import-context` — one-shot import of a `.context/` directory into the DB (source path remembered in `projects.context_dir`)
+- `POST /projects/{slug}/export-context` — serialize DB state back into a `.context/` directory
+- `GET /projects/{slug}/export/zip` / `POST /projects/import` — same layout as a zip
+There is no linked-project registry anymore; the DB is the single source of truth.
 
 ### LLM Integration
 - Uses **Anthropic Claude API** via `anthropic` Python SDK
@@ -96,13 +102,14 @@ data/projects/{project-slug}/
 - Models configured in `app/config.py`: `claude_model` (extraction/enrichment), `gaps_model`, `test_cases_model`, `bugs_model`
 
 ### Key Patterns
-- All storage operations are async (`aiofiles`), go through `ProjectStore`. Routers instantiate their own store; shared coordination state (file/dep locks, linked-project registry cache) is class-level so it stays consistent across instances within one process. In-process locks assume a single worker — do not run uvicorn with `--workers > 1`.
+- All storage operations are async and go through `ProjectStore` (`app/storage.py`). Routers instantiate their own store; each public method runs in its own transaction with row-level `SELECT ... FOR UPDATE` where read-modify-write is needed, so multiple uvicorn workers are safe. Note: `task_manager` (in-flight asyncio jobs) is still per-process.
+- Return-shape contract: `ProjectStore` methods return plain dicts identical to the old file-based JSON shapes; `None` (not exceptions) for missing entities; dependency lookups are case-insensitive; enriched deps are never downgraded to stub by upserts.
 - Frontend uses TanStack Query for all server state; mutations invalidate queries automatically
 - **Long-running LLM calls (1-2 min)**: backend MUST use `task_manager.launch()` (wraps `asyncio.create_task()`) + immediate response; frontend MUST poll via `refetchInterval` while a task is `"running"` (see `/projects/{slug}/tasks`). Never block the HTTP request. Loaders must survive navigation (check server status, not just mutation.isPending). Sidebar must show animated dots (`AnimatedDots`) for any feature with running gaps/tests.
 
 ## Environment
 - `ANTHROPIC_API_KEY` — required, set in `.env`
 - `CLAUDE_MODEL` / `GAPS_MODEL` / `TEST_CASES_MODEL` / `BUGS_MODEL` — optional model overrides
-- `DATA_DIR` — data directory (default: `./data/projects`)
+- `DATABASE_URL` — PostgreSQL DSN (default: `postgresql+asyncpg://extract:extract@localhost:5432/extract_agent`)
 - `CONFLUENCE_BASE_URL` / `CONFLUENCE_PAT` — optional, enable importing Confluence pages as documents (Data Center PAT, Bearer auth)
 - Python 3.12+, Node 22+
