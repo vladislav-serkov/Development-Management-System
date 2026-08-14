@@ -29,9 +29,14 @@ _WIKI_TO_SECTIONS: dict[str, tuple[str, ...]] = {
     "tests": ("test_cases",),
 }
 
-_FORBIDDEN_SL_FIELDS = ("preconditions", "outputs", "assumptions_and_gaps")
+# Legacy parameter sections (pre-SpecTable model) are dropped on import:
+# re-extraction from the source page rebuilds them in the table-first shape.
+_FORBIDDEN_SL_FIELDS = (
+    "preconditions", "outputs", "assumptions_and_gaps", "error_handling", "business_rules",
+    "input_parameters", "output_parameters", "success_response", "success_response_table_ids",
+    "error_responses",
+)
 
-_FLAT_MAPPING_MARKERS = {"source_field", "target_field", "transformation"}
 
 
 def adapt_feature(raw: dict[str, Any], *, warnings: list[str] | None = None) -> dict[str, Any]:
@@ -41,13 +46,12 @@ def adapt_feature(raw: dict[str, Any], *, warnings: list[str] | None = None) -> 
 
     * ``structured_logic`` → ``structured_logic_json`` (if canonical name missing)
     * ``dependencies`` → ``dependencies_json`` (if canonical name missing)
-    * strip ad-hoc ``preconditions`` / ``outputs`` / ``assumptions_and_gaps``
-      from ``structured_logic_json`` (they are not part of the schema)
-    * convert ``error_handling`` from ``list[str]`` to
-      ``dict[str, str]`` keyed as ``case_0``, ``case_1`` …
-    * null out legacy flat ``message_mapping`` entries that use
-      ``source_field``/``target_field`` — keep ``has_detailed_mapping=True`` so
-      a subsequent mapping-enricher run can refill
+    * strip ad-hoc and legacy pre-SpecTable fields (``preconditions``,
+      ``input_parameters``, ``success_response``, ``error_responses``, …)
+      from ``structured_logic_json`` — they are not part of the schema;
+      re-extraction rebuilds parameter tables in the table-first shape
+    * drop legacy ``message_mapping`` on logic steps — keep
+      ``has_detailed_mapping=True`` so re-extraction refills ``mapping_tables``
     * fill missing ``source`` from ``source_document`` (pdf) or fall back to
       ``{"kind": "code"}`` when no provenance info is present
     * ensure ``status`` / ``confidence`` / ``extracted_at`` defaults are set
@@ -75,11 +79,6 @@ def adapt_feature(raw: dict[str, Any], *, warnings: list[str] | None = None) -> 
             if field in sl:
                 sl.pop(field)
                 _warn(warnings, f"dropped unsupported field structured_logic_json.{field} during import")
-
-        eh = sl.get("error_handling")
-        if isinstance(eh, list):
-            sl["error_handling"] = {f"case_{i}": str(item) for i, item in enumerate(eh)}
-            _warn(warnings, "converted error_handling from list to dict during import")
 
         steps = sl.get("logic_steps")
         if isinstance(steps, list):
@@ -112,11 +111,10 @@ def _adapt_logic_step(step: Any, *, warnings: list[str] | None) -> Any:
         return step
     step = dict(step)
 
-    mapping = step.get("message_mapping")
-    if isinstance(mapping, list) and mapping and _is_flat_mapping(mapping):
+    mapping = step.pop("message_mapping", None)
+    if isinstance(mapping, list) and mapping:
         step_no = step.get("number", "?")
-        _warn(warnings, f"step {step_no}: dropped legacy flat message_mapping; re-run mapping-enricher to refill")
-        step["message_mapping"] = None
+        _warn(warnings, f"step {step_no}: dropped legacy message_mapping (pre-SpecTable shape); re-extract to refill")
         step["has_detailed_mapping"] = True
 
     children = step.get("children")
@@ -124,15 +122,6 @@ def _adapt_logic_step(step: Any, *, warnings: list[str] | None) -> Any:
         step["children"] = [_adapt_logic_step(c, warnings=warnings) for c in children]
 
     return step
-
-
-def _is_flat_mapping(items: list[Any]) -> bool:
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        if _FLAT_MAPPING_MARKERS & item.keys():
-            return True
-    return False
 
 
 def _warn(warnings: list[str] | None, msg: str) -> None:

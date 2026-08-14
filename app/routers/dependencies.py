@@ -8,7 +8,6 @@ from app.schemas.enrichment import CreateDependencyRequest, DependencyResponse
 from app.schemas.extraction import ConfluenceImportRequest
 from app.services.confluence import ConfluenceError, fetch_page
 from app.services.enrichment import EXTERNAL_DOC_TARGETED_ONLY_MSG, run_enrichment_pipeline
-from app.services.required_sync import sync_required_after_enrichment
 from app.services.task_manager import task_manager
 from app.storage import DEP_TYPE_FILE, ActiveTaskExistsError
 
@@ -167,7 +166,7 @@ async def _run_enrichment_background(
 ) -> None:
     """Background wrapper: run enrichment pipeline and handle status transitions."""
     try:
-        enriched_deps = await run_enrichment_pipeline(
+        await run_enrichment_pipeline(
             project_slug=project_slug,
             dep_type=dep_type,
             text_content=text_content,
@@ -176,23 +175,6 @@ async def _run_enrichment_background(
             target_dep_name=dep_name,
         )
         # enrichment_status is set to "enriched" inside run_enrichment_pipeline
-
-        # Sync required fields from enriched data into feature mappings
-        for dep_resp in enriched_deps:
-            if dep_resp.enriched_data:
-                try:
-                    await sync_required_after_enrichment(
-                        project_slug=project_slug,
-                        dep_type=dep_resp.dep_type,
-                        dep_name=dep_resp.name,
-                        enriched_data=dep_resp.enriched_data,
-                        store=store,
-                    )
-                except Exception as sync_exc:
-                    logger.warning(
-                        "required_sync failed (non-fatal): %s/%s: %s",
-                        dep_resp.dep_type, dep_resp.name, sync_exc,
-                    )
     except Exception as exc:
         logger.error(
             "Enrichment failed: project=%s, dep_type=%s, dep_name=%s: %s",

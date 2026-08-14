@@ -38,7 +38,7 @@ ANALYSIS_PROMPT = """\
 
 ### ПРИОРИТЕТ 2 — Бизнес-логика
 - Пропущенная ветка обработки: описан happy path, но не описано что делать при определённом статусе/условии
-- Противоречие между шагами логики или между логикой и бизнес-правилами
+- Противоречие между шагами логики
 - Поле используется в логике, но отсутствует в схеме зависимости (таблицы, API) — разработчик не сможет написать запрос
 - Опциональное поле используется далее без указания что делать при его отсутствии, и это приведёт к неправильному бизнес-результату
 - Неоднозначная формулировка, блокирующая реализацию: два разработчика прочитают по-разному
@@ -116,7 +116,7 @@ gap_type: contradictory_logic
 severity: critical
 actionable: false
 question: Шаг 6: `delivery_status = NULL` при `product.status = 'SENT_TO_ESB'`. \
-Но бизнес-правило #3 говорит `delivery_status = 'SENT_TO_ESB'`. Противоречие — \
+Но шаг 3 говорит `delivery_status = 'SENT_TO_ESB'`. Противоречие — \
 разработчик не знает какое значение ставить.
 suggestion: Уточнить у аналитика корректное значение `delivery_status` для статуса 'SENT_TO_ESB'.
 """
@@ -128,7 +128,6 @@ APPLY_SYSTEM_PROMPT = (
     "КРИТИЧЕСКИ ВАЖНО:\n"
     "- СКОПИРУЙ ВСЮ существующую structured_logic ПОЛНОСТЬЮ — каждый шаг, каждый параметр, каждую зависимость\n"
     "- Добавь/измени ТОЛЬКО то, что требуют gaps\n"
-    "- Если gap требует добавить бизнес-правило — добавь его к СУЩЕСТВУЮЩИМ правилам, не удаляя старые\n"
     "- Если gap требует изменить шаг — измени ТОЛЬКО этот шаг, остальные скопируй как есть\n"
     "- Ни один существующий элемент не должен пропасть\n"
     "\n"
@@ -149,12 +148,10 @@ def build_apply_user_message(sl_json: str, current_sl: dict, gaps_text: str) -> 
         f"## Текущая structured_logic (СКОПИРУЙ ПОЛНОСТЬЮ, изменяя только то что требуют gaps)\n\n"
         f"```json\n{sl_json}\n```\n\n"
         f"Текущая logic содержит:\n"
-        f"- input_parameters: {len(current_sl.get('input_parameters', []))} шт\n"
-        f"- success_response: {len(current_sl.get('success_response', current_sl.get('output_parameters', []) or []))} шт\n"
-        f"- error_responses: {len(current_sl.get('error_responses', []))} шт\n"
+        f"- input_tables: {len(current_sl.get('input_tables', []))} шт\n"
+        f"- response_tables: {len(current_sl.get('response_tables', []))} шт\n"
         f"- logic_steps: {len(current_sl.get('logic_steps', []))} шт\n"
-        f"- used_dependencies: {len(current_sl.get('used_dependencies', []))} шт\n"
-        f"- business_rules: {len(current_sl.get('business_rules', []))} шт\n\n"
+        f"- used_dependencies: {len(current_sl.get('used_dependencies', []))} шт\n\n"
         f"В ответе structured_logic ДОЛЖНО быть НЕ МЕНЕЕ этих количеств "
         f"(больше — если gap добавляет новые элементы).\n\n"
         f"## Утверждённые замечания для применения\n\n{gaps_text}\n\n"

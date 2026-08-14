@@ -276,6 +276,14 @@ function TestCaseCard({
                 <span>{tc.steps.length} шагов</span>
                 <span>{artifactCount} артефактов</span>
                 <span>{CATEGORY_LABEL[tc.category]}</span>
+                {tc.covers && (
+                  <span
+                    className="max-w-[340px] truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.625rem]"
+                    title={tc.covers}
+                  >
+                    {tc.covers}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -310,6 +318,12 @@ function TestCaseCard({
 
       {!isOpen ? null : (
         <div className="space-y-4 px-4 py-4 md:px-5">
+          {tc.covers && (
+            <p className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-[0.75rem] text-muted-foreground">
+              <span className="font-semibold uppercase tracking-wide text-[0.625rem]">Покрывает в ТЗ:</span>{" "}
+              <span className="font-mono">{tc.covers}</span>
+            </p>
+          )}
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.9fr)]">
             <TestCaseSection title="Предусловия">
               <p className="text-sm leading-[1.65] text-foreground/85">

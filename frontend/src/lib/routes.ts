@@ -1,9 +1,9 @@
 import type { DependencyType } from "@/types/api"
 
-export type FeatureTab = "logic" | "gaps" | "tests" | "bugs"
+export type FeatureTab = "logic" | "tests" | "bugs"
 
 const DEFAULT_FEATURE_TAB: FeatureTab = "logic"
-const FEATURE_TABS: FeatureTab[] = ["logic", "gaps", "tests", "bugs"]
+const FEATURE_TABS: FeatureTab[] = ["logic", "tests", "bugs"]
 
 function encodeSegment(value: string) {
   return encodeURIComponent(value)

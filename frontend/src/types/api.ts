@@ -3,33 +3,35 @@ export type DocumentStatus = "pending" | "processing" | "extracting" | "done" | 
 export type FeatureStatus = "extracting" | "done"
 export type FeatureType = "kafka_consumer" | "rest_endpoint" | "scheduled_task" | "unknown"
 
-// Source link for a response/error field — references one used_dependencies entry
-export interface FieldSource {
-  type: "external_api" | "db_table" | "cache" | "kafka_topic"
-  name: string
-  method?: string | null
-  path?: string | null
-}
-
-// Structured business logic from 1st Claude call
-export interface ParameterField {
-  name: string
-  field_type: string
-  description: string
-  required: boolean
-  validation_rules: string[]
-  param_in: string | null
-  example?: string | null
-  source?: FieldSource | null
-  children: ParameterField[]
-}
-
 export interface FieldSourceRef {
   dep_type: string
   dep_name: string
   field: string | null
 }
 
+// A spec table mirrored verbatim: columns as the spec has them, rows as a field tree
+export interface SpecColumn {
+  header: string
+  role?: string | null // type | required | constraint | source | description | example
+}
+
+export interface SpecField {
+  name: string
+  cells: string[] // aligned with the owning table's columns
+  source_refs?: FieldSourceRef[]
+  children?: SpecField[]
+}
+
+export interface SpecTable {
+  table_id?: string | null
+  caption?: string | null
+  location?: string | null // body | header | query | path
+  status_codes?: string | null // for response tables
+  columns: SpecColumn[]
+  fields: SpecField[]
+}
+
+// Hierarchical message field — used by dependency enrichment payloads
 export interface MessageField {
   element: string
   parent: string | null
@@ -55,7 +57,8 @@ export interface LogicStep {
   number: string
   text: string
   has_detailed_mapping?: boolean
-  message_mapping?: MessageField[] | null
+  message_type?: string | null
+  mapping_tables?: SpecTable[]
   reference_tables?: GenericTable[]
   external_doc_refs?: string[]
   children: LogicStep[]
@@ -70,21 +73,11 @@ export interface UsedDependency {
   path?: string
 }
 
-export interface ErrorResponseSchema {
-  status_codes: string
-  description: string
-  parameters: ParameterField[]
-}
-
 export interface StructuredBusinessLogic {
-  input_parameters?: ParameterField[]
-  output_parameters?: ParameterField[]  // kept for backward compat with old data
-  success_response?: ParameterField[]
-  error_responses?: ErrorResponseSchema[]
+  input_tables?: SpecTable[]
+  response_tables?: SpecTable[]
   logic_steps?: LogicStep[]
   used_dependencies?: UsedDependency[]
-  error_handling?: Record<string, unknown>
-  business_rules?: string[]
 }
 
 // Source provenance for a feature
@@ -366,6 +359,7 @@ export interface TestCaseItem {
   priority: "high" | "medium" | "low"
   status: TestCaseStatus
   analyst_text: string | null
+  covers?: string | null
   curl_command: string | null
   kafka_message: { key: string; value: string } | null
   sql_setup: string | null

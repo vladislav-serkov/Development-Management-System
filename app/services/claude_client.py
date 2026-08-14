@@ -1,14 +1,75 @@
 """Centralized Claude API client with retry and error classification."""
 
 import asyncio
+import json
 import logging
 
 import anthropic
 import httpx
+from pydantic import ValidationError
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_json_strings(value):
+    """Recursively parse JSON-encoded strings inside a tool_use input.
+
+    Sonnet 5 occasionally returns a nested array/object field as a JSON string
+    (sometimes wrapping the whole payload into its own field, e.g.
+    ``{"tables": "{\\"tables\\": [...]}"``). Plain strings stay untouched.
+    """
+    if isinstance(value, dict):
+        fixed = {}
+        for k, v in value.items():
+            if isinstance(v, str) and v.strip()[:1] in ("[", "{"):
+                try:
+                    parsed = json.loads(v)
+                except ValueError:
+                    fixed[k] = v
+                    continue
+                if isinstance(parsed, dict) and list(parsed.keys()) == [k]:
+                    parsed = parsed[k]
+                fixed[k] = _coerce_json_strings(parsed)
+            else:
+                fixed[k] = _coerce_json_strings(v)
+        return fixed
+    if isinstance(value, list):
+        return [_coerce_json_strings(v) for v in value]
+    return value
+
+
+def parse_tool_input(schema_class, raw):
+    """Validate a tool_use input against a Pydantic schema.
+
+    Tries the raw input first, then progressively repaired variants covering
+    Sonnet 5's observed tool-input quirks: JSON-encoded string fields
+    (see _coerce_json_strings) and a single-key envelope wrapping the real
+    payload (e.g. ``{"api_spec": {...actual fields...}}``).
+    """
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+
+    candidates = [raw, _coerce_json_strings(raw)]
+    for c in list(candidates):
+        if isinstance(c, dict) and len(c) == 1:
+            inner = next(iter(c.values()))
+            if isinstance(inner, dict):
+                candidates.append(inner)
+
+    last_err = None
+    for i, candidate in enumerate(candidates):
+        try:
+            result = schema_class.model_validate(candidate)
+            if i > 0:
+                logger.warning(
+                    "[%s] tool input accepted after repair variant %d", schema_class.__name__, i,
+                )
+            return result
+        except ValidationError as exc:
+            last_err = exc
+    raise last_err
 
 
 def log_cache_stats(usage, call_name: str) -> None:

@@ -1,18 +1,29 @@
-"""Test cases generation pipeline: 2 sequential Claude calls (plan + detail with few-shot)."""
+"""Test cases generation pipeline: plan → coverage critic → batched detail calls."""
+import asyncio
 import json
 import logging
 import re
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from app.config import settings
-from app.prompts.test_cases import DETAIL_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, get_few_shot
+from app.prompts.test_cases import CRITIC_SYSTEM_PROMPT, DETAIL_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, get_few_shot
 from app.schemas.test_cases import TestCaseGenerationResult, TestCasePlanResult
-from app.services.claude_client import call_claude, log_cache_stats
+from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
 
+
+# How many plan items to detail per Claude call — keeps each response short enough
+# that late cases stay as thorough as early ones.
+DETAIL_BATCH_SIZE = 10
+
+# How many detail batches run concurrently (after batch 1 warms the prompt cache).
+# Bounded so a big plan doesn't burst-hit the API rate limit.
+DETAIL_CONCURRENCY = 4
 
 _UUID_PATTERN = re.compile(r'[0-9a-zA-Z]{8}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{12}')
 _VALID_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
@@ -231,65 +242,116 @@ def _build_shared_context(feature: dict, enriched_deps: dict) -> str:
     return base + "\n" + "\n".join(extra)
 
 
+_PLAN_TOOL = {
+    "name": "plan_test_cases",
+    "description": "Plan test cases for the feature — coverage plan without details",
+    "input_schema": TestCasePlanResult.model_json_schema(),
+}
+
+
+async def _call_plan_tool(label: str, model: str, system_prompt: str, user_blocks: list[dict]) -> list[dict] | None:
+    """Shared plumbing for the plan and critic phases: forced plan_test_cases call.
+
+    Returns parsed plan items, or None when the model returned an empty list —
+    the caller decides whether empty is an error (plan) or "nothing to add" (critic).
+    """
+    # Sonnet 5: adaptive thinking is on by default and counts against max_tokens,
+    # and the new tokenizer emits ~30% more tokens for the same text — a tight
+    # budget truncates the tool_use block, which surfaces as "no tool_use in response".
+    # Missing/malformed tool_use is also a transient model failure — re-ask before giving up.
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        response = await call_claude(
+            label=label,
+            model=model,
+            max_tokens=16000,
+            system=system_prompt,
+            tools=[_PLAN_TOOL],
+            tool_choice={"type": "tool", "name": _PLAN_TOOL["name"]},
+            messages=[{"role": "user", "content": user_blocks}],
+        )
+        log_cache_stats(response.usage, label)
+
+        tool_block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
+        try:
+            if tool_block is None:
+                raise RuntimeError(
+                    f"[{label}] Claude did not return tool_use (stop_reason={response.stop_reason})"
+                )
+            if not tool_block.input or not tool_block.input.get("test_cases"):
+                return None
+            result = parse_tool_input(TestCasePlanResult, tool_block.input)
+        except (RuntimeError, ValidationError) as exc:
+            if attempt == max_attempts:
+                raise
+            logger.warning("[%s] attempt %d/%d failed, retrying: %s", label, attempt, max_attempts, exc)
+            continue
+        return [item.model_dump() for item in result.test_cases]
+
+
 async def _call_plan_phase(
     model: str,
     shared_context: str,
     system_prompt: str = PLAN_SYSTEM_PROMPT,
 ) -> list[dict]:
-    """Call 1: generate a test case coverage plan (names, categories, checks, priorities)."""
-    tool_schema = TestCasePlanResult.model_json_schema()
-    tool_name = "plan_test_cases"
-    tool = {
-        "name": tool_name,
-        "description": "Plan test cases for the feature — coverage plan without details",
-        "input_schema": tool_schema,
-    }
-
-    response = await call_claude(
-        label="test_cases_plan",
-        model=model,
-        max_tokens=8192,
-        system=system_prompt,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool_name},
-        messages=[
+    """Call 1: generate a test case coverage plan (names, categories, checks, covers, priorities)."""
+    plan_items = await _call_plan_tool(
+        "test_cases_plan",
+        model,
+        system_prompt,
+        [
             {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": shared_context,
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": "Составь план тест-кейсов для этой фичи.",
-                    },
-                ],
-            }
+                "type": "text",
+                "text": shared_context,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": "Составь план тест-кейсов для этой фичи."},
         ],
     )
+    if not plan_items:
+        raise RuntimeError("[test_cases_plan] Claude returned an empty plan — no test cases planned")
 
-    log_cache_stats(response.usage, "test_cases:plan")
+    logger.info("[test_cases:plan] Planned %d test case(s)", len(plan_items))
+    return plan_items
 
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
-            break
 
-    if tool_block is None:
-        logger.error("[test_cases:plan] No tool_use block in Claude response")
-        raise RuntimeError("[test_cases:plan] Claude did not return tool_use — no test cases planned")
+async def _call_critic_phase(
+    model: str,
+    shared_context: str,
+    plan_items: list[dict],
+    system_prompt: str = CRITIC_SYSTEM_PROMPT,
+) -> list[dict]:
+    """Call 2: coverage critic — returns plan items MISSING from the plan (may be empty)."""
+    additions = await _call_plan_tool(
+        "test_cases_critic",
+        model,
+        system_prompt,
+        [
+            {
+                "type": "text",
+                "text": shared_context,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
+                "text": "## Существующий план тест-кейсов\n"
+                + json.dumps(plan_items, ensure_ascii=False, indent=2),
+            },
+            {
+                "type": "text",
+                "text": "Найди пробелы покрытия и верни только недостающие тест-кейсы.",
+            },
+        ],
+    )
+    if not additions:
+        logger.info("[test_cases:critic] Plan is complete — no additions")
+        return []
 
-    if not tool_block.input or not tool_block.input.get("test_cases"):
-        logger.error("[test_cases:plan] Empty tool_use input: %s", tool_block.input)
-        raise RuntimeError("[test_cases:plan] Claude did not return tool_use — no test cases planned")
-
-    result = TestCasePlanResult.model_validate(tool_block.input)
-    logger.info("[test_cases:plan] Planned %d test case(s)", len(result.test_cases))
-
-    return [item.model_dump() for item in result.test_cases]
+    # Drop additions that duplicate an existing plan item by name
+    existing_names = {_norm(item["name"]) for item in plan_items}
+    fresh = [item for item in additions if _norm(item.get("name", "")) not in existing_names]
+    logger.info("[test_cases:critic] %d addition(s), %d after dedup", len(additions), len(fresh))
+    return fresh
 
 
 async def _call_detail_phase(
@@ -299,85 +361,125 @@ async def _call_detail_phase(
     feature_type: str = "",
     system_prompt: str = DETAIL_SYSTEM_PROMPT,
 ) -> list[dict]:
-    """Call 2: generate detailed test cases with artifacts, guided by the plan and few-shot examples."""
-    tool_schema = TestCaseGenerationResult.model_json_schema()
-    tool_name = "generate_detailed_test_cases"
+    """Detail phase: batched calls of DETAIL_BATCH_SIZE plan items each.
+
+    A single call detailing the whole plan degrades on long outputs (later cases
+    come out lazier) and risks truncation now that the plan is uncapped. Batches
+    run sequentially so every batch after the first reads the shared context
+    from the prompt cache.
+    """
     tool = {
-        "name": tool_name,
+        "name": "generate_detailed_test_cases",
         "description": "Generate detailed test cases with artifacts based on the plan",
-        "input_schema": tool_schema,
+        "input_schema": TestCaseGenerationResult.model_json_schema(),
     }
 
-    response = await call_claude(
-        label="test_cases_detail",
-        model=model,
-        max_tokens=42768,
-        system=system_prompt,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool_name},
-        messages=[
-            {
-                "role": "user",
-                "content": [
+    covers_by_name = {_norm(item.get("name", "")): item.get("covers") for item in plan_items}
+    batches = [plan_items[i:i + DETAIL_BATCH_SIZE] for i in range(0, len(plan_items), DETAIL_BATCH_SIZE)]
+
+    async def detail_batch(batch_no: int, batch: list[dict]) -> list[dict]:
+        label = f"test_cases_detail[{batch_no}/{len(batches)}]"
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            response = await call_claude(
+                label=label,
+                model=model,
+                max_tokens=64000,
+                system=system_prompt,
+                tools=[tool],
+                tool_choice={"type": "tool", "name": tool["name"]},
+                messages=[
                     {
-                        "type": "text",
-                        "text": shared_context,
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": get_few_shot(feature_type),
-                    },
-                    {
-                        "type": "text",
-                        "text": "## План тест-кейсов\n" + json.dumps(plan_items, ensure_ascii=False, indent=2),
-                    },
-                    {
-                        "type": "text",
-                        "text": "Детализируй каждый тест-кейс из плана. Сохраняй category и priority из плана.",
-                    },
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": shared_context,
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                            {
+                                "type": "text",
+                                "text": get_few_shot(feature_type),
+                            },
+                            {
+                                "type": "text",
+                                "text": "## План тест-кейсов (батч "
+                                f"{batch_no} из {len(batches)}, {len(batch)} кейсов)\n"
+                                + json.dumps(batch, ensure_ascii=False, indent=2),
+                            },
+                            {
+                                "type": "text",
+                                "text": "Детализируй каждый тест-кейс из этого батча — ровно "
+                                f"{len(batch)} кейсов. Сохраняй category и priority из плана.",
+                            },
+                        ],
+                    }
                 ],
-            }
-        ],
-    )
+            )
 
-    log_cache_stats(response.usage, "test_cases:detail")
-    logger.info("[test_cases:detail] stop_reason=%s, content_blocks=%d", response.stop_reason, len(response.content))
+            log_cache_stats(response.usage, label)
+            logger.info("[%s] stop_reason=%s, content_blocks=%d", label, response.stop_reason, len(response.content))
 
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
+            tool_block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
+            try:
+                if tool_block is None or not tool_block.input or not tool_block.input.get("test_cases"):
+                    raise RuntimeError(
+                        f"[{label}] Claude did not return tool_use — no test cases generated "
+                        f"(stop_reason={response.stop_reason})"
+                    )
+                result = parse_tool_input(TestCaseGenerationResult, tool_block.input)
+            except (RuntimeError, ValidationError) as exc:
+                if attempt == max_attempts:
+                    raise
+                logger.warning("[%s] attempt %d/%d failed, retrying: %s", label, attempt, max_attempts, exc)
+                continue
             break
+        if len(result.test_cases) != len(batch):
+            logger.warning(
+                "[%s] batch size mismatch: plan had %d, generated %d",
+                label, len(batch), len(result.test_cases),
+            )
 
-    if tool_block is None:
-        logger.error("[test_cases:detail] No tool_use block. Content: %s", [b.type for b in response.content])
-        raise RuntimeError("[test_cases:detail] Claude did not return tool_use — no test cases generated")
+        return [
+            {
+                "category": tc.category,
+                "name": tc.name,
+                "preconditions": tc.preconditions,
+                "steps": [{"action": s.action, "expected": s.expected} for s in tc.steps],
+                "expected_result": tc.expected_result,
+                "priority": tc.priority,
+                "status": "pending",
+                "analyst_text": None,
+                "covers": covers_by_name.get(_norm(tc.name)),
+                "curl_command": tc.curl_command,
+                "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,
+                "sql_setup": tc.sql_setup,
+                "mock_config": tc.mock_config,
+            }
+            for tc in result.test_cases
+        ]
 
-    if not tool_block.input or not tool_block.input.get("test_cases"):
-        logger.error("[test_cases:detail] Empty tool_use input: %s", tool_block.input)
-        raise RuntimeError("[test_cases:detail] Claude did not return tool_use — no test cases generated")
+    detailed: list[dict] = []
+    if batches:
+        # Batch 1 runs alone: it writes the shared context into the prompt cache.
+        # The rest read that cache, so they can run concurrently (bounded — a big
+        # plan must not burst-hit the API rate limit).
+        detailed.extend(await detail_batch(1, batches[0]))
+        if len(batches) > 1:
+            semaphore = asyncio.Semaphore(DETAIL_CONCURRENCY)
 
-    result = TestCaseGenerationResult.model_validate(tool_block.input)
-    logger.info("[test_cases:detail] Generated %d detailed test case(s)", len(result.test_cases))
+            async def bounded(batch_no: int, batch: list[dict]) -> list[dict]:
+                async with semaphore:
+                    return await detail_batch(batch_no, batch)
 
-    return [
-        {
-            "category": tc.category,
-            "name": tc.name,
-            "preconditions": tc.preconditions,
-            "steps": [{"action": s.action, "expected": s.expected} for s in tc.steps],
-            "expected_result": tc.expected_result,
-            "priority": tc.priority,
-            "status": "pending",
-            "analyst_text": None,
-            "curl_command": tc.curl_command,
-            "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,
-            "sql_setup": tc.sql_setup,
-            "mock_config": tc.mock_config,
-        }
-        for tc in result.test_cases
-    ]
+            rest = await asyncio.gather(
+                *(bounded(no, batch) for no, batch in enumerate(batches[1:], start=2))
+            )
+            for part in rest:
+                detailed.extend(part)
+
+    logger.info("[test_cases:detail] Generated %d detailed test case(s) in %d batch(es)", len(detailed), len(batches))
+    return detailed
 
 
 def _smart_merge_test_cases(existing: list[dict], new: list[dict]) -> list[dict]:
@@ -542,14 +644,20 @@ async def _run_test_cases_pipeline_inner(
         global_rules=global_rules.get("test_cases", ""),
         project_rules=project_rules.get("test_cases", ""),
     )
+    critic_system_prompt = build_system_prompt(
+        base=CRITIC_SYSTEM_PROMPT,
+        global_rules=global_rules.get("test_cases", ""),
+        project_rules=project_rules.get("test_cases", ""),
+    )
     detail_system_prompt = build_system_prompt(
         base=DETAIL_SYSTEM_PROMPT,
         global_rules=global_rules.get("test_cases", ""),
         project_rules=project_rules.get("test_cases", ""),
     )
 
-    # Sequential 2-call pipeline: plan then detail
+    # Pipeline: plan → coverage critic (fills gaps) → batched detail
     plan_items = await _call_plan_phase(model, shared_ctx, plan_system_prompt)
+    plan_items += await _call_critic_phase(model, shared_ctx, plan_items, critic_system_prompt)
     all_new_test_cases = await _call_detail_phase(model, shared_ctx, plan_items, feature_type, detail_system_prompt)
 
     # Post-generation validation (observability only — log warnings, do not reject)

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from logging.config import fileConfig
 
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -11,7 +12,10 @@ from app.db import Base
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
-if config.config_file_name is not None:
+# Apply alembic.ini logging only for standalone CLI runs. Inside the app the
+# root logger is already configured (INFO), and fileConfig would reset it to
+# WARNING — silencing every pipeline log after startup.
+if config.config_file_name is not None and not logging.getLogger().handlers:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

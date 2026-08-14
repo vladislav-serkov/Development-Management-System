@@ -3,13 +3,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     anthropic_api_key: str = "sk-ant-xxx"
-    claude_model: str = "claude-sonnet-4-6"
-    gaps_model: str = "claude-sonnet-4-6"
-    test_cases_model: str = "claude-sonnet-4-6"
-    bugs_model: str = "claude-sonnet-4-6"
+    claude_model: str = "claude-sonnet-5"
+    gaps_model: str = "claude-sonnet-5"
+    test_cases_model: str = "claude-sonnet-5"
+    bugs_model: str = "claude-sonnet-5"
     # Feature detection of a large spec easily emits >16K output tokens; a truncated
     # tool_use block arrives as an empty/partial input and looks like "Claude found
-    # nothing". Sonnet 4.6 allows up to 128K output.
+    # nothing". Sonnet allows far larger outputs, so keep a generous ceiling.
     extraction_max_tokens: int = 32000
     database_url: str = "postgresql+asyncpg://extract:extract@localhost:5432/extract_agent"
     confluence_base_url: str = ""

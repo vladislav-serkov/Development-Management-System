@@ -106,6 +106,16 @@ async def test_feature_name_with_slash(store):
     got = await store.get_feature("p", "api/v1/orders")
     assert got["name"] == "api/v1/orders"
 
+    # The frontend addresses slash-named features by their path-safe form
+    # ("/" -> "__", the old file-layout convention) — lookups must accept it.
+    got = await store.get_feature("p", "api__v1__orders")
+    assert got is not None and got["name"] == "api/v1/orders"
+
+    # Exact match wins over the sanitized fallback.
+    await store.save_feature("p", {**FEATURE, "name": "api__v1__orders"})
+    got = await store.get_feature("p", "api__v1__orders")
+    assert got["name"] == "api__v1__orders"
+
 
 async def test_apply_preview(store):
     await store.create_project("P")

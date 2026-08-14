@@ -46,7 +46,6 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
                 <span className="truncate text-sm font-medium">{featureMeta.primary}</span>
               </div>
               <div className="mt-1 flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
-                <span>{feature.gap_count ?? 0} пробелов</span>
                 <span>{feature.test_case_count ?? 0} тестов</span>
                 <span>{feature.bug_count ?? 0} багов</span>
               </div>
@@ -61,7 +60,7 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="Удалить фичу"
-        description={`Удалить фичу "${feature.display_name ?? feature.name}" и все связанные gaps/test-cases/bugs?`}
+        description={`Удалить фичу "${feature.display_name ?? feature.name}" и все связанные test-cases/bugs?`}
         onConfirm={() => {
           onDelete(feature.name)
           setConfirmOpen(false)

@@ -26,6 +26,7 @@ async def generate_bug(
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
+    feature_name = feature["name"]
 
     try:
         bug = await generate_bug_report(
@@ -58,6 +59,7 @@ async def list_bugs(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
     bugs = await store.get_bugs(project_slug, feature_name)
     return {"bugs": bugs, "bug_count": len(bugs)}
 
@@ -76,6 +78,7 @@ async def patch_bug(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
 
     bugs = await store.get_bugs(project_slug, feature_name)
     if bug_index < 0 or bug_index >= len(bugs):
@@ -105,6 +108,7 @@ async def delete_bug(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
 
     bugs = await store.get_bugs(project_slug, feature_name)
     if bug_index < 0 or bug_index >= len(bugs):
