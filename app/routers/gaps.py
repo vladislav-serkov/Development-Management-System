@@ -30,6 +30,7 @@ async def run_gaps_analysis(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
     if feature.get("status") != "done":
         raise HTTPException(
             status_code=409,
@@ -75,6 +76,7 @@ async def list_gaps(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
     gaps = await store.get_gaps(project_slug, feature_name)
     active = await store.get_active_task(project_slug, kind="gaps", target_id=feature_name)
     return {
@@ -98,6 +100,7 @@ async def review_gap(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
 
     gaps = await store.get_gaps(project_slug, feature_name)
     if gap_index < 0 or gap_index >= len(gaps):
@@ -128,6 +131,7 @@ async def delete_gap(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
 
     all_gaps = await store.get_gaps(project_slug, feature_name, include_archived=True)
 
@@ -167,6 +171,7 @@ async def apply_preview_run(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
     if feature.get("status") != "done":
         raise HTTPException(
             status_code=409,
@@ -212,6 +217,7 @@ async def apply_preview_get(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
 
     active = await store.get_active_task(project_slug, kind="apply_gaps", target_id=feature_name)
     if active is not None:
@@ -238,5 +244,6 @@ async def apply_confirm(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
     await confirm_apply(project_slug, feature_name, body.proposed, store)
     return {"status": "applied"}

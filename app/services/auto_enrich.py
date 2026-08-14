@@ -15,7 +15,6 @@ import logging
 
 from app.services.confluence import fetch_page_by_ref
 from app.services.enrichment import enrich_group_from_page
-from app.services.required_sync import sync_required_after_enrichment
 
 logger = logging.getLogger(__name__)
 
@@ -115,8 +114,6 @@ async def auto_enrich_from_links(
             logger.info(
                 "Auto-enrich: %s/%s rescued by another page's enrichment", dep_type, dep_name
             )
-            if dep.get("enriched_data"):
-                await _sync_required(project_slug, dep_type, dep_name, dep["enriched_data"], store)
             await store.finish_task(project_slug, task_id, status="done")
             continue
         logger.error("Auto-enrich failed: %s", error_msg)
@@ -126,23 +123,6 @@ async def auto_enrich_from_links(
         await store.finish_task(project_slug, task_id, status="error", error_message=error_msg)
 
     logger.info("=== Auto-enrich finished: project=%s ===", project_slug)
-
-
-async def _sync_required(project_slug, dep_type, dep_name, enriched_data, store) -> None:
-    """Propagate enriched field metadata into features (non-fatal)."""
-    try:
-        await sync_required_after_enrichment(
-            project_slug=project_slug,
-            dep_type=dep_type,
-            dep_name=dep_name,
-            enriched_data=enriched_data,
-            store=store,
-        )
-    except Exception as exc:
-        logger.warning(
-            "required_sync after auto-enrich failed (non-fatal): %s/%s: %s",
-            dep_type, dep_name, exc,
-        )
 
 
 async def _enrich_group(
@@ -194,8 +174,6 @@ async def _enrich_group(
             failures.append((dep_type, dep_name, tasks[dep_name]["id"], msg))
             continue
 
-        if dep_resp.enriched_data:
-            await _sync_required(project_slug, dep_type, dep_name, dep_resp.enriched_data, store)
         await store.finish_task(project_slug, tasks[dep_name]["id"], status="done")
         logger.info("Auto-enrich done: %s/%s ← '%s'", dep_type, dep_name, page["title"])
 

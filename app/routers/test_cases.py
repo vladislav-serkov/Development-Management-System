@@ -26,6 +26,7 @@ async def run_test_cases(
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
+    feature_name = feature["name"]
     if feature.get("status") != "done":
         raise HTTPException(
             status_code=409,
@@ -81,6 +82,7 @@ async def list_test_cases(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
     test_cases = await store.get_test_cases(project_slug, feature_name)
     active = await store.get_active_task(
         project_slug, kind="test_cases", target_id=feature_name,
@@ -106,6 +108,7 @@ async def review_test_case(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
 
     test_cases = await store.get_test_cases(project_slug, feature_name)
     if tc_index < 0 or tc_index >= len(test_cases):
@@ -136,6 +139,7 @@ async def delete_test_case(
             status_code=404,
             detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
         )
+    feature_name = feature["name"]
 
     test_cases = await store.get_test_cases(project_slug, feature_name)
     if tc_index < 0 or tc_index >= len(test_cases):

@@ -251,6 +251,7 @@ async def patch_feature(project_slug: str, feature_name: str, patch: FeaturePatc
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
+    feature_name = feature["name"]
 
     actual_name = feature_name
     updates: dict = {}
@@ -292,6 +293,7 @@ async def delete_feature(project_slug: str, feature_name: str):
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
+    feature_name = feature["name"]
     await store.delete_feature(project_slug, feature_name)
     logger.info("delete_feature: project=%s, name=%s", project_slug, feature_name)
     return {"ok": True}

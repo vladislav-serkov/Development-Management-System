@@ -25,32 +25,6 @@ class SourceInfo(BaseModel):
     line: int | None = Field(default=None, description="1-based annotation line number, for code-sourced features")
 
 
-class FieldSource(BaseModel):
-    """Source of a response/error field value: which dependency produces it.
-
-    Must reference one of the entries in the feature's ``used_dependencies``.
-    Type/name pair is used to resolve the link; method/path duplicated from
-    the dependency to support rendering without lookup.
-    """
-
-    type: Literal["external_api", "db_table", "cache", "kafka_topic"]
-    name: str = Field(description="Dependency name verbatim from used_dependencies")
-    method: str | None = Field(default=None, description="HTTP method for external_api")
-    path: str | None = Field(default=None, description="Endpoint path for external_api")
-
-
-class ParameterField(BaseModel):
-    name: str = Field(description="Parameter name in Latin")
-    field_type: str = Field(description="Data type: string, integer, boolean, object, array, etc.")
-    description: str = Field(description="Description in Russian from the spec")
-    required: bool = Field(default=True)
-    validation_rules: list[str] = Field(default_factory=list, description="Validation rules in Russian, e.g. 'Не более 50 символов'")
-    param_in: str | None = Field(default=None, description="For REST: body, header, query, path. Null for Kafka.")
-    example: str | None = Field(default=None, description="Sample value for this field. Extract from spec if given, otherwise synthesise a realistic one based on type. Null for container fields (object/array) whose value is represented by children.")
-    source: FieldSource | None = Field(default=None, description="For response/error fields: which used_dependencies entry produces this value. Null for input parameters and for fields computed by feature logic.")
-    children: list["ParameterField"] = Field(default_factory=list, description="Nested fields for object/array types")
-
-
 class FieldSourceRef(BaseModel):
     """Machine-readable origin of a mapped field, parsed from a link in the spec's
     "Источник" cell: "credit_line[→DB page].id" → this table's ``id`` column.
@@ -65,7 +39,57 @@ class FieldSourceRef(BaseModel):
     field: str | None = Field(default=None, description="Field/column inside the dependency, e.g. 'mrp_day'")
 
 
+class SpecColumn(BaseModel):
+    """One data column of a spec table, verbatim.
+
+    ``role`` is a normalized annotation derived from header synonyms — it is what
+    gives a column semantics (clickable source links, required highlighting)
+    without constraining which columns a spec may have. ``None`` = unrecognized
+    column, still stored and rendered verbatim.
+    """
+
+    header: str = Field(description="Column header verbatim from the spec table")
+    role: str | None = Field(default=None, description="Normalized column role: type, required, constraint, source, description, example. Null for unrecognized columns.")
+
+
+class SpecField(BaseModel):
+    """One row of a spec table: a field with its cells verbatim.
+
+    ``cells`` is positionally aligned with the owning table's ``columns``;
+    empty cells are empty strings. Nesting mirrors the spec's colspan depth.
+    """
+
+    name: str = Field(description="Field name from the name column, verbatim")
+    cells: list[str] = Field(default_factory=list, description="Cell values verbatim, aligned with the table's columns")
+    source_refs: list[FieldSourceRef] = Field(
+        default_factory=list,
+        description="Dependencies the source cell links to, parsed deterministically from [LINK:Ln] markers",
+    )
+    children: list["SpecField"] = Field(default_factory=list)
+
+
+class SpecTable(BaseModel):
+    """A parameter/mapping table mirroring the spec's own structure.
+
+    When the document carries [TABLE:Tn] markers, the LLM only references the
+    table (``table_id``, plus ``status_codes`` for response tables) and the
+    grid is parsed deterministically — ``caption``/``location``/``columns``/
+    ``fields`` are filled by code. Inline ``columns``+``fields`` are the
+    fallback for documents without markers.
+    """
+
+    table_id: str | None = Field(default=None, description="Id from the [TABLE:Tn] marker above the table, e.g. 'T3'. Null only for documents without markers.")
+    caption: str | None = Field(default=None, description="Text introducing the table, verbatim. Filled by code from the parsed document.")
+    location: str | None = Field(default=None, description="Where the fields live: body, header, query, path. Derived from the caption by code.")
+    status_codes: str | None = Field(default=None, description="For response tables: HTTP status codes from the heading above, verbatim, e.g. '200' or '400, 404, 500'. Null for input tables.")
+    columns: list[SpecColumn] = Field(default_factory=list, description="Data columns verbatim. Leave empty when table_id is set — filled by code.")
+    fields: list[SpecField] = Field(default_factory=list, description="Field rows. Leave empty when table_id is set — filled by code.")
+
+
 class MessageField(BaseModel):
+    """Hierarchical message field. Used by dependency enrichment only —
+    feature structured logic stores tables as SpecTable."""
+
     element: str = Field(description="Field/element name")
     parent: str | None = Field(default=None, description="Parent element name")
     field_type: str | None = Field(default=None, description="Data type")
@@ -104,7 +128,7 @@ class LogicStep(BaseModel):
         description="IDs from [TABLE:Tn] markers in the document whose tables contain this step's field mapping, e.g. ['T3']. Fill ONLY when such markers exist in the document; otherwise leave empty.",
     )
     message_type: str | None = Field(default=None, description="Target table/message type name, e.g. 'outbox_payment'")
-    message_mapping: list[MessageField] | None = Field(default=None, description="Extracted message mapping fields")
+    mapping_tables: list[SpecTable] = Field(default_factory=list, description="Mapping tables of this step. Filled by code from mapping_table_ids; fill inline ONLY for documents without [TABLE:Tn] markers.")
     reference_tables: list[GenericTable] = Field(
         default_factory=list,
         description="Reference/lookup tables attached to this step (enum value mappings, code reference tables, etc.) — NOT field mappings.",
@@ -130,32 +154,25 @@ class UsedDependency(BaseModel):
     source_doc_title: str | None = Field(default=None, description="Legacy fallback for link_ids: the EXACT link text when the document has no [LINK:Ln] markers. Null otherwise.")
 
 
-ParameterField.model_rebuild()
+SpecField.model_rebuild()
 MessageField.model_rebuild()
 LogicStep.model_rebuild()
 
 
-
-
-class ErrorResponseSchema(BaseModel):
-    status_codes: str = Field(description="HTTP status codes, e.g. '400', '404', '500', '4xx'")
-    description: str = Field(description="When this error occurs, in Russian")
-    parameters: list[ParameterField] = Field(default_factory=list, description="Response body fields for this error")
-
-
 class StructuredBusinessLogic(BaseModel):
-    input_parameters: list[ParameterField] = Field(default_factory=list)
-    output_parameters: list[ParameterField] | None = Field(default=None)  # kept for backward compat with old data
-    success_response: list[ParameterField] = Field(default_factory=list)
-    success_response_table_ids: list[str] = Field(
+    """Feature logic mirroring the Confluence spec structure: parameter tables
+    verbatim (grouped the way the spec groups them), logic steps, dependencies."""
+
+    input_tables: list[SpecTable] = Field(
         default_factory=list,
-        description="IDs from [TABLE:Tn] markers whose tables describe the successful (2xx) response, e.g. ['T3']. Used to derive each field's param_in (body/header) from the table's caption.",
+        description="Tables of the 'Входные параметры' section, one entry per table (a spec may split input by Header/query/body). For Kafka: the incoming message structure tables.",
     )
-    error_responses: list[ErrorResponseSchema] = Field(default_factory=list)
+    response_tables: list[SpecTable] = Field(
+        default_factory=list,
+        description="Tables of the 'Выходные параметры' section, one entry per table, each tagged with its HTTP status_codes ('200', '400, 404, 500'). Empty for Kafka/scheduled tasks.",
+    )
     logic_steps: list[LogicStep] = Field(default_factory=list)
     used_dependencies: list[UsedDependency] = Field(default_factory=list)
-    error_handling: dict | None = None
-    business_rules: list[str] = Field(default_factory=list)
 
 
 class ConfluenceImportRequest(BaseModel):

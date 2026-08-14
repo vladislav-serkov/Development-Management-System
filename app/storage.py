@@ -126,7 +126,19 @@ class ProjectStore:
         stmt = select(Feature).where(Feature.project_id == project_id, Feature.name == name)
         if for_update:
             stmt = stmt.with_for_update()
-        return (await session.execute(stmt)).scalar_one_or_none()
+        row = (await session.execute(stmt)).scalar_one_or_none()
+        if row is None and "__" in name:
+            # The API addresses features by their path-safe form ("/" -> "__",
+            # inherited from the file-based storage layout), while rows keep the
+            # original name. Exact match wins; fall back to the sanitized form.
+            stmt = select(Feature).where(
+                Feature.project_id == project_id,
+                func.replace(Feature.name, "/", "__") == name,
+            )
+            if for_update:
+                stmt = stmt.with_for_update()
+            row = (await session.execute(stmt)).scalars().first()
+        return row
 
     async def _project_and_feature(
         self, session: AsyncSession, project_slug: str, feature_name: str, *, for_update: bool = False

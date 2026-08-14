@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Extract Agent — AI-powered platform that extracts structured feature specifications from Confluence pages using Claude API, then generates gaps analysis, test cases, and bug reports. Users paste a Confluence page URL, the system extracts features with their logic/parameters/dependencies via Claude, auto-enriches linked dependencies, and provides review/editing UI. Supports project-level validation rules.
+Extract Agent — AI-powered platform that extracts structured feature specifications from Confluence pages using Claude API, then generates gaps analysis, test cases, and bug reports. Users paste a Confluence page URL, the system extracts features with their logic/parameters/dependencies via Claude, auto-enriches linked dependencies, and provides a read-only review UI. Structured logic mirrors the Confluence spec verbatim (`SpecTable`: tables with their original columns); features are corrected by re-extracting the source page, not by manual editing. Supports project-level validation rules.
 
 ## Commands
 
@@ -59,8 +59,8 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `bugs.py` — bug reports derived from test cases (`/projects/{slug}/features/{name}/bugs/...`)
   - `rules.py` — project-level validation rules (`/projects/{slug}/rules/...`)
 - **`app/services/`** — Business logic:
-  - `extraction.py` — single Claude call: markdown document → feature detection via `detect_features` tool. Message mappings are built deterministically by `table_mapping.py` from parsed tables (no LLM call). Uses `anthropic.AsyncAnthropic` with tool_use for structured output
-  - `table_mapping.py` — deterministic conversion of parsed spec tables ([TABLE:Tn] markers) into MessageField trees: header synonyms → column roles, colspan depth → nesting
+  - `extraction.py` — single Claude call: markdown document → feature detection via `detect_features` tool. The LLM only *classifies* tables (which [TABLE:Tn] id belongs to input/response/step mapping + HTTP status codes); all parameter/mapping tables are built deterministically by `table_mapping.py` from parsed grids (no LLM rewriting). Uses `anthropic.AsyncAnthropic` with tool_use for structured output
+  - `table_mapping.py` — deterministic conversion of parsed spec tables ([TABLE:Tn] markers) into `SpecTable` structures mirroring the spec verbatim: columns kept as-is with role annotations (header synonyms → type/required/constraint/source/description), colspan depth → field nesting, [LINK:Ln] in source cells → `source_refs`
   - `auto_enrich.py` — after import, auto-enriches stub dependencies from Confluence pages linked in the spec (`source_doc_title` ← link text)
   - `confluence.py` — Confluence DC integration: fetch page by URL via PAT (Bearer), convert storage XHTML → markdown for extraction (`POST /documents/import-confluence`)
   - `gaps.py` — Gaps analysis via Claude

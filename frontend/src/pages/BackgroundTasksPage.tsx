@@ -194,7 +194,7 @@ export default function BackgroundTasksPage() {
           <div>
             <h1 className="text-2xl font-semibold">Фоновые задачи</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Журнал запусков пайплайнов извлечения, анализа пробелов, генерации тест-кейсов и обогащения зависимостей.
+              Журнал запусков пайплайнов извлечения, генерации тест-кейсов и обогащения зависимостей.
             </p>
           </div>
 
@@ -225,8 +225,6 @@ export default function BackgroundTasksPage() {
                 options={[
                   { value: "all", label: "Все" },
                   { value: "extraction", label: "Извлечение" },
-                  { value: "gaps", label: "Пробелы" },
-                  { value: "apply_gaps", label: "Применение" },
                   { value: "test_cases", label: "Тест-кейсы" },
                   { value: "enrichment", label: "Обогащение" },
                 ]}

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useUIStore } from "@/stores/uiStore"
-import { useProject, useImportConfluence, useProjectFeatures, useSaveFeature, useDeleteFeature } from "@/hooks/useDocuments"
+import { useProject, useImportConfluence, useProjectFeatures, useDeleteFeature } from "@/hooks/useDocuments"
 import { useProjectDependencies } from "@/hooks/useDependencies"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,18 +9,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ProjectSidebar, MethodBadge } from "@/components/sidebar"
 import {
-  AlertTriangle,
   ArrowRight,
-  Check,
   Files,
   FolderKanban,
   Gauge,
   Inbox,
-  Pencil,
   Sparkles,
   Trash2,
   Workflow,
-  X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { dependencyPath, featurePath, isFeatureTab, projectPath, type FeatureTab } from "@/lib/routes"
@@ -28,14 +24,10 @@ import { useConfirm } from "@/components/ConfirmDialog"
 import type {
   FeatureResponse,
   ProjectDependency,
-  StructuredBusinessLogic,
 } from "@/types/api"
 
 const StructuredLogicView = lazy(() =>
   import("@/components/feature/StructuredLogicView").then((module) => ({ default: module.StructuredLogicView }))
-)
-const GapsView = lazy(() =>
-  import("@/components/feature/GapsView").then((module) => ({ default: module.GapsView }))
 )
 const TestCasesView = lazy(() =>
   import("@/components/feature/TestCasesView").then((module) => ({ default: module.TestCasesView }))
@@ -178,57 +170,9 @@ function ProjectContentArea({
 }) {
   const navigate = useNavigate()
   const askConfirm = useConfirm()
-  const saveFeatureMutation = useSaveFeature(projectSlug)
   const deleteFeatureMutation = useDeleteFeature(projectSlug)
 
-  const [isEditing, setIsEditing] = useState(false)
-  const [editedLogic, setEditedLogic] = useState<StructuredBusinessLogic | null>(null)
-  const [editName, setEditName] = useState("")
-  const [editMethod, setEditMethod] = useState("")
-  const [editEndpoint, setEditEndpoint] = useState("")
-  const [editSummary, setEditSummary] = useState("")
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false)
-
-  const startEdit = () => {
-    if (!selectedFeature) return
-    setEditName(selectedFeature.name)
-    setEditMethod(selectedFeature.method ?? "")
-    setEditEndpoint(selectedFeature.endpoint ?? "")
-    setEditSummary(selectedFeature.summary ?? "")
-    setEditedLogic(structuredClone(selectedFeature.structured_logic ?? {}))
-    setIsEditing(true)
-  }
-
-  const cancelEdit = () => {
-    setIsEditing(false)
-    setEditedLogic(null)
-  }
-
-  const handleSave = () => {
-    if (!selectedFeature) return
-
-    const patch: Record<string, unknown> = {}
-    if (editName.trim() && editName.trim() !== selectedFeature.name) patch.name = editName.trim()
-    if (editMethod && editMethod !== selectedFeature.method) patch.method = editMethod
-    if (editEndpoint !== (selectedFeature.endpoint ?? "")) patch.endpoint = editEndpoint
-    if (editSummary !== (selectedFeature.summary ?? "")) patch.summary = editSummary
-    if (editedLogic) patch.structured_logic_json = editedLogic as Record<string, unknown>
-
-    const newName = (patch.name as string | undefined) ?? selectedFeature.name
-
-    saveFeatureMutation.mutate(
-      { featureName: selectedFeature.name, patch },
-      {
-        onSuccess: () => {
-          setIsEditing(false)
-          setEditedLogic(null)
-          if (patch.name) {
-            navigate(featurePath(projectSlug, newName, activeFeatureTab), { replace: true })
-          }
-        },
-      }
-    )
-  }
 
   if (selectedDep) {
     return (
@@ -239,74 +183,23 @@ function ProjectContentArea({
   }
 
   if (selectedFeature) {
-    const displayLogic = isEditing ? (editedLogic ?? selectedFeature.structured_logic) : selectedFeature.structured_logic
-    const resolvedMethod =
-      editMethod ||
-      selectedFeature.method ||
-      (selectedFeature.type === "kafka_consumer"
-        ? "CONSUMER"
-        : selectedFeature.type === "scheduled_task"
-          ? "SCHEDULED"
-          : "GET")
-    const integrationMeta = getFeatureIntegrationMeta(selectedFeature, isEditing ? editEndpoint : selectedFeature.endpoint)
-    const integrationFieldLabel = selectedFeature.type === "rest_endpoint" ? "Маршрут" : "Точка интеграции"
-    const integrationFieldPlaceholder =
-      selectedFeature.type === "rest_endpoint"
-        ? "/api/resource"
-        : selectedFeature.type === "kafka_consumer"
-          ? "pay-later.adapter.topic"
-          : "Опишите точку интеграции"
+    const displayLogic = selectedFeature.structured_logic
+    const integrationMeta = getFeatureIntegrationMeta(selectedFeature, selectedFeature.endpoint)
     const featureSummary = selectedFeature.summary ?? "Добавьте краткое описание, чтобы экран было проще сканировать и обсуждать с командой."
-    const canCollapseSummary = !isEditing && featureSummary.length > 240
+    const canCollapseSummary = featureSummary.length > 240
 
     return (
       <div className="space-y-6">
-        {isEditing && (
-          <div className="-mx-6 sticky top-0 z-10 flex items-center gap-2 border-b bg-background px-6 py-2 shadow-sm">
-            <span className="text-sm font-medium text-muted-foreground">Режим редактирования</span>
-            <div className="ml-auto flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={cancelEdit}>
-                <X className="h-3.5 w-3.5" />
-                Отмена
-              </Button>
-              <Button size="sm" onClick={handleSave} disabled={saveFeatureMutation.isPending}>
-                <Check className="h-3.5 w-3.5" />
-                {saveFeatureMutation.isPending ? "Сохранение..." : "Сохранить"}
-              </Button>
-            </div>
-          </div>
-        )}
-
         <Card className="border border-border/70">
           <CardHeader className="gap-4">
             <div className="flex flex-wrap items-start gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  {isEditing ? (
-                    <input
-                      className="min-w-0 flex-1 border-b border-primary bg-transparent text-2xl font-semibold outline-none"
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                    />
-                  ) : (
-                    <h2 className="min-w-0 text-2xl font-semibold tracking-tight" title={selectedFeature.name}>
-                      {selectedFeature.display_name ?? selectedFeature.name}
-                    </h2>
-                  )}
+                  <h2 className="min-w-0 text-2xl font-semibold tracking-tight" title={selectedFeature.name}>
+                    {selectedFeature.display_name ?? selectedFeature.name}
+                  </h2>
 
-                  {isEditing ? (
-                    <select
-                      value={resolvedMethod}
-                      onChange={(e) => setEditMethod(e.target.value)}
-                      className="rounded-md border border-border bg-transparent px-2 py-1 text-xs font-semibold font-mono"
-                    >
-                      {["GET", "POST", "PUT", "DELETE", "PATCH", "CONSUMER", "SCHEDULED"].map((method) => (
-                        <option key={method} value={method}>{method}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <MethodBadge method={selectedFeature.method} featureType={selectedFeature.type} large />
-                  )}
+                  <MethodBadge method={selectedFeature.method} featureType={selectedFeature.type} large />
 
                   <Badge variant="outline" className="text-xs">
                     {Math.round(selectedFeature.confidence * 100)}% заполнено
@@ -346,12 +239,6 @@ function ProjectContentArea({
               </div>
 
               <div className="ml-auto flex items-center gap-2 self-start">
-                {!isEditing && (
-                  <Button variant="outline" size="sm" className="shadow-none" onClick={startEdit}>
-                    <Pencil className="h-3.5 w-3.5" />
-                    Редактировать
-                  </Button>
-                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -376,18 +263,12 @@ function ProjectContentArea({
               </div>
             </div>
 
-        <div className="grid overflow-hidden rounded-2xl border border-border/70 bg-muted/10 md:grid-cols-4 md:divide-x md:divide-border/70">
+        <div className="grid overflow-hidden rounded-2xl border border-border/70 bg-muted/10 md:grid-cols-3 md:divide-x md:divide-border/70">
           <FeatureOverviewCard
             icon={<Workflow className="h-4 w-4" />}
             label={integrationMeta.label}
             value={integrationMeta.value}
             tone="muted"
-              />
-              <FeatureOverviewCard
-                icon={<AlertTriangle className="h-4 w-4" />}
-                label="Пробелы"
-                value={String(selectedFeature.gap_count ?? 0)}
-                tone={(selectedFeature.gap_count ?? 0) > 0 ? "warning" : "default"}
               />
               <FeatureOverviewCard
                 icon={<Gauge className="h-4 w-4" />}
@@ -405,39 +286,9 @@ function ProjectContentArea({
           </CardHeader>
         </Card>
 
-        {isEditing && (
-          <Card className="border border-border/70">
-            <CardHeader className="gap-1">
-              <CardTitle>Редактирование метаданных</CardTitle>
-              <CardDescription>Приведите в порядок маршрут или точку интеграции и краткое описание, чтобы фича читалась быстрее.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{integrationFieldLabel}</p>
-                <input
-                  className="w-full border-b border-border bg-transparent pb-1 text-sm font-mono outline-none"
-                  value={editEndpoint}
-                  placeholder={integrationFieldPlaceholder}
-                  onChange={(e) => setEditEndpoint(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Краткое описание</p>
-                <input
-                  className="w-full border-b border-border bg-transparent pb-1 text-sm outline-none"
-                  value={editSummary}
-                  placeholder="Что делает эта фича"
-                  onChange={(e) => setEditSummary(e.target.value)}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         <Tabs value={activeFeatureTab} onValueChange={(tab) => onFeatureTabChange(tab as FeatureTab)} className="gap-4">
           <TabsList className="flex-wrap">
             <TabsTrigger value="logic">Логика</TabsTrigger>
-            <TabsTrigger value="gaps">Пробелы{selectedFeature.gap_count ? ` (${selectedFeature.gap_count})` : ""}</TabsTrigger>
             <TabsTrigger value="tests">Тест-кейсы{selectedFeature.test_case_count ? ` (${selectedFeature.test_case_count})` : ""}</TabsTrigger>
             <TabsTrigger value="bugs">Баги{selectedFeature.bug_count ? ` (${selectedFeature.bug_count})` : ""}</TabsTrigger>
           </TabsList>
@@ -450,26 +301,13 @@ function ProjectContentArea({
                   featureType={selectedFeature.type}
                   projectDependencies={projectDependencies}
                   onDepClick={onDepClick}
-                  isEditing={isEditing}
-                  onChange={isEditing ? setEditedLogic : undefined}
                 />
               ) : (
                 <EmptyPanel
                   title="Структурированная логика пока не заполнена"
-                  description="Импортируйте более полную страницу или отредактируйте фичу вручную, чтобы заполнить этот блок."
+                  description="Импортируйте более полную страницу Confluence, чтобы заполнить этот блок."
                 />
               )}
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="gaps" className="rounded-xl border border-border/70 bg-card p-4">
-            <Suspense fallback={<ContentLoadingState label="Загрузка пробелов..." />}>
-              <GapsView
-                projectSlug={projectSlug}
-                featureName={selectedFeature.name}
-                usedDependencies={selectedFeature.structured_logic?.used_dependencies}
-                projectDependencies={projectDependencies}
-              />
             </Suspense>
           </TabsContent>
 
@@ -508,7 +346,7 @@ function ProjectContentArea({
         <ProjectOverviewCard icon={<FolderKanban className="h-4 w-4" />} label="Фичи" value={String(totalFeatures)} helper={`${completedFeatures} готовы, ${pendingFeatures} в работе`} />
         <ProjectOverviewCard icon={<Files className="h-4 w-4" />} label="Источники" value={String(projectDocumentCount)} helper="Импортированные страницы" />
         <ProjectOverviewCard icon={<Workflow className="h-4 w-4" />} label="Зависимости" value={String(totalDependencies)} helper="DB, API, кэш, топики" />
-        <ProjectOverviewCard icon={<Sparkles className="h-4 w-4" />} label="Следующий шаг" value={totalFeatures > 0 ? "Выбрать фичу" : "Импортировать страницу"} helper={totalFeatures > 0 ? "Перейдите к логике, пробелам и тест-кейсам" : "После импорта появятся фичи и зависимости"} />
+        <ProjectOverviewCard icon={<Sparkles className="h-4 w-4" />} label="Следующий шаг" value={totalFeatures > 0 ? "Выбрать фичу" : "Импортировать страницу"} helper={totalFeatures > 0 ? "Перейдите к логике и тест-кейсам" : "После импорта появятся фичи и зависимости"} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
@@ -529,8 +367,8 @@ function ProjectContentArea({
               icon={<ArrowRight className="h-4 w-4" />}
             />
             <NextStepCard
-              title="3. Дойти до пробелов и тест-кейсов"
-              description="После проверки логики можно быстро перейти к gaps, test-cases и баг-репортам."
+              title="3. Дойти до тест-кейсов"
+              description="После проверки логики можно быстро перейти к test-cases и баг-репортам."
               icon={<Sparkles className="h-4 w-4" />}
             />
           </CardContent>

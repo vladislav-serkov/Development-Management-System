@@ -16,6 +16,7 @@ class TestCasePlanItem(BaseModel):
     name: str = Field(description="Краткое название тест-кейса")
     category: str = Field(pattern="^(validation|positive|negative|edge_case)$")
     checks: str = Field(description="Что именно проверяем — конкретное поле, правило, ветка логики")
+    covers: str = Field(description="Какую ветку logic_steps, правило валидации или сценарий ошибки из ТЗ покрывает кейс — короткая точная ссылка")
     priority: str = Field(pattern="^(high|medium|low)$")
 
 

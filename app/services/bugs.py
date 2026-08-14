@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from app.config import settings
 from app.prompts.bugs import SYSTEM_PROMPT
 from app.schemas.bugs import BugReportResult
-from app.services.claude_client import call_claude
+from app.services.claude_client import call_claude, parse_tool_input
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ async def generate_bug_report(
     if tool_block is None:
         raise RuntimeError("Claude did not return tool_use block for bug report generation")
 
-    result = BugReportResult.model_validate(tool_block.input)
+    result = parse_tool_input(BugReportResult, tool_block.input)
     logger.info("[bugs] Generated bug report for test case '%s' (severity=%s)", tc.get("name", ""), result.severity)
 
     return {

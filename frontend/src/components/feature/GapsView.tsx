@@ -5,7 +5,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
 import { AlertTriangle, Check, GitPullRequestArrow, Loader2, Play, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { GapItem, StructuredBusinessLogic, LogicStep, MessageField, ParameterField, UsedDependency, ProjectDependency } from "@/types/api"
+import { SpecTableGrid } from "@/components/feature/SpecTableView"
+import type { GapItem, StructuredBusinessLogic, LogicStep, SpecField, SpecTable, UsedDependency, ProjectDependency } from "@/types/api"
 
 const SEVERITY_STYLE: Record<string, string> = {
   critical: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400",
@@ -299,46 +300,16 @@ function diffByKey<T>(oldArr: T[], newArr: T[], key: (item: T) => string): { ite
   return result
 }
 
-function DiffMappingTable({ fields }: { fields: MessageField[] }) {
-  if (!fields?.length) return null
+function DiffMappingTables({ tables }: { tables: SpecTable[] }) {
+  if (!tables?.length) return null
   return (
-    <div className="mt-2 ml-8 border rounded-md overflow-hidden">
-      <table className="w-full text-xs">
-        <thead className="bg-muted/50">
-          <tr>
-            <th className="text-left px-2 py-1 font-medium">Элемент</th>
-            <th className="text-left px-2 py-1 font-medium">Тип</th>
-            <th className="text-left px-2 py-1 font-medium">Обяз.</th>
-            <th className="text-left px-2 py-1 font-medium">Описание</th>
-            <th className="text-left px-2 py-1 font-medium">Источник</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fields.map((f, i) => (
-            <DiffMappingRow key={i} field={f} depth={0} />
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function DiffMappingRow({ field, depth }: { field: MessageField; depth: number }) {
-  return (
-    <>
-      <tr className="border-t border-muted">
-        <td className="px-2 py-1 font-mono" style={{ paddingLeft: `${0.5 + depth * 1}rem` }}>
-          {field.element}{field.is_collection && <span className="text-muted-foreground">[]</span>}
-        </td>
-        <td className="px-2 py-1 text-muted-foreground">{field.field_type ?? "-"}</td>
-        <td className="px-2 py-1">{field.required === null || field.required === undefined ? "–" : field.required ? "Да" : "Нет"}</td>
-        <td className="px-2 py-1 text-muted-foreground">{field.description ?? "-"}</td>
-        <td className="px-2 py-1 text-muted-foreground">{field.source ?? "-"}</td>
-      </tr>
-      {field.children?.map((child, i) => (
-        <DiffMappingRow key={i} field={child} depth={depth + 1} />
+    <div className="space-y-2">
+      {tables.map((table, i) => (
+        <div key={i} className="mt-2 ml-8 border rounded-md overflow-hidden">
+          <SpecTableGrid table={table} />
+        </div>
       ))}
-    </>
+    </div>
   )
 }
 
@@ -352,9 +323,7 @@ function DiffStepNode({ step, status }: { step: LogicStep; status: DiffStatus })
           </span>
           <span className="text-sm">{step.text}</span>
         </div>
-        {step.message_mapping && step.message_mapping.length > 0 && (
-          <DiffMappingTable fields={step.message_mapping} />
-        )}
+        <DiffMappingTables tables={step.mapping_tables ?? []} />
         {step.children?.length > 0 && (
           <div className="ml-6 border-l-2 border-muted pl-4 mt-1 space-y-1">
             {step.children.map((child, i) => (
@@ -378,7 +347,7 @@ function DiffLogicSteps({ oldSteps, newSteps }: { oldSteps: LogicStep[]; newStep
         if (status === "modified") {
           const oldStep = oldSteps.find(s => s.number === step.number)
           const textChanged = oldStep && oldStep.text !== step.text
-          const mappingChanged = JSON.stringify(oldStep?.message_mapping) !== JSON.stringify(step.message_mapping)
+          const mappingChanged = JSON.stringify(oldStep?.mapping_tables ?? []) !== JSON.stringify(step.mapping_tables ?? [])
 
           return (
             <div key={i}>
@@ -389,9 +358,7 @@ function DiffLogicSteps({ oldSteps, newSteps }: { oldSteps: LogicStep[]; newStep
                   </span>
                   <span className="text-sm">{step.text}</span>
                 </div>
-                {step.message_mapping && step.message_mapping.length > 0 && (
-                  <DiffMappingTable fields={step.message_mapping} />
-                )}
+                <DiffMappingTables tables={step.mapping_tables ?? []} />
               </DiffRow>
               {step.children?.length > 0 && (
                 <div className="ml-6 border-l-2 border-muted pl-4 mt-1 space-y-1">
@@ -411,50 +378,76 @@ function DiffLogicSteps({ oldSteps, newSteps }: { oldSteps: LogicStep[]; newStep
   )
 }
 
-function DiffParams({ oldParams, newParams }: { oldParams: ParameterField[]; newParams: ParameterField[] }) {
-  const diffed = diffByKey(oldParams, newParams, p => p.name)
+type FlatSpecRow = { path: string; depth: number; name: string; cells: string[] }
+
+function flattenSpecFields(fields: SpecField[], prefix = "", depth = 0): FlatSpecRow[] {
+  return fields.flatMap((f) => {
+    const path = prefix ? `${prefix}.${f.name}` : f.name
+    return [
+      { path, depth, name: f.name, cells: f.cells ?? [] },
+      ...flattenSpecFields(f.children ?? [], path, depth + 1),
+    ]
+  })
+}
+
+function DiffSpecTable({ oldTable, newTable }: { oldTable?: SpecTable; newTable?: SpecTable }) {
+  const table = newTable ?? oldTable
+  if (!table) return null
+  const diffed = diffByKey(
+    flattenSpecFields(oldTable?.fields ?? []),
+    flattenSpecFields(newTable?.fields ?? []),
+    r => r.path,
+  )
   return (
     <div className="rounded-md border overflow-hidden">
-      <table className="w-full text-xs">
-        <thead className="bg-muted/50">
-          <tr>
-            <th className="text-left px-2 py-1 font-medium">Имя</th>
-            <th className="text-left px-2 py-1 font-medium">Тип</th>
-            <th className="text-left px-2 py-1 font-medium">Обяз.</th>
-            <th className="text-left px-2 py-1 font-medium">Описание</th>
-            <th className="text-left px-2 py-1 font-medium">Валидация</th>
-          </tr>
-        </thead>
-        <tbody>
-          {diffed.map(({ item: p, status }, i) => (
-            <tr key={i} className={cn("border-t border-muted", DIFF_BG[status])}>
-              <td className="px-2 py-1 font-mono">{p.name}</td>
-              <td className="px-2 py-1 text-muted-foreground">{p.field_type}</td>
-              <td className="px-2 py-1">{p.required === null || p.required === undefined ? "–" : p.required ? "Да" : "Нет"}</td>
-              <td className="px-2 py-1 text-muted-foreground">{p.description}</td>
-              <td className="px-2 py-1 text-muted-foreground text-xs">{p.validation_rules?.join(", ") || "—"}</td>
+      {(table.status_codes || table.caption) && (
+        <div className="flex flex-wrap items-center gap-2 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
+          {table.status_codes && <span className="font-mono font-medium">HTTP {table.status_codes}</span>}
+          {table.caption && <span>{table.caption}</span>}
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50">
+            <tr>
+              <th className="text-left px-2 py-1 font-medium">Параметр</th>
+              {table.columns.map((col, i) => (
+                <th key={i} className="text-left px-2 py-1 font-medium">{col.header || "—"}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {diffed.map(({ item: row, status }, i) => (
+              <tr key={i} className={cn("border-t border-muted", DIFF_BG[status])}>
+                <td className="px-2 py-1 font-mono" style={{ paddingLeft: `${0.5 + row.depth}rem` }}>{row.name}</td>
+                {table.columns.map((_, ci) => (
+                  <td key={ci} className="px-2 py-1 text-muted-foreground align-top whitespace-pre-wrap">
+                    {row.cells[ci] || "—"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
 
-function DiffRules({ oldRules, newRules }: { oldRules: string[]; newRules: string[] }) {
-  const diffed = diffByKey(
-    oldRules.map((r, i) => ({ id: r, text: r, idx: i })),
-    newRules.map((r, i) => ({ id: r, text: r, idx: i })),
-    r => r.text,
-  )
+function DiffSpecTables({ oldTables, newTables }: { oldTables: SpecTable[]; newTables: SpecTable[] }) {
+  const keyOf = (t: SpecTable, i: number) => t.table_id ?? `${t.status_codes ?? ""}|${t.location ?? ""}#${i}`
+  const oldByKey = new Map(oldTables.map((t, i) => [keyOf(t, i), t]))
+  const newByKey = new Map(newTables.map((t, i) => [keyOf(t, i), t]))
+  const keys = [
+    ...oldTables.map((t, i) => keyOf(t, i)).filter(k => !newByKey.has(k)),
+    ...newTables.map((t, i) => keyOf(t, i)),
+  ]
   return (
-    <ul className="list-disc pl-4 space-y-1">
-      {diffed.map(({ item, status }, i) => (
-        <li key={i} className={cn("text-sm rounded-sm", DIFF_BG[status])}>
-          {item.text}
-        </li>
+    <div className="space-y-3">
+      {keys.map((k) => (
+        <DiffSpecTable key={k} oldTable={oldByKey.get(k)} newTable={newByKey.get(k)} />
       ))}
-    </ul>
+    </div>
   )
 }
 
@@ -497,32 +490,22 @@ function DiffPreviewModal({
 }) {
   const sections: { title: string; content: React.ReactNode }[] = []
 
-  if (original.input_parameters?.length || proposed.input_parameters?.length) {
+  if (original.input_tables?.length || proposed.input_tables?.length) {
     sections.push({
       title: "Входные параметры",
-      content: <DiffParams oldParams={original.input_parameters ?? []} newParams={proposed.input_parameters ?? []} />,
+      content: <DiffSpecTables oldTables={original.input_tables ?? []} newTables={proposed.input_tables ?? []} />,
     })
   }
-  {
-    const successOld = original.success_response ?? original.output_parameters ?? []
-    const successNew = proposed.success_response ?? proposed.output_parameters ?? []
-    if (successOld.length || successNew.length) {
-      sections.push({
-        title: "Успешный ответ",
-        content: <DiffParams oldParams={successOld} newParams={successNew} />,
-      })
-    }
+  if (original.response_tables?.length || proposed.response_tables?.length) {
+    sections.push({
+      title: "Выходные параметры",
+      content: <DiffSpecTables oldTables={original.response_tables ?? []} newTables={proposed.response_tables ?? []} />,
+    })
   }
   if (original.logic_steps?.length || proposed.logic_steps?.length) {
     sections.push({
       title: "Шаги логики",
       content: <DiffLogicSteps oldSteps={original.logic_steps ?? []} newSteps={proposed.logic_steps ?? []} />,
-    })
-  }
-  if (original.business_rules?.length || proposed.business_rules?.length) {
-    sections.push({
-      title: "Бизнес-правила",
-      content: <DiffRules oldRules={original.business_rules ?? []} newRules={proposed.business_rules ?? []} />,
     })
   }
   if (original.used_dependencies?.length || proposed.used_dependencies?.length) {

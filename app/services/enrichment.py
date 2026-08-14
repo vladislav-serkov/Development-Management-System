@@ -2,10 +2,12 @@
 import logging
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from app.config import settings
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
 from app.schemas.enrichment import DependencyResponse
-from app.services.claude_client import call_claude, log_cache_stats
+from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services.extraction import (
     _build_document_block,
     _normalize_dep_name,
@@ -109,39 +111,53 @@ async def _extract_enrichment(
     if system_prompt:
         create_kwargs_enr["system"] = system_prompt
 
-    response = await call_claude(
-        label=f"enrichment:{dep_type}",
-        **create_kwargs_enr,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    _build_document_block(text_content, cache=True),
-                    {"type": "text", "text": prompt_text},
-                ],
-            }
-        ],
-    )
-
-    log_cache_stats(response.usage, f"enrichment:{dep_type}")
-
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
-            break
-
-    if tool_block is None:
-        raise ValueError("No tool_use block in Claude response for enrichment")
-
-    if response.stop_reason == "max_tokens":
-        raise ValueError(
-            f"Claude response truncated by max_tokens for enrichment:{dep_type} — document too large"
+    # The model occasionally emits an unrecoverably malformed tool input
+    # (garbage fields, wrong shape); a fresh re-ask usually fixes it,
+    # so retry the Claude call on validation failure.
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        response = await call_claude(
+            label=f"enrichment:{dep_type}",
+            **create_kwargs_enr,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        _build_document_block(text_content, cache=True),
+                        {"type": "text", "text": prompt_text},
+                    ],
+                }
+            ],
         )
 
-    result = schema_class.model_validate(tool_block.input)
-    logger.info("Enrichment extraction complete for dep_type=%s", dep_type)
-    return result
+        log_cache_stats(response.usage, f"enrichment:{dep_type}")
+
+        tool_block = None
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                tool_block = block
+                break
+
+        if tool_block is None:
+            raise ValueError("No tool_use block in Claude response for enrichment")
+
+        if response.stop_reason == "max_tokens":
+            raise ValueError(
+                f"Claude response truncated by max_tokens for enrichment:{dep_type} — document too large"
+            )
+
+        try:
+            result = parse_tool_input(schema_class, tool_block.input)
+        except ValidationError as exc:
+            if attempt == max_attempts:
+                raise
+            logger.warning(
+                "enrichment:%s tool input invalid (attempt %d/%d), retrying: %s",
+                dep_type, attempt, max_attempts, exc,
+            )
+            continue
+        logger.info("Enrichment extraction complete for dep_type=%s", dep_type)
+        return result
 
 
 # Types whose page describes a LIST of entities (one page → many tables/topics/caches):

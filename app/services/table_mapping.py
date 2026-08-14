@@ -1,17 +1,18 @@
 """Deterministic conversion of spec tables (parsed from Confluence XHTML) into
-MessageField mappings — replaces LLM Call 2 for text imports.
+SpecTable structures — the spec's own table, verbatim, with role annotations.
 
-A table qualifies as a field mapping when its headers contain a recognizable
+A table qualifies as a field table when its headers contain a recognizable
 "parameter name" column plus at least a type or requiredness column. Nesting is
 encoded by column position: the name of a nested field sits one column deeper
-(colspan expansion in the converter guarantees this invariant).
+(colspan expansion in the converter guarantees this invariant). Everything else
+— column set, headers, cell contents — is preserved exactly as the spec wrote it.
 """
 
 import logging
 import re
 from collections.abc import Callable
 
-from app.schemas.extraction import FieldSourceRef, MessageField
+from app.schemas.extraction import FieldSourceRef, SpecColumn, SpecField, SpecTable
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,14 @@ DESCRIPTION_HEADERS = {
 EXAMPLE_HEADERS = {"пример", "пример значения", "example"}
 CONSTRAINT_HEADERS = {"ограничения", "ограничение", "валидация", "validation"}
 
-_CARDINALITY_RE = re.compile(r"^\d+\s*(?:-|\.\.)\s*(?:\d+|n)$", re.IGNORECASE)
+_ROLE_BY_HEADER: list[tuple[frozenset[str], str]] = [
+    (frozenset(TYPE_HEADERS), "type"),
+    (frozenset(REQUIRED_HEADERS), "required"),
+    (frozenset(SOURCE_HEADERS), "source"),
+    (frozenset(DESCRIPTION_HEADERS), "description"),
+    (frozenset(EXAMPLE_HEADERS), "example"),
+    (frozenset(CONSTRAINT_HEADERS), "constraint"),
+]
 
 # Where a table's fields live, read off the line the spec puts above the table
 # ("query", "HTTP 200 | Тело ответа в формате JSON"). Order matters: a body caption
@@ -50,6 +58,8 @@ _PARAM_IN_MARKERS: list[tuple[str, tuple[str, ...]]] = [
     ("query", ("query", "параметры запроса", "строка запроса")),
     ("body", ("тело", "body", "payload", "json")),
 ]
+
+_STATUS_CODES_RE = re.compile(r"\b[1-5](?:\d\d|xx)\b", re.IGNORECASE)
 
 
 def param_in_from_context(context: str) -> str | None:
@@ -66,6 +76,13 @@ def param_in_from_context(context: str) -> str | None:
     return None
 
 
+def status_codes_from_context(context: str) -> str | None:
+    """Read HTTP status codes off the heading above a response table, verbatim order."""
+    codes = _STATUS_CODES_RE.findall(context or "")
+    deduped = list(dict.fromkeys(codes))
+    return ", ".join(deduped) if deduped else None
+
+
 def _norm(header: str) -> str:
     return " ".join(header.split()).strip(" :.").lower()
 
@@ -74,49 +91,34 @@ def _clean_cell(text: str) -> str:
     return " ".join(text.split()).strip("* ")
 
 
-def _parse_required(value: str) -> tuple[bool | None, str | None]:
-    """Parse the 'Обязательность' cell → (required, cardinality)."""
-    v = _clean_cell(value).lower()
-    if not v:
-        return None, None
-    if _CARDINALITY_RE.match(v):
-        card = v.replace(" ", "")
-        return not card.startswith("0"), card
-    if v.startswith(("да", "yes", "true", "обяз")):
-        return True, None
-    if v.startswith(("нет", "no", "false", "опцион", "необяз")):
-        return False, None
-    if v in ("1", "1-1", "1..1"):
-        return True, v
-    if v in ("0", "0-1", "0..1"):
-        return False, v
-    return None, None
+def _column_role(header: str) -> str | None:
+    h = _norm(header)
+    for headers, role in _ROLE_BY_HEADER:
+        if h in headers:
+            return role
+    return None
 
 
-def _is_collection(field_type: str | None, cardinality: str | None) -> bool:
-    if cardinality and cardinality.lower().endswith("n"):
-        return True
-    if field_type and re.search(r"array|массив|list|\[\]", field_type, re.IGNORECASE):
-        return True
-    return False
-
-
-def table_to_message_fields(
+def table_to_spec_table(
     table: dict,
     resolve_link: LinkResolver | None = None,
-) -> list[MessageField] | None:
-    """Convert a parsed table grid into a MessageField tree.
+    require_typed: bool = True,
+) -> SpecTable | None:
+    """Convert a parsed table grid into a SpecTable: columns verbatim + field tree.
 
     ``resolve_link`` maps a [LINK:Ln] id from a source cell to the (dep_type, dep_name)
     it points at, turning the free-text source into a structured ``source_refs`` link.
 
-    Rows the spec struck through are skipped: a retired field must not reappear in the
-    mapping as a live one.
+    Rows the spec struck through are skipped: a retired field must not reappear
+    as a live one.
 
-    Returns None when the table doesn't look like a field mapping (no name
-    column, or neither type nor requiredness column) — caller keeps it verbatim.
+    Returns None when the table doesn't look like a field table (no name column,
+    or — with ``require_typed`` — neither type nor requiredness column) — caller
+    keeps it verbatim as a reference table. Pass ``require_typed=False`` for
+    tables the LLM already classified as parameter tables.
     """
-    headers = [_norm(h) for h in table.get("headers", [])]
+    headers_raw = table.get("headers", [])
+    headers = [_norm(h) for h in headers_raw]
     rows = table.get("rows", [])
     if not headers or not rows:
         return None
@@ -134,32 +136,23 @@ def table_to_message_fields(
     while name_end + 1 < len(headers) and headers[name_end + 1] == "":
         name_end += 1
 
-    roles: dict[int, str] = {}
-    for i, h in enumerate(headers):
-        if i <= name_end:
+    # Data columns: everything outside the name span, minus columns that are
+    # empty both in header and in every row (colspan padding artifacts).
+    col_indexes: list[int] = []
+    for i in range(len(headers)):
+        if name_start <= i <= name_end:
             continue
-        if h in TYPE_HEADERS:
-            roles[i] = "type"
-        elif h in REQUIRED_HEADERS:
-            roles[i] = "required"
-        elif h in SOURCE_HEADERS:
-            roles[i] = "source"
-        elif h in DESCRIPTION_HEADERS:
-            roles[i] = "description"
-        elif h in EXAMPLE_HEADERS:
-            roles[i] = "example"
-        elif h in CONSTRAINT_HEADERS:
-            roles[i] = "constraint"
+        if not headers[i] and all(not _clean_cell(r[i]) for r in rows if i < len(r)):
+            continue
+        col_indexes.append(i)
 
-    if "type" not in roles.values() and "required" not in roles.values():
-        return None
+    columns = [
+        SpecColumn(header=headers_raw[i].strip(), role=_column_role(headers_raw[i]))
+        for i in col_indexes
+    ]
+    roles = {i: c.role for i, c in zip(col_indexes, columns)}
 
-    def cell(row: list[str], role: str) -> str | None:
-        for i, r in roles.items():
-            if r == role and i < len(row):
-                value = _clean_cell(row[i])
-                if value:
-                    return value
+    if require_typed and "type" not in roles.values() and "required" not in roles.values():
         return None
 
     def source_refs(row_index: int) -> list[FieldSourceRef]:
@@ -169,8 +162,8 @@ def table_to_message_fields(
         cells = row_links[row_index]
         refs: list[FieldSourceRef] = []
         seen: set[tuple[str, str, str | None]] = set()
-        for i, role in roles.items():
-            if role != "source" or i >= len(cells):
+        for i in col_indexes:
+            if roles.get(i) != "source" or i >= len(cells):
                 continue
             for link in cells[i]:
                 dep = resolve_link(link["link_id"])
@@ -183,8 +176,8 @@ def table_to_message_fields(
                 refs.append(FieldSourceRef(dep_type=dep[0], dep_name=dep[1], field=link.get("field")))
         return refs
 
-    roots: list[MessageField] = []
-    stack: list[tuple[int, MessageField]] = []
+    roots: list[SpecField] = []
+    stack: list[tuple[int, SpecField]] = []
     skipped_deprecated = 0
     for row_index, row in enumerate(rows):
         if row_index in deprecated_rows:
@@ -195,29 +188,15 @@ def table_to_message_fields(
         if indent is None:
             continue  # continuation/empty row — nothing to anchor it to reliably
 
-        required, cardinality = _parse_required(cell(row, "required") or "")
-        field_type = cell(row, "type")
-        description = cell(row, "description")
-        constraint = cell(row, "constraint")
-        if constraint:
-            description = f"{description} Ограничения: {constraint}" if description else f"Ограничения: {constraint}"
-
-        field = MessageField(
-            element=_clean_cell(name_cells[indent]),
-            field_type=field_type,
-            required=required,
-            cardinality=cardinality,
-            is_collection=_is_collection(field_type, cardinality),
-            description=description,
-            source=cell(row, "source"),
+        field = SpecField(
+            name=_clean_cell(name_cells[indent]),
+            cells=[_clean_cell(row[i]) if i < len(row) else "" for i in col_indexes],
             source_refs=source_refs(row_index),
-            example=cell(row, "example"),
         )
 
         while stack and stack[-1][0] >= indent:
             stack.pop()
         if stack:
-            field.parent = stack[-1][1].element
             stack[-1][1].children.append(field)
         else:
             roots.append(field)
@@ -229,4 +208,15 @@ def table_to_message_fields(
             table.get("id"), skipped_deprecated,
         )
 
-    return roots or None
+    if not roots:
+        return None
+
+    context = table.get("context", "") or ""
+    return SpecTable(
+        table_id=table.get("id"),
+        caption=context or None,
+        location=param_in_from_context(context),
+        status_codes=status_codes_from_context(context),
+        columns=columns,
+        fields=roots,
+    )

@@ -25,9 +25,9 @@ class GapReviewRequest(BaseModel):
 
 class ApplyChange(BaseModel):
     """One change to be applied to structured logic."""
-    section: str = Field(description="Where in logic: 'logic_steps', 'business_rules', 'error_handling', 'input_parameters', 'success_response', 'error_responses', 'used_dependencies'")
+    section: str = Field(description="Where in logic: 'logic_steps', 'input_tables', 'response_tables', 'used_dependencies'")
     action: str = Field(description="What was done: 'added', 'modified', 'removed'")
-    location: str = Field(description="Human-readable location, e.g. 'Шаг 4', 'Бизнес-правило #3', 'error_handling'")
+    location: str = Field(description="Human-readable location, e.g. 'Шаг 4', 'Параметр limitAmount'")
     description: str = Field(description="What changed, in Russian. Readable for analyst.")
     detail: str = Field(description="The actual new/modified text content in Russian")
     gap_index: int = Field(description="Index of the gap that triggered this change")

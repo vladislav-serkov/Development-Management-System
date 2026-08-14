@@ -12,7 +12,7 @@ from app.prompts.gaps import (
     build_apply_user_message,
 )
 from app.schemas.gaps import ApplyResult, GapsAnalysisResult
-from app.services.claude_client import call_claude, log_cache_stats
+from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
@@ -73,7 +73,7 @@ async def _call_gaps_analysis(
         logger.warning("[gaps:analysis] No tool_use block in Claude response")
         return []
 
-    result = GapsAnalysisResult.model_validate(tool_block.input)
+    result = parse_tool_input(GapsAnalysisResult, tool_block.input)
     logger.info("[gaps:analysis] Found %d gap(s)", len(result.gaps))
 
     return [
@@ -314,12 +314,12 @@ async def generate_apply_preview(
     if tool_block is None:
         raise RuntimeError("Claude did not return a tool_use block for apply_preview")
 
-    result = ApplyResult.model_validate(tool_block.input)
+    result = parse_tool_input(ApplyResult, tool_block.input)
     proposed_dict = result.structured_logic.model_dump(mode="json")
     changes_list = [c.model_dump(mode="json") for c in result.changes]
 
     # Sanity check: proposed should have at least as many items as original
-    for key in ("input_parameters", "success_response", "error_responses", "logic_steps", "used_dependencies", "business_rules"):
+    for key in ("input_tables", "response_tables", "logic_steps", "used_dependencies"):
         orig_count = len(current_sl.get(key, []))
         proposed_count = len(proposed_dict.get(key, []))
         if proposed_count < orig_count:

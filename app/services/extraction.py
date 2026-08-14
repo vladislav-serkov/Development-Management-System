@@ -5,6 +5,8 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from app.config import settings
 from app.prompts.extraction import DETECT_FEATURE_PROMPT
 from app.schemas.extraction import (
@@ -12,7 +14,7 @@ from app.schemas.extraction import (
     FeatureDetectionResult,
     GenericTable,
 )
-from app.services.claude_client import call_claude, log_cache_stats
+from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -143,19 +145,6 @@ def _dedupe_external_docs(structured_logic) -> list[str]:
     return removed
 
 
-def _propagate_is_collection(fields: list) -> None:
-    """Post-order traversal: set parent.is_collection=True if any child has cardinality ending with '-N'."""
-    for field in fields:
-        if field.children:
-            _propagate_is_collection(field.children)
-            # After recursing children, check if any child has -N cardinality
-            if not field.is_collection:
-                for child in field.children:
-                    if child.cardinality and child.cardinality.endswith("-N"):
-                        field.is_collection = True
-                        break
-
-
 def _build_link_resolver(used_dependencies) -> Callable[[str], tuple[str, str] | None]:
     """[LINK:Ln] → the dependency Claude attached that link to.
 
@@ -171,86 +160,68 @@ def _build_link_resolver(used_dependencies) -> Callable[[str], tuple[str, str] |
     return by_link.get
 
 
-def _apply_response_param_in(structured_logic, tables_by_id: dict[str, dict]) -> None:
-    """Fill param_in (body/header) on response fields from the caption above their table.
+def _resolve_spec_tables(structured_logic, tables_by_id: dict[str, dict], resolve_link=None) -> None:
+    """Replace LLM table references in input_tables/response_tables with tables
+    parsed verbatim from the document grids.
 
-    The spec states it plainly right above the grid — "HTTP 200 | Тело ответа в формате
-    JSON" — so it is read, not guessed. Only top-level fields carry param_in: children
-    are nested inside the body, not a separate location.
+    The LLM only classified the tables (which id belongs to which section, plus
+    status codes for responses); the columns and rows come from the parsed grid.
+    LLM entries without a table_id are the inline fallback for documents without
+    [TABLE:Tn] markers and are kept as-is when they carry fields.
     """
-    from app.services.table_mapping import param_in_from_context
+    from app.services.table_mapping import table_to_spec_table
 
-    fields = structured_logic.success_response
-    if not fields:
-        return
-
-    tables = [
-        tables_by_id[tid.strip().upper()]
-        for tid in structured_logic.success_response_table_ids
-        if tid.strip().upper() in tables_by_id
-    ]
-
-    # No table to read from (spec without tables): the response body is the safe default.
-    if not tables:
-        for field in fields:
-            if field.param_in is None:
-                field.param_in = "body"
-        return
-
-    # One table → one location for every field. Several (body + headers separately) →
-    # match each field to the table that actually lists it.
-    if len(tables) == 1:
-        param_in = param_in_from_context(tables[0].get("context", "")) or "body"
-        for field in fields:
-            field.param_in = param_in
-        return
-
-    for table in tables:
-        param_in = param_in_from_context(table.get("context", "")) or "body"
-        listed = set()
-        for row in table.get("rows", []):
-            for cell in row[:2]:  # name column, plus its first nesting column
-                name = " ".join(cell.split()).strip("* ").lower()
-                if name:
-                    listed.add(name)
-        for field in fields:
-            if field.name.lower() in listed:
-                field.param_in = param_in
-
-    for field in fields:
-        if field.param_in is None:
-            field.param_in = "body"
+    for attr in ("input_tables", "response_tables"):
+        resolved = []
+        for entry in getattr(structured_logic, attr):
+            tid = (entry.table_id or "").strip().upper()
+            if tid and tid in tables_by_id:
+                parsed = table_to_spec_table(
+                    tables_by_id[tid], resolve_link=resolve_link, require_typed=False,
+                )
+                if parsed is not None:
+                    # Caption-derived status codes win; the LLM's value fills the gap
+                    # when the heading above the table names none.
+                    if entry.status_codes and not parsed.status_codes:
+                        parsed.status_codes = entry.status_codes
+                    resolved.append(parsed)
+                    continue
+                logger.warning("Table %s (%s) did not parse as a field table — dropped", tid, attr)
+            elif tid:
+                logger.warning("%s references unknown table id %s", attr, tid)
+            if entry.fields:
+                resolved.append(entry)
+        setattr(structured_logic, attr, resolved)
 
 
 def _apply_table_mappings(steps, tables_by_id: dict[str, dict], resolve_link=None) -> list[str]:
-    """Fill message_mapping from parsed document tables for steps that reference
+    """Fill mapping_tables from parsed document tables for steps that reference
     [TABLE:Tn] markers. Returns filled step numbers.
 
     A referenced table that doesn't parse as a field mapping is preserved
     verbatim in the step's reference_tables — no LLM fallback.
     """
-    from app.services.table_mapping import table_to_message_fields
+    from app.services.table_mapping import table_to_spec_table
 
     filled: list[str] = []
     for step in steps:
-        if step.mapping_table_ids and not step.message_mapping:
-            fields = []
+        if step.mapping_table_ids and not step.mapping_tables:
+            spec_tables = []
             for tid in step.mapping_table_ids:
                 table = tables_by_id.get(tid.strip().upper())
                 if table is None:
                     logger.warning("Step %s references unknown table id %s", step.number, tid)
                     continue
-                parsed = table_to_message_fields(table, resolve_link=resolve_link)
+                parsed = table_to_spec_table(table, resolve_link=resolve_link)
                 if parsed is None:
                     logger.warning("Table %s (step %s) is not a parseable mapping — kept verbatim in reference_tables", tid, step.number)
                     step.reference_tables.append(
                         GenericTable(caption=None, headers=table["headers"], rows=table["rows"])
                     )
                     continue
-                fields.extend(parsed)
-            if fields:
-                _propagate_is_collection(fields)
-                step.message_mapping = fields
+                spec_tables.append(parsed)
+            if spec_tables:
+                step.mapping_tables = spec_tables
                 step.has_detailed_mapping = True
                 filled.append(step.number)
         filled.extend(_apply_table_mappings(step.children, tables_by_id, resolve_link))
@@ -317,16 +288,16 @@ async def _detect_features(
     if tool_block is None:
         raise ValueError("No tool_use block in Claude response")
 
-    tool_input = tool_block.input
-    features_input = (tool_input or {}).get("features") or []
-    if not features_input:
-        logger.warning("[Detect] Claude returned empty features list: %s", tool_input)
+    try:
+        result = parse_tool_input(FeatureDetectionResult, tool_block.input or {})
+    except ValidationError:
+        logger.warning("[Detect] Unparseable tool input: %s", str(tool_block.input)[:500])
+        result = None
+    if result is None or not result.features:
         raise ValueError(
             "Claude не смог извлечь ни одной feature из документа. "
             "Возможно, документ не содержит технического задания."
         )
-
-    result = FeatureDetectionResult.model_validate(tool_input)
     logger.info(
         "[Detect] Detected %d feature(s): %s",
         len(result.features),
@@ -353,15 +324,15 @@ async def _process_single_feature(
     if removed_docs:
         logger.info("Dropped %d duplicate external_doc dep(s) for '%s': %s", len(removed_docs), detected.name, removed_docs)
 
+    resolve_link = _build_link_resolver(detected.structured_logic.used_dependencies)
     if tables_by_id:
-        resolve_link = _build_link_resolver(detected.structured_logic.used_dependencies)
         filled = _apply_table_mappings(
             detected.structured_logic.logic_steps, tables_by_id, resolve_link
         )
         if filled:
             logger.info("Deterministic mappings for '%s': %d step(s) %s", detected.name, len(filled), filled)
 
-    _apply_response_param_in(detected.structured_logic, tables_by_id)
+    _resolve_spec_tables(detected.structured_logic, tables_by_id, resolve_link)
 
     feature_data = {
         "name": detected.name,
@@ -526,25 +497,6 @@ async def run_extraction_pipeline(
                     logger.info("Dropped stale feature '%s' of document '%s'", feat["name"], doc_slug)
         except Exception as exc:
             logger.warning("Stale-feature cleanup failed (non-fatal): %s", exc)
-
-    # required_sync after at least one success (non-fatal)
-    if succeeded:
-        try:
-            from app.services.required_sync import sync_required_after_enrichment
-            by_type = await store.list_dependencies(project_slug)
-            for dep_type, deps in by_type.items():
-                for dep in deps:
-                    enriched = dep.get("enriched_data")
-                    if enriched and dep.get("enrichment_status") == "enriched":
-                        await sync_required_after_enrichment(
-                            project_slug=project_slug,
-                            dep_type=dep_type,
-                            dep_name=dep["name"],
-                            enriched_data=enriched,
-                            store=store,
-                        )
-        except Exception as sync_exc:
-            logger.warning("required_sync after extraction failed (non-fatal): %s", sync_exc)
 
     doc_data["feature_count"] = len(succeeded)
     if not succeeded:

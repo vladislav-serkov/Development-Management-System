@@ -11,7 +11,6 @@ import { EMPTY_RULES, type AgentName, type RulesData } from "@/api/rules"
 
 const AGENT_TABS: { id: AgentName; label: string }[] = [
   { id: "extraction", label: "Извлечение" },
-  { id: "gaps", label: "Пробелы" },
   { id: "test_cases", label: "Тест-кейсы" },
   { id: "bugs", label: "Баги" },
   { id: "enrichment", label: "Обогащение" },
