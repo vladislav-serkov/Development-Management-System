@@ -84,7 +84,8 @@ async def _fetch_page_data(ref: dict) -> dict:
                     params={"spaceKey": ref["space"], "title": ref["title"], "expand": expand},
                 )
         except httpx.HTTPError as exc:
-            raise ConfluenceError(f"Ошибка соединения с Confluence: {exc}") from exc
+            detail = str(exc) or type(exc).__name__  # у httpx-таймаутов str() пустой
+            raise ConfluenceError(f"Ошибка соединения с Confluence: {detail}") from exc
 
     if resp.status_code == 401:
         raise ConfluenceError("Confluence отклонил токен (401): проверьте CONFLUENCE_PAT")

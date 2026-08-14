@@ -10,7 +10,7 @@ from app.services.confluence import ConfluenceError, fetch_page
 from app.services.enrichment import EXTERNAL_DOC_TARGETED_ONLY_MSG, run_enrichment_pipeline
 from app.services.required_sync import sync_required_after_enrichment
 from app.services.task_manager import task_manager
-from app.storage import DEP_TYPE_FILE
+from app.storage import DEP_TYPE_FILE, ActiveTaskExistsError
 
 logger = logging.getLogger(__name__)
 
@@ -288,9 +288,12 @@ async def enrich_dependency(
             error_message="Server restarted before task completed",
         )
 
-    task = await store.create_task(
-        project_slug, kind="enrichment", target_type="dependency", target_id=target_id,
-    )
+    try:
+        task = await store.create_task(
+            project_slug, kind="enrichment", target_type="dependency", target_id=target_id,
+        )
+    except ActiveTaskExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     task_manager.launch(
         task_key,
         _run_enrichment_background(

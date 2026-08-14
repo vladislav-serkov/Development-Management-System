@@ -1,4 +1,7 @@
+import difflib
+import json
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -18,6 +21,69 @@ logger = logging.getLogger(__name__)
 def _normalize_dep_name(name: str) -> str:
     """Normalize dependency name: trim whitespace, spaces to underscores. Preserves original case."""
     return name.strip().replace(" ", "_")
+
+
+# Dotted identifiers like Kafka topics: at least three dot-separated segments
+_DOTTED_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}\b")
+# URL-ish paths like /v1/credit-line or /api/orders/{id}
+_PATH_TOKEN_RE = re.compile(r"(?<![\w.])/(?:[\w.-]+|\{[\w.-]+\})(?:/(?:[\w.-]+|\{[\w.-]+\}))+")
+
+
+def _enforce_spec_identity(
+    detected: DetectedFeature,
+    *,
+    title: str,
+    text: str,
+    tables: list[dict] | None,
+) -> str | None:
+    """Feature identity must be verbatim from the spec, never invented by the LLM:
+    the Kafka topic / REST path the model claims has to literally occur in the
+    document (title, body or tables). If it doesn't, replace it with the closest
+    real token from the spec. Returns a warning string when a correction happened.
+
+    scheduled_task names are semantic slugs by design and are not touched
+    (their verbatim identity lives in display_name).
+    """
+    ftype = detected.type.value if hasattr(detected.type, "value") else str(detected.type)
+    corpus = "\n".join([title or "", text or "", json.dumps(tables or [], ensure_ascii=False)])
+
+    if ftype == "kafka_consumer":
+        claimed = (detected.endpoint or detected.name or "").strip()
+        candidates = list(dict.fromkeys(_DOTTED_TOKEN_RE.findall(corpus)))
+        if claimed and claimed in candidates:
+            detected.name = claimed
+            detected.endpoint = claimed
+            return None
+        best = None
+        if claimed and candidates:
+            matches = difflib.get_close_matches(claimed, candidates, n=1, cutoff=0.6)
+            best = matches[0] if matches else None
+        if best is None:
+            # A Kafka spec page is conventionally titled with the topic name
+            title_tokens = _DOTTED_TOKEN_RE.findall(title or "")
+            best = title_tokens[0] if title_tokens else None
+        if best is None:
+            return f"kafka topic '{claimed}' не найден в тексте ТЗ (оставлен как есть)"
+        detected.name = best
+        detected.endpoint = best
+        return f"kafka topic '{claimed}' не найден в ТЗ — заменён на '{best}'"
+
+    if ftype == "rest_endpoint":
+        claimed = (detected.endpoint or "").strip()
+        candidates = list(dict.fromkeys(_PATH_TOKEN_RE.findall(corpus)))
+        path = claimed if claimed and claimed in candidates else None
+        if path is None and claimed and candidates:
+            matches = difflib.get_close_matches(claimed, candidates, n=1, cutoff=0.6)
+            path = matches[0] if matches else None
+        if path is None:
+            return f"REST path '{claimed}' не найден в тексте ТЗ (оставлен как есть)" if claimed else None
+        canonical = f"{detected.method} {path}".strip() if detected.method else path
+        changed = path != claimed or detected.name != canonical
+        detected.endpoint = path
+        detected.name = canonical
+        return f"REST path '{claimed}' не найден в ТЗ — заменён на '{path}'" if changed and path != claimed else None
+
+    return None
 
 
 def _build_document_block(text: str, cache: bool = False) -> dict:
@@ -379,7 +445,7 @@ async def run_extraction_pipeline(
     now_iso = datetime.now(UTC).isoformat()
 
     if not doc_slug:
-        doc_slug = store.make_doc_slug(project_slug, filename)
+        doc_slug = await store.make_doc_slug(project_slug, filename)
     doc_data = await store.get_document(project_slug, doc_slug)
     if doc_data is None:
         logger.error("Document record not found for %s/%s", project_slug, doc_slug)
@@ -417,6 +483,14 @@ async def run_extraction_pipeline(
     doc_data["error_message"] = None
     await store.save_document(project_slug, doc_data)
 
+    # Identity must come from the spec, not the LLM: same page → same feature name
+    for detected in detected_features:
+        warning = _enforce_spec_identity(
+            detected, title=filename, text=text_content, tables=tables,
+        )
+        if warning:
+            logger.warning("Feature identity corrected for '%s': %s", filename, warning)
+
     succeeded: list[str] = []
     failures: list[tuple[str, str]] = []
 
@@ -439,6 +513,19 @@ async def run_extraction_pipeline(
                 await store.delete_feature(project_slug, detected.name)
             except Exception as del_exc:
                 logger.warning("Rollback of feature '%s' failed: %s", detected.name, del_exc)
+
+    # Re-extraction replaces this document's features: drop ones that are no
+    # longer detected (renamed/removed in the spec), keep same-named intact so
+    # their gaps/test-cases survive (non-fatal).
+    if succeeded:
+        try:
+            detected_names = {d.name for d in detected_features}
+            for feat in await store.list_features(project_slug):
+                if feat.get("source_document") == doc_slug and feat.get("name") not in detected_names:
+                    await store.delete_feature(project_slug, feat["name"])
+                    logger.info("Dropped stale feature '%s' of document '%s'", feat["name"], doc_slug)
+        except Exception as exc:
+            logger.warning("Stale-feature cleanup failed (non-fatal): %s", exc)
 
     # required_sync after at least one success (non-fatal)
     if succeeded:

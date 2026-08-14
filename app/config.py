@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # tool_use block arrives as an empty/partial input and looks like "Claude found
     # nothing". Sonnet 4.6 allows up to 128K output.
     extraction_max_tokens: int = 32000
-    data_dir: str = "./data/projects"
+    database_url: str = "postgresql+asyncpg://extract:extract@localhost:5432/extract_agent"
     confluence_base_url: str = ""
     confluence_pat: str = ""
     cors_origins: str = ""

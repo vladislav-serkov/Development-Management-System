@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,15 +23,31 @@ logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+def _run_migrations() -> None:
+    from alembic.config import Config
+
+    from alembic import command
+
+    root = Path(__file__).resolve().parent.parent
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "alembic"))
+    command.upgrade(cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
+    # Alembic's env.py opens its own (sync-wrapped async) connection; run it
+    # in a thread so it doesn't collide with the running event loop.
+    await asyncio.to_thread(_run_migrations)
     if settings.anthropic_api_key in ("", "sk-ant-xxx"):
         logger.warning(
             "ANTHROPIC_API_KEY is not configured — Claude-backed features will fail. "
             "Set it in .env before serving traffic."
         )
     yield
+    from app.db import dispose_engine
+
+    await dispose_engine()
 
 
 app = FastAPI(title="Extract Agent", lifespan=lifespan)

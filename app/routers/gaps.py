@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Path
 from app.schemas.gaps import ApplyConfirmRequest, GapReviewRequest
 from app.services.gaps import confirm_apply, run_apply_preview_background, run_gaps_pipeline
 from app.services.task_manager import task_manager
-from app.storage import ProjectStore
+from app.storage import ActiveTaskExistsError, ProjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +49,12 @@ async def run_gaps_analysis(
             error_message="Server restarted before task completed",
         )
 
-    task = await store.create_task(
-        project_slug, kind="gaps", target_type="feature", target_id=feature_name,
-    )
+    try:
+        task = await store.create_task(
+            project_slug, kind="gaps", target_type="feature", target_id=feature_name,
+        )
+    except ActiveTaskExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     task_manager.launch(
         task_key,
         run_gaps_pipeline(project_slug, feature_name, store, task_id=task["id"]),
@@ -184,9 +187,12 @@ async def apply_preview_run(
             error_message="Server restarted before task completed",
         )
 
-    task = await store.create_task(
-        project_slug, kind="apply_gaps", target_type="feature", target_id=feature_name,
-    )
+    try:
+        task = await store.create_task(
+            project_slug, kind="apply_gaps", target_type="feature", target_id=feature_name,
+        )
+    except ActiveTaskExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     task_manager.launch(
         task_key,
         run_apply_preview_background(project_slug, feature_name, store, task_id=task["id"]),

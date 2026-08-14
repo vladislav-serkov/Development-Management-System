@@ -1,4 +1,19 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: extract
+      POSTGRES_PASSWORD: extract
+      POSTGRES_DB: extract_agent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U extract -d extract_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: .
@@ -7,9 +22,10 @@ services:
       - .env
     environment:
       PYTHONUNBUFFERED: "1"
-      DATA_DIR: /app/data/projects
-    volumes:
-      - ./data:/app/data
+      DATABASE_URL: postgresql+asyncpg://extract:extract@db:5432/extract_agent
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).read()"]
@@ -38,3 +54,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  pgdata:
