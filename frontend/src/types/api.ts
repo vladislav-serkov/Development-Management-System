@@ -127,6 +127,7 @@ export interface TaskRecord {
   finished_at: string | null
   error_message: string | null
   result_message: string | null
+  result_data: Record<string, unknown> | null
   duration_ms: number | null
 }
 
@@ -374,6 +375,7 @@ export interface TestCasesResponse {
   test_cases_run_at: string | null
   last_ask_message: string | null
   last_ask_at: string | null
+  last_ask_covered_by: string[]
 }
 
 // Bug Report types

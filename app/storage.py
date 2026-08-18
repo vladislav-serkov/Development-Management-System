@@ -811,6 +811,7 @@ class ProjectStore:
             "finished_at": _iso(row.finished_at),
             "error_message": row.error_message,
             "result_message": row.result_message,
+            "result_data": row.result_data,
             "duration_ms": row.duration_ms,
         }
 
@@ -843,6 +844,7 @@ class ProjectStore:
     async def finish_task(
         self, project_slug: str, task_id: str, *, status: str,
         error_message: str | None = None, result_message: str | None = None,
+        result_data: dict | None = None,
     ) -> dict | None:
         """Close a running task with done/error, set finished_at + duration_ms."""
         async with self._sf().begin() as session:
@@ -856,6 +858,7 @@ class ProjectStore:
             row.finished_at = now
             row.error_message = error_message
             row.result_message = result_message
+            row.result_data = result_data
             if row.started_at is not None:
                 row.duration_ms = int((now - row.started_at).total_seconds() * 1000)
             return self._task_dict(row)

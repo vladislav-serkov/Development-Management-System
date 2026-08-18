@@ -238,6 +238,7 @@ function TestCaseCard({
 
   return (
     <article
+      id={`tc-card-${index}`}
       className={cn(
         "overflow-hidden rounded-2xl border bg-card transition-all",
         isOpen ? "border-foreground/15 shadow-sm ring-1 ring-foreground/6" : "border-border hover:border-foreground/12 hover:shadow-sm"
@@ -705,6 +706,19 @@ export function TestCasesView({
     setOpenCardKey(next?.idx ?? null)
   }
 
+  function openCaseByName(name: string) {
+    const idx = displayTcs.findIndex((tc) => tc.name === name)
+    if (idx < 0) return
+    // Drop filters so the target card is guaranteed to be rendered
+    setStatusFilter("all")
+    setCategoryFilter("all")
+    setQuery("")
+    setOpenCardKey(idx)
+    requestAnimationFrame(() => {
+      document.getElementById(`tc-card-${idx}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
+    })
+  }
+
   function handleAsk() {
     const text = askText.trim()
     if (text.length < 3 || isRunning || askMut.isPending) return
@@ -804,9 +818,31 @@ export function TestCasesView({
 
       {tcData?.last_ask_message && tcData.last_ask_at !== dismissedAskAt && !isRunning && (
         <div className="flex items-start justify-between gap-3 rounded-2xl border border-blue-200/80 bg-blue-50/50 px-4 py-3 dark:border-blue-900/40 dark:bg-blue-950/10">
-          <p className="text-sm leading-[1.6] text-foreground/85">
-            <span className="font-semibold">Ответ на запрос кейса:</span> {tcData.last_ask_message}
-          </p>
+          <div className="min-w-0">
+            <p className="text-sm leading-[1.6] text-foreground/85">
+              <span className="font-semibold">Ответ на запрос кейса:</span> {tcData.last_ask_message}
+            </p>
+            {(() => {
+              const refs = (tcData.last_ask_covered_by ?? []).filter((name) =>
+                displayTcs.some((tc) => tc.name === name)
+              )
+              if (refs.length === 0) return null
+              return (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {refs.map((name) => (
+                    <button
+                      key={name}
+                      onClick={() => openCaseByName(name)}
+                      className="max-w-full truncate rounded-md border border-blue-200/80 bg-background px-2 py-1 text-left text-[0.75rem] text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-100/50 dark:border-blue-900/50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                      title={name}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
           <button
             className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setDismissedAskAt(tcData.last_ask_at)}

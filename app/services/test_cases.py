@@ -786,6 +786,7 @@ async def run_test_case_ask_pipeline(
     if task_id:
         await store.finish_task(
             project_slug, task_id, status="done", result_message=result["message"],
+            result_data={"covered_by": result["covered_by"]} if result["covered_by"] else None,
         )
     return result
 
@@ -846,6 +847,10 @@ async def _run_test_case_ask_pipeline_inner(
     for warning in validation_warnings:
         logger.warning("[test_cases:ask:validate] %s", warning)
 
+    # Keep only refs that exactly match an existing case — the UI links by name
+    existing_names = {tc.get("name") for tc in existing_test_cases}
+    covered_by = [name for name in result.covered_by if name in existing_names]
+
     if added:
         message = f"Добавлено кейсов: {len(added)}."
         if result.comment:
@@ -854,7 +859,7 @@ async def _run_test_case_ask_pipeline_inner(
         message = result.comment or "Кейсы не добавлены: запрошенный пункт уже покрыт или не найден в ТЗ."
 
     logger.info(
-        "[test_cases:ask] project=%s feature=%s added=%d message=%s",
-        project_slug, feature_name, len(added), message,
+        "[test_cases:ask] project=%s feature=%s added=%d covered_by=%d message=%s",
+        project_slug, feature_name, len(added), len(covered_by), message,
     )
-    return {"added": added, "message": message}
+    return {"added": added, "message": message, "covered_by": covered_by}

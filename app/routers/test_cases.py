@@ -139,6 +139,7 @@ async def list_test_cases(
         "test_cases_run_at": feature.get("test_cases_run_at"),
         "last_ask_message": last_ask["result_message"] if last_ask else None,
         "last_ask_at": last_ask["finished_at"] if last_ask else None,
+        "last_ask_covered_by": (last_ask.get("result_data") or {}).get("covered_by", []) if last_ask else [],
     }
 
 

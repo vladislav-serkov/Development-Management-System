@@ -77,7 +77,12 @@ async def test_ask_already_covered_adds_nothing(store, monkeypatch):
     await store.save_feature("p", dict(FEATURE))
     existing = dict(CASE, status="approved", analyst_text=None)
     await store.save_test_cases("p", "create-order", [existing])
-    _mock_claude(monkeypatch, {"test_cases": [], "comment": "Пункт уже покрыт кейсом «Валидация amount — отсутствует»"})
+    _mock_claude(monkeypatch, {
+        "test_cases": [],
+        "comment": "Пункт уже покрыт существующим кейсом",
+        # one real ref + one hallucinated — the latter must be dropped
+        "covered_by": [CASE["name"], "Несуществующий кейс"],
+    })
 
     task = await store.create_task("p", kind="test_cases", target_type="feature", target_id="create-order")
     result = await run_test_case_ask_pipeline(
@@ -85,10 +90,12 @@ async def test_ask_already_covered_adds_nothing(store, monkeypatch):
     )
 
     assert result["added"] == []
+    assert result["covered_by"] == [CASE["name"]]
     assert len(await store.get_test_cases("p", "create-order")) == 1
     tasks = await store.list_tasks("p", kind="test_cases")
     assert tasks[0]["status"] == "done"
     assert "уже покрыт" in tasks[0]["result_message"]
+    assert tasks[0]["result_data"] == {"covered_by": [CASE["name"]]}
 
 
 async def test_ask_dedupes_against_existing(store, monkeypatch):
@@ -140,11 +147,15 @@ async def test_list_returns_last_ask_message(store, client):
     await store.create_project("P")
     await store.save_feature("p", dict(FEATURE))
     task = await store.create_task("p", kind="test_cases", target_type="feature", target_id="create-order")
-    await store.finish_task("p", task["id"], status="done", result_message="Добавлено кейсов: 2.")
+    await store.finish_task(
+        "p", task["id"], status="done", result_message="Пункт уже покрыт.",
+        result_data={"covered_by": ["Кейс А"]},
+    )
 
     resp = await client.get("/projects/p/features/create-order/test-cases/")
     assert resp.status_code == 200
     body = resp.json()
     assert body["test_cases_running"] is False
-    assert body["last_ask_message"] == "Добавлено кейсов: 2."
+    assert body["last_ask_message"] == "Пункт уже покрыт."
     assert body["last_ask_at"] is not None
+    assert body["last_ask_covered_by"] == ["Кейс А"]

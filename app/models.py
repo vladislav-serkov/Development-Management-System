@@ -116,4 +116,5 @@ class Task(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
     result_message: Mapped[str | None] = mapped_column(Text)
+    result_data: Mapped[dict | None] = mapped_column(JSONB)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
