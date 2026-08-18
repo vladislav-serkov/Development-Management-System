@@ -788,7 +788,7 @@ export function TestCasesView({
           <Input
             value={askText}
             onChange={(e) => setAskText(e.target.value)}
-            placeholder="Нужен кейс на пункт ТЗ — например: «негативные сценарии для шага проверки тарифа»"
+            placeholder="Нужен кейс на пункт ТЗ (можно несколько через запятую) — например: «негативные сценарии для шага проверки тарифа»"
             className="pl-8 text-sm"
             disabled={askMut.isPending}
           />
