@@ -825,6 +825,7 @@ async def _run_test_case_ask_pipeline_inner(
             "priority": tc.priority,
             "status": "pending",
             "analyst_text": None,
+            "origin": "ask",
             "covers": tc.covers,
             "curl_command": tc.curl_command,
             "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,

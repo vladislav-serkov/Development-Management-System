@@ -360,6 +360,7 @@ export interface TestCaseItem {
   priority: "high" | "medium" | "low"
   status: TestCaseStatus
   analyst_text: string | null
+  origin?: "ask" | null
   covers?: string | null
   curl_command: string | null
   kafka_message: { key: string; value: string } | null

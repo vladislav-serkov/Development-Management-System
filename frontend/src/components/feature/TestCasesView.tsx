@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
-import { Check, ChevronDown, ChevronUp, Copy, Loader2, Play, Search, Sparkles, X } from "lucide-react"
+import { Check, ChevronDown, ChevronUp, Copy, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { TestCaseItem, TestCaseCategory } from "@/types/api"
 
@@ -136,33 +136,37 @@ function ReviewStat({
 }
 
 function PriorityBadge({ priority }: { priority: TestCaseItem["priority"] }) {
+  const Icon = priority === "high" ? ChevronUp : priority === "low" ? ChevronDown : Equal
   return (
     <span
-      className={cn(
-        "rounded-full px-2 py-0.5 text-[0.625rem] font-semibold uppercase tracking-[0.12em]",
-        priority === "high" && "bg-red-50 text-red-600 ring-1 ring-red-200 dark:bg-red-950/20 dark:text-red-300 dark:ring-red-900/50",
-        priority === "medium" && "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/20 dark:text-amber-300 dark:ring-amber-900/50",
-        priority === "low" && "bg-slate-100 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
-      )}
+      title={`Приоритет: ${PRIORITY_LABEL[priority]}`}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center"
     >
-      {PRIORITY_LABEL[priority]}
+      <Icon
+        strokeWidth={2.75}
+        className={cn(
+          "h-4 w-4",
+          priority === "high" && "text-red-500",
+          priority === "medium" && "text-amber-500",
+          priority === "low" && "text-blue-500"
+        )}
+      />
     </span>
   )
 }
 
 function TestCaseStatusBadge({ status }: { status: TestCaseItem["status"] }) {
-  const label = status === "approved" ? "Принято" : status === "edited" ? "С багом" : "Не просмотрено"
+  if (status === "pending") return null
 
   return (
     <span
       className={cn(
-        "rounded-full px-2.5 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.12em]",
-        status === "approved" && "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-300 dark:ring-emerald-900/50",
-        status === "edited" && "bg-red-50 text-red-700 ring-1 ring-red-200 dark:bg-red-950/20 dark:text-red-300 dark:ring-red-900/50",
-        status === "pending" && "bg-muted text-muted-foreground ring-1 ring-border"
+        "text-[0.6875rem] font-medium",
+        status === "approved" && "text-emerald-600 dark:text-emerald-400",
+        status === "edited" && "text-red-600 dark:text-red-400"
       )}
     >
-      {label}
+      {status === "approved" ? "Принято" : "С багом"}
     </span>
   )
 }
@@ -288,6 +292,11 @@ function TestCaseCard({
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {tc.origin === "ask" && (
+                <span title="Сгенерировано по запросу" className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+                  <Sparkles className="h-3.5 w-3.5 text-violet-500/80" />
+                </span>
+              )}
               <PriorityBadge priority={tc.priority} />
               <TestCaseStatusBadge status={tc.status} />
             </div>
@@ -675,13 +684,19 @@ export function TestCasesView({
     sortMode
   )
 
+  // Cases generated on a tester's ask live in their own section on top, newest first
+  const askedItems = filteredItems
+    .filter(({ tc }) => tc.origin === "ask")
+    .sort((a, b) => b.idx - a.idx)
+  const systemItems = filteredItems.filter(({ tc }) => tc.origin !== "ask")
+
   const grouped = (categoryFilter === "all"
     ? (["validation", "positive", "negative", "edge_case"] as TestCaseCategory[])
     : [categoryFilter]
   )
     .map((category) => ({
       category,
-      items: filteredItems.filter(({ tc }) => tc.category === category),
+      items: systemItems.filter(({ tc }) => tc.category === category),
     }))
     .filter((group) => group.items.length > 0)
 
@@ -881,6 +896,35 @@ export function TestCasesView({
       )}
 
       <div className="space-y-6">
+        {askedItems.length > 0 && (
+          <section className="space-y-3">
+            <div className="flex items-center gap-2 px-1">
+              <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+              <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Сгенерировано по запросу
+              </p>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
+                {askedItems.length}
+              </span>
+            </div>
+
+            <div className="space-y-2.5">
+              {askedItems.map(({ tc, idx }) => (
+                <TestCaseCard
+                  key={idx}
+                  tc={tc}
+                  index={idx}
+                  projectSlug={projectSlug}
+                  featureName={featureName}
+                  isOpen={openCardKey === idx}
+                  onToggle={() => setOpenCardKey((current) => (current === idx ? null : idx))}
+                  onResolved={advanceToNextPending}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
         {grouped.map(({ category, items }) => (
           <section key={category} className="space-y-3">
             <div className="flex items-center justify-between px-1">

@@ -54,6 +54,7 @@ async def test_ask_adds_pending_case_and_finishes_task(store, monkeypatch):
     assert saved[0]["status"] == "pending"
     assert saved[0]["covers"] == "валидация amount"
     assert saved[0]["analyst_text"] is None
+    assert saved[0]["origin"] == "ask"
 
     tasks = await store.list_tasks("p", kind="test_cases")
     assert tasks[0]["status"] == "done"
