@@ -44,6 +44,29 @@ class TestCaseGenerationResult(BaseModel):
     test_cases: list[SingleTestCaseResult]
 
 
+class AskedTestCaseResult(SingleTestCaseResult):
+    """One test case generated from a tester's ask — carries its own covers ref."""
+    covers: str = Field(description="Какой пункт ТЗ (ветка logic_steps, правило валидации, сценарий ошибки) покрывает кейс — короткая точная ссылка")
+
+
+class TestCaseAskResult(BaseModel):
+    """Tool output schema for the on-demand ask call.
+
+    Empty test_cases + comment = the requested spec item is already covered
+    (or not found in the spec) — comment explains which/why.
+    """
+    test_cases: list[AskedTestCaseResult]
+    comment: str | None = Field(
+        default=None,
+        description="Комментарий для тестировщика: что сгенерировано, либо почему кейсы не добавлены (пункт уже покрыт существующим кейсом / пункт не найден в ТЗ)",
+    )
+
+
+class TestCaseAskRequest(BaseModel):
+    """POST body for the on-demand test case ask."""
+    request: str = Field(min_length=3, description="Свободный текст: на какой пункт ТЗ нужен тест-кейс")
+
+
 class TestCaseReviewRequest(BaseModel):
     """PATCH body for approving/editing/resetting a test case."""
     status: str = Field(pattern="^(pending|approved|edited)$")

@@ -1,11 +1,11 @@
 import { useState } from "react"
-import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases } from "@/hooks/useTestCases"
+import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useAskTestCase } from "@/hooks/useTestCases"
 import { useGenerateBug } from "@/hooks/useBugs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
-import { Check, ChevronDown, ChevronUp, Copy, Loader2, Play, Search, X } from "lucide-react"
+import { Check, ChevronDown, ChevronUp, Copy, Loader2, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { TestCaseItem, TestCaseCategory } from "@/types/api"
 
@@ -638,6 +638,9 @@ export function TestCasesView({
 }) {
   const { data: tcData, isLoading } = useFeatureTestCases(projectSlug, featureName)
   const runMut = useRunTestCases(projectSlug, featureName)
+  const askMut = useAskTestCase(projectSlug, featureName)
+  const [askText, setAskText] = useState("")
+  const [dismissedAskAt, setDismissedAskAt] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<ReviewFilter>("all")
   const [categoryFilter, setCategoryFilter] = useState<TestCaseCategory | "all">("all")
   const [sortMode, setSortMode] = useState<SortMode>("default")
@@ -687,6 +690,17 @@ export function TestCasesView({
     setOpenCardKey(next?.idx ?? null)
   }
 
+  function handleAsk() {
+    const text = askText.trim()
+    if (text.length < 3 || isRunning || askMut.isPending) return
+    askMut.mutate(text, {
+      onSuccess: () => {
+        setAskText("")
+        setDismissedAskAt(null)
+      },
+    })
+  }
+
   return (
     <div className="space-y-5">
       <div className="space-y-4">
@@ -732,6 +746,61 @@ export function TestCasesView({
           <ReviewStat label="Не просмотрено" value={String(Math.max(displayTcs.length - reviewedCount, 0))} />
         </div>
       </div>
+
+      <form
+        className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:flex-row sm:items-center"
+        onSubmit={(e) => {
+          e.preventDefault()
+          handleAsk()
+        }}
+      >
+        <div className="relative flex-1">
+          <Sparkles className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={askText}
+            onChange={(e) => setAskText(e.target.value)}
+            placeholder="Нужен кейс на пункт ТЗ — например: «негативные сценарии для шага проверки тарифа»"
+            className="pl-8 text-sm"
+            disabled={askMut.isPending}
+          />
+        </div>
+        <Button size="sm" type="submit" disabled={isRunning || askMut.isPending || askText.trim().length < 3}>
+          {askMut.isPending ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Отправка<AnimatedDots />
+            </>
+          ) : (
+            "Попросить кейс"
+          )}
+        </Button>
+      </form>
+
+      {askMut.error && (
+        <p className="text-[0.8125rem] text-destructive">{(askMut.error as Error).message}</p>
+      )}
+
+      {isRunning && displayTcs.length > 0 && (
+        <p className="flex items-center gap-2 text-[0.8125rem] text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Генерация выполняется — новые кейсы появятся в списке<AnimatedDots />
+        </p>
+      )}
+
+      {tcData?.last_ask_message && tcData.last_ask_at !== dismissedAskAt && !isRunning && (
+        <div className="flex items-start justify-between gap-3 rounded-2xl border border-blue-200/80 bg-blue-50/50 px-4 py-3 dark:border-blue-900/40 dark:bg-blue-950/10">
+          <p className="text-sm leading-[1.6] text-foreground/85">
+            <span className="font-semibold">Ответ на запрос кейса:</span> {tcData.last_ask_message}
+          </p>
+          <button
+            className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => setDismissedAskAt(tcData.last_ask_at)}
+            aria-label="Скрыть сообщение"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {displayTcs.length > 0 && (
         <div className="sticky top-0 z-10 -mx-4 rounded-2xl border border-border/70 bg-background/95 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85">

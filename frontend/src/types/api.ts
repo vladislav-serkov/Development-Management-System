@@ -126,6 +126,7 @@ export interface TaskRecord {
   started_at: string
   finished_at: string | null
   error_message: string | null
+  result_message: string | null
   duration_ms: number | null
 }
 
@@ -370,6 +371,8 @@ export interface TestCasesResponse {
   test_cases: TestCaseItem[]
   test_cases_running: boolean
   test_cases_run_at: string | null
+  last_ask_message: string | null
+  last_ask_at: string | null
 }
 
 // Bug Report types

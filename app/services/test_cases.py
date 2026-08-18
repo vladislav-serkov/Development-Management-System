@@ -8,8 +8,14 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 
 from app.config import settings
-from app.prompts.test_cases import CRITIC_SYSTEM_PROMPT, DETAIL_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, get_few_shot
-from app.schemas.test_cases import TestCaseGenerationResult, TestCasePlanResult
+from app.prompts.test_cases import (
+    ASK_SYSTEM_PROMPT,
+    CRITIC_SYSTEM_PROMPT,
+    DETAIL_SYSTEM_PROMPT,
+    PLAN_SYSTEM_PROMPT,
+    get_few_shot,
+)
+from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
@@ -587,13 +593,15 @@ async def run_test_cases_pipeline(
     return result
 
 
-async def _run_test_cases_pipeline_inner(
+async def _prepare_feature_context(
     project_slug: str,
     feature_name: str,
     store,
-) -> list[dict]:
-    """Core pipeline without task handling (caller wraps for task lifecycle)."""
-    # Load feature
+) -> tuple[dict, str, str]:
+    """Load the feature, run the enrichment gate and build the shared prompt context.
+
+    Returns (feature, feature_type, shared_context).
+    """
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise ValueError(f"Feature '{feature_name}' not found in project '{project_slug}'")
@@ -634,6 +642,16 @@ async def _run_test_cases_pipeline_inner(
 
     feature_type = feature.get("type", "")
     shared_ctx = _build_shared_context(feature, enriched_deps)
+    return feature, feature_type, shared_ctx
+
+
+async def _run_test_cases_pipeline_inner(
+    project_slug: str,
+    feature_name: str,
+    store,
+) -> list[dict]:
+    """Core pipeline without task handling (caller wraps for task lifecycle)."""
+    _, feature_type, shared_ctx = await _prepare_feature_context(project_slug, feature_name, store)
 
     model = settings.test_cases_model
 
@@ -676,3 +694,166 @@ async def _run_test_cases_pipeline_inner(
     })
 
     return merged_test_cases
+
+
+def _summarize_existing_test_cases(test_cases: list[dict]) -> str:
+    """Compact list of existing cases (name/category/covers) for the ask prompt."""
+    if not test_cases:
+        return "Существующих тест-кейсов нет."
+    lines = []
+    for tc in test_cases:
+        covers = tc.get("covers") or "—"
+        lines.append(f"- [{tc.get('category', '?')}] {tc.get('name', '')} (покрывает: {covers})")
+    return "\n".join(lines)
+
+
+async def _call_ask_phase(
+    model: str,
+    shared_context: str,
+    existing_summary: str,
+    request_text: str,
+    feature_type: str = "",
+    system_prompt: str = ASK_SYSTEM_PROMPT,
+) -> TestCaseAskResult:
+    """Single Claude call: tester's free-text ask → 0..N detailed test cases + comment."""
+    tool = {
+        "name": "generate_requested_test_cases",
+        "description": "Generate detailed test cases for the requested spec item, or explain why none were added",
+        "input_schema": TestCaseAskResult.model_json_schema(),
+    }
+    label = "test_cases_ask"
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        response = await call_claude(
+            label=label,
+            model=model,
+            max_tokens=32000,
+            system=system_prompt,
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool["name"]},
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": shared_context,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {"type": "text", "text": get_few_shot(feature_type)},
+                        {"type": "text", "text": "## Существующие тест-кейсы\n" + existing_summary},
+                        {"type": "text", "text": "## Запрос тестировщика\n" + request_text},
+                    ],
+                }
+            ],
+        )
+        log_cache_stats(response.usage, label)
+
+        tool_block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
+        try:
+            if tool_block is None or tool_block.input is None:
+                raise RuntimeError(
+                    f"[{label}] Claude did not return tool_use (stop_reason={response.stop_reason})"
+                )
+            return parse_tool_input(TestCaseAskResult, tool_block.input)
+        except (RuntimeError, ValidationError) as exc:
+            if attempt == max_attempts:
+                raise
+            logger.warning("[%s] attempt %d/%d failed, retrying: %s", label, attempt, max_attempts, exc)
+
+
+async def run_test_case_ask_pipeline(
+    project_slug: str,
+    feature_name: str,
+    request_text: str,
+    store,
+    *,
+    task_id: str | None = None,
+) -> dict:
+    """On-demand generation: tester asks for a test case on a specific spec item.
+
+    Appends generated cases to the feature's list as pending; the outcome
+    summary is stored on the task as result_message.
+    """
+    try:
+        result = await _run_test_case_ask_pipeline_inner(project_slug, feature_name, request_text, store)
+    except Exception as exc:
+        if task_id:
+            await store.finish_task(
+                project_slug, task_id, status="error", error_message=str(exc),
+            )
+        raise
+    if task_id:
+        await store.finish_task(
+            project_slug, task_id, status="done", result_message=result["message"],
+        )
+    return result
+
+
+async def _run_test_case_ask_pipeline_inner(
+    project_slug: str,
+    feature_name: str,
+    request_text: str,
+    store,
+) -> dict:
+    """Core ask pipeline without task handling (caller wraps for task lifecycle)."""
+    _, feature_type, shared_ctx = await _prepare_feature_context(project_slug, feature_name, store)
+
+    existing_test_cases = await store.get_test_cases(project_slug, feature_name)
+    existing_summary = _summarize_existing_test_cases(existing_test_cases)
+
+    system_prompt = ASK_SYSTEM_PROMPT
+    global_rules = await store.get_global_rules()
+    project_rules = await store.get_project_rules(project_slug)
+    system_prompt = build_system_prompt(
+        base=system_prompt,
+        global_rules=global_rules.get("test_cases", ""),
+        project_rules=project_rules.get("test_cases", ""),
+    )
+
+    result = await _call_ask_phase(
+        settings.test_cases_model, shared_ctx, existing_summary, request_text, feature_type, system_prompt,
+    )
+
+    new_cases = [
+        {
+            "category": tc.category,
+            "name": tc.name,
+            "preconditions": tc.preconditions,
+            "steps": [{"action": s.action, "expected": s.expected} for s in tc.steps],
+            "expected_result": tc.expected_result,
+            "priority": tc.priority,
+            "status": "pending",
+            "analyst_text": None,
+            "covers": tc.covers,
+            "curl_command": tc.curl_command,
+            "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,
+            "sql_setup": tc.sql_setup,
+            "mock_config": tc.mock_config,
+        }
+        for tc in result.test_cases
+    ]
+
+    # Drop generated cases that duplicate an existing one (same identity as smart merge)
+    existing_identities = {(tc.get("category"), (tc.get("name") or "")[:80]) for tc in existing_test_cases}
+    added = [tc for tc in new_cases if (tc["category"], tc["name"][:80]) not in existing_identities]
+
+    if added:
+        await store.save_test_cases(project_slug, feature_name, existing_test_cases + added)
+
+    validation_warnings = _validate_test_cases(added, len(added))
+    for warning in validation_warnings:
+        logger.warning("[test_cases:ask:validate] %s", warning)
+
+    if added:
+        message = f"Добавлено кейсов: {len(added)}."
+        if result.comment:
+            message += f" {result.comment}"
+    else:
+        message = result.comment or "Кейсы не добавлены: запрошенный пункт уже покрыт или не найден в ТЗ."
+
+    logger.info(
+        "[test_cases:ask] project=%s feature=%s added=%d message=%s",
+        project_slug, feature_name, len(added), message,
+    )
+    return {"added": added, "message": message}

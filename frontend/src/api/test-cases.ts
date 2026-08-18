@@ -19,6 +19,18 @@ export async function runTestCases(projectSlug: string, featureName: string): Pr
   return res.json()
 }
 
+export async function askTestCase(projectSlug: string, featureName: string, request: string): Promise<{ status: string }> {
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/ask`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request }) }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Ask failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function deleteTestCase(projectSlug: string, featureName: string, tcIndex: number): Promise<{ test_cases: TestCaseItem[] }> {
   const res = await apiFetch(
     `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}`,
