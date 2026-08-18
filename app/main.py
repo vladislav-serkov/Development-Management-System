@@ -15,6 +15,7 @@ from app.routers.projects import router as projects_router
 from app.routers.rules import router as rules_router
 from app.routers.tasks import router as tasks_router
 from app.routers.test_cases import router as test_cases_router
+from app.routers.test_db import router as test_db_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
@@ -71,6 +72,7 @@ app.include_router(test_cases_router)
 app.include_router(bugs_router)
 app.include_router(rules_router)
 app.include_router(tasks_router)
+app.include_router(test_db_router)
 
 
 @app.get("/")

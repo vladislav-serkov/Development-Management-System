@@ -77,6 +77,7 @@ async def import_confluence_page(
         "confluence_page_id": page["id"],
         "confluence_url": request.url,
         "confluence_version": page["version"],
+        "service_name": page.get("service_name"),
         "pdf_size_bytes": len(page["markdown"].encode("utf-8")),
         "uploaded_at": now_iso,
         "status": "processing",

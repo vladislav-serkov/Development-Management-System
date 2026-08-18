@@ -67,7 +67,7 @@ async def _fetch_page_data(ref: dict) -> dict:
     """Fetch raw page JSON by ref ({'page_id': ...} or {'space': ..., 'title': ...})."""
     base, pat = _require_config()
     headers = {"Authorization": f"Bearer {pat}", "Accept": "application/json"}
-    expand = "body.storage,version,space"
+    expand = "body.storage,version,space,ancestors"
 
     # trust_env=False: внутренний Confluence доступен напрямую, системный HTTP(S)_PROXY его не резолвит.
     # truststore: корпоративный CA лежит в системном хранилище (Keychain), а не в certifi.
@@ -107,6 +107,33 @@ async def _fetch_page_data(ref: dict) -> dict:
     return data
 
 
+# Service pages: "bnpl-payment", "flp-order" (kebab-case, at least one dash)
+_SERVICE_TITLE_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")
+# Spec pages / section pages: "[flp-order] GET /path", "[bnpl-payment] API"
+_BRACKET_SERVICE_RE = re.compile(r"^\[([a-z][a-z0-9]*(?:-[a-z0-9]+)+)\]")
+
+
+def _derive_service_name(data: dict) -> str | None:
+    """Service the spec belongs to, from the page tree.
+
+    Specs live under their service's page ("Сервисы → bnpl-payment → [bnpl-payment] API
+    → POST /v1/..."), and page/section titles carry the service in brackets. The DB
+    schema of a service equals its name (dashes → underscores), which is why this matters.
+    """
+    titles = [data.get("title") or ""]
+    # ancestors come root-first; the nearest ones are the most specific
+    titles += [a.get("title") or "" for a in reversed(data.get("ancestors") or [])]
+
+    for title in titles:
+        m = _BRACKET_SERVICE_RE.match(title.strip())
+        if m:
+            return m.group(1)
+    for title in titles:
+        if _SERVICE_TITLE_RE.match(title.strip()):
+            return title.strip()
+    return None
+
+
 def _page_result(data: dict) -> dict:
     storage_html = ((data.get("body") or {}).get("storage") or {}).get("value", "")
     if not storage_html.strip():
@@ -116,15 +143,17 @@ def _page_result(data: dict) -> dict:
     title = data.get("title", "untitled")
     version = ((data.get("version") or {}).get("number")) or 0
     space_key = ((data.get("space") or {}).get("key")) or ""
+    service_name = _derive_service_name(data)
     logger.info(
-        "Confluence page fetched: id=%s, title='%s', version=%s, markdown=%.1fKB, links=%d, tables=%d",
-        data.get("id"), title, version, len(markdown) / 1024, len(links), len(tables),
+        "Confluence page fetched: id=%s, title='%s', version=%s, service=%s, markdown=%.1fKB, links=%d, tables=%d",
+        data.get("id"), title, version, service_name, len(markdown) / 1024, len(links), len(tables),
     )
     return {
         "id": str(data.get("id", "")),
         "title": title,
         "version": version,
         "space_key": space_key,
+        "service_name": service_name,
         "markdown": markdown,
         "links": links,
         "tables": tables,

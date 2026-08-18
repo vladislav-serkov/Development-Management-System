@@ -1,13 +1,14 @@
 import { useState } from "react"
 import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useAskTestCase } from "@/hooks/useTestCases"
 import { useGenerateBug } from "@/hooks/useBugs"
+import { useExecuteSql, useTestDbStatus } from "@/hooks/useTestDb"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
-import { Check, ChevronDown, ChevronUp, Copy, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
+import { Check, ChevronDown, ChevronUp, Copy, Database, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { TestCaseItem, TestCaseCategory } from "@/types/api"
+import type { TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
 
 const ARTIFACTS = [
   { key: "curl_command", label: "cURL" },
@@ -433,6 +434,21 @@ function TestCaseCard({
                       )
                     }
 
+                    if (artifact.key === "sql_setup" && tc.sql_setup) {
+                      return (
+                        <SqlSetupArtifact
+                          key={artifact.key}
+                          value={tc.sql_setup}
+                          copied={copiedField === artifact.key}
+                          onCopy={() => {
+                            navigator.clipboard.writeText(tc.sql_setup!)
+                            setCopiedField(artifact.key)
+                            setTimeout(() => setCopiedField(null), 1500)
+                          }}
+                        />
+                      )
+                    }
+
                     return (
                       <TestCaseArtifact
                         key={artifact.key}
@@ -475,6 +491,16 @@ function TestCaseCard({
                         }}
                       />
                     </div>
+                  ) : activeArtifact === "sql_setup" && tc.sql_setup ? (
+                    <SqlSetupArtifact
+                      value={tc.sql_setup}
+                      copied={copiedField === "sql_setup"}
+                      onCopy={() => {
+                        navigator.clipboard.writeText(tc.sql_setup!)
+                        setCopiedField("sql_setup")
+                        setTimeout(() => setCopiedField(null), 1500)
+                      }}
+                    />
                   ) : (
                     <TestCaseArtifact
                       label={ARTIFACTS.find((artifact) => artifact.key === activeArtifact)?.label ?? "Artifact"}
@@ -607,6 +633,132 @@ function TestCaseArtifact({
       >
         {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
       </button>
+    </div>
+  )
+}
+
+function SqlRunResults({ result }: { result: SqlExecuteResponse }) {
+  return (
+    <div className="border-t border-slate-800">
+      {result.results.map((res, i) => (
+        <div key={i} className="border-b border-slate-800/60 px-3 py-2 last:border-b-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[0.6875rem] font-semibold tabular-nums text-slate-500">{i + 1}</span>
+            <code className="min-w-0 flex-1 truncate text-[0.6875rem] font-mono text-slate-400" title={res.statement}>
+              {res.statement.replace(/\s+/g, " ")}
+            </code>
+            <span className="shrink-0 rounded-md bg-emerald-950/60 px-1.5 py-0.5 text-[0.625rem] font-mono text-emerald-400">
+              {res.status}
+            </span>
+          </div>
+          {res.columns && res.columns.length > 0 && res.rows && (
+            <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800">
+              <table className="w-full text-[0.6875rem] font-mono">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/60">
+                    {res.columns.map((col) => (
+                      <th key={col} className="whitespace-nowrap px-2 py-1.5 text-left font-semibold text-slate-400">{col}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {res.rows.map((row, ri) => (
+                    <tr key={ri} className="border-b border-slate-800/50 last:border-b-0">
+                      {row.map((cell, ci) => (
+                        <td key={ci} className="whitespace-nowrap px-2 py-1 text-slate-200">
+                          {cell === null ? <span className="italic text-slate-600">null</span> : String(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {res.truncated && (
+            <p className="mt-1 text-[0.625rem] text-slate-500">Показаны первые строки — результат обрезан</p>
+          )}
+        </div>
+      ))}
+      {result.error && (
+        <div className="px-3 py-2">
+          <p className="text-[0.6875rem] font-semibold text-red-400">
+            Ошибка{result.failed_statement !== null ? ` в выражении ${result.failed_statement + 1}` : ""} — изменения отменены
+          </p>
+          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[0.6875rem] text-red-300/90">{result.error}</p>
+        </div>
+      )}
+      {!result.error && (
+        <p className="px-3 py-2 text-[0.625rem] text-slate-500">
+          Выполнено за {result.duration_ms} мс, изменения применены
+        </p>
+      )}
+    </div>
+  )
+}
+
+function SqlSetupArtifact({
+  value,
+  copied,
+  onCopy,
+}: {
+  value: string
+  copied: boolean
+  onCopy: () => void
+}) {
+  const { data: dbStatus } = useTestDbStatus()
+  const execMut = useExecuteSql()
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-slate-400">SQL</span>
+          {dbStatus?.configured && (
+            <span
+              className="inline-flex min-w-0 items-center gap-1 truncate text-[0.625rem] font-mono text-slate-500"
+              title={`${dbStatus.host ?? ""}/${dbStatus.database ?? ""}`}
+            >
+              <Database className="h-3 w-3 shrink-0" />
+              <span className="truncate">{dbStatus.database}</span>
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {dbStatus?.configured && (
+            <button
+              onClick={() => execMut.mutate(value)}
+              disabled={execMut.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-emerald-900/60 px-2.5 py-1 text-[0.6875rem] font-medium text-emerald-300 transition-colors hover:bg-emerald-900 disabled:opacity-60"
+              title="Выполнить на тестовой БД"
+            >
+              {execMut.isPending ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Выполняется
+                </>
+              ) : (
+                <>
+                  <Play className="h-3 w-3" />
+                  Выполнить
+                </>
+              )}
+            </button>
+          )}
+          <button onClick={onCopy} className="rounded-md bg-slate-700 p-1.5 text-slate-300 transition-colors hover:bg-slate-600" title="Копировать">
+            {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </div>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 py-3 text-[0.75rem] font-mono leading-6 text-slate-100">
+        <code>{value}</code>
+      </pre>
+      {execMut.error && (
+        <div className="border-t border-slate-800 px-3 py-2">
+          <p className="whitespace-pre-wrap break-words text-[0.6875rem] text-red-400">{(execMut.error as Error).message}</p>
+        </div>
+      )}
+      {execMut.data && <SqlRunResults result={execMut.data} />}
     </div>
   )
 }

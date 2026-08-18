@@ -17,6 +17,7 @@ from app.prompts.test_cases import (
 )
 from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services import sql_runner
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
@@ -225,26 +226,89 @@ def _build_fk_tree(enriched_deps: dict) -> dict:
     return {"delete_order": delete_order, "insert_order": insert_order}
 
 
-def _build_shared_context(feature: dict, enriched_deps: dict) -> str:
+def _render_live_ddl(db_schema: str, columns_by_table: dict[str, list[dict]]) -> str:
+    """Render live information_schema data as a prompt block.
+
+    The Confluence DB pages drift from the real DDL (missing NOT NULL columns
+    break generated INSERTs on the stand), so the live column list wins.
+    """
+    lines = ["", "## Реальный DDL тестового стенда (information_schema)"]
+    for table, cols in columns_by_table.items():
+        required = [c for c in cols if c["required"]]
+        lines.append(f"### {db_schema}.{table}")
+        if required:
+            lines.append(
+                "Обязательные колонки (NOT NULL без DEFAULT) — каждый INSERT обязан заполнить их ВСЕ: "
+                + ", ".join(f"{c['name']} ({c['type']})" for c in required)
+            )
+        lines.append(
+            "Существующие колонки: " + ", ".join(f"{c['name']} ({c['type']})" for c in cols)
+        )
+    lines.append("")
+    lines.append(
+        "Этот DDL — источник истины (актуальнее описания из документации): в sql_setup "
+        "использовать ТОЛЬКО существующие колонки, явно заполнять все обязательные и "
+        "соблюдать ограничения длины (varchar(N))."
+    )
+    return "\n".join(lines)
+
+
+async def _live_ddl_block(db_schema: str | None, enriched_deps: dict) -> str | None:
+    """Fetch live DDL for the feature's db_table deps; non-fatal on any failure."""
+    if not db_schema or not sql_runner.is_configured():
+        return None
+    tables = []
+    for name, dep in enriched_deps.items():
+        if dep.get("dep_type") != "db_table":
+            continue
+        # dep name may be a spec alias ("payment"); the enriched table name is the real one
+        tables.append(((dep.get("enriched_data") or {}).get("table_name")) or name)
+    if not tables:
+        return None
+    try:
+        columns_by_table = await sql_runner.fetch_table_columns(db_schema, tables)
+    except Exception as exc:
+        logger.warning("[test_cases] live DDL fetch failed (non-fatal): %s", exc)
+        return None
+    if not columns_by_table:
+        return None
+    logger.info(
+        "[test_cases] live DDL: schema=%s, tables=%s",
+        db_schema, sorted(columns_by_table),
+    )
+    return _render_live_ddl(db_schema, columns_by_table)
+
+
+def _build_shared_context(feature: dict, enriched_deps: dict, db_schema: str | None = None) -> str:
     """Build a shared text block for all parallel test case calls.
 
     Reuses the common feature+deps context builder, then appends the FK
-    dependency tree (specific to test_cases for sql_setup ordering).
+    dependency tree (specific to test_cases for sql_setup ordering) and the
+    DB schema of the service (schema name == service name, dashes → underscores).
     """
     base = build_feature_context(feature, enriched_deps)
 
+    extra: list[str] = []
     fk_tree = _build_fk_tree(enriched_deps)
-    if not fk_tree:
+    if fk_tree:
+        extra += [
+            "",
+            "## FK Dependency Tree",
+            "DELETE order (child -> parent): " + ", ".join(fk_tree["delete_order"]),
+            "INSERT order (parent -> child): " + ", ".join(fk_tree["insert_order"]),
+            "",
+            "sql_setup MUST follow INSERT order for INSERTs and DELETE order for DELETEs.",
+        ]
+    if db_schema:
+        extra += [
+            "",
+            "## DB Schema",
+            f"Схема БД сервиса: {db_schema}. В sql_setup КАЖДУЮ таблицу указывать "
+            f"ТОЛЬКО с явным префиксом схемы: {db_schema}.<table> "
+            f"(например {db_schema}.purchase). Без префикса запросы не выполнятся.",
+        ]
+    if not extra:
         return base
-
-    extra = [
-        "",
-        "## FK Dependency Tree",
-        "DELETE order (child -> parent): " + ", ".join(fk_tree["delete_order"]),
-        "INSERT order (parent -> child): " + ", ".join(fk_tree["insert_order"]),
-        "",
-        "sql_setup MUST follow INSERT order for INSERTs and DELETE order for DELETEs.",
-    ]
     return base + "\n" + "\n".join(extra)
 
 
@@ -640,8 +704,20 @@ async def _prepare_feature_context(
     # Auto-include FK parent tables not in used_dependencies but referenced by FK columns
     enriched_deps = _expand_fk_parents(enriched_deps, flat_deps)
 
+    # DB schema == service name (dashes → underscores), carried by the source document
+    db_schema: str | None = None
+    doc_slug = feature.get("source_document")
+    if doc_slug:
+        doc = await store.get_document(project_slug, doc_slug)
+        service_name = (doc or {}).get("service_name")
+        if service_name:
+            db_schema = service_name.replace("-", "_")
+
     feature_type = feature.get("type", "")
-    shared_ctx = _build_shared_context(feature, enriched_deps)
+    shared_ctx = _build_shared_context(feature, enriched_deps, db_schema=db_schema)
+    live_ddl = await _live_ddl_block(db_schema, enriched_deps)
+    if live_ddl:
+        shared_ctx += "\n" + live_ddl
     return feature, feature_type, shared_ctx
 
 

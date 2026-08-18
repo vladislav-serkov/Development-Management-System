@@ -55,10 +55,23 @@ def _dep_to_response(dep: dict, project_slug: str) -> DependencyResponse:
 
 
 def _match_table(tables, dep_name: str):
-    """Find an extracted table matching a dependency name (normalized, case-insensitive)."""
+    """Find an extracted table matching a dependency name (normalized, case-insensitive).
+
+    Falls back to a singular/plural match: specs routinely alias a table in the
+    singular ("payment") while the DB page names it in the plural ("payments").
+    """
     want = _normalize_dep_name(dep_name).lower()
-    return next(
+    exact = next(
         (t for t in tables if _normalize_dep_name(t.table_name).lower() == want),
+        None,
+    )
+    if exact is not None:
+        return exact
+    return next(
+        (
+            t for t in tables
+            if _normalize_dep_name(t.table_name).lower().rstrip("s") == want.rstrip("s")
+        ),
         None,
     )
 

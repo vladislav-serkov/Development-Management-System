@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     # nothing". Sonnet allows far larger outputs, so keep a generous ceiling.
     extraction_max_tokens: int = 32000
     database_url: str = "postgresql+asyncpg://extract:extract@localhost:5432/extract_agent"
+    # Test stand DB for executing SQL artifacts from test cases (empty = feature off).
+    # Artifacts are generated with explicit schema prefixes (schema == service name),
+    # so no search_path is needed.
+    test_db_url: str = ""
     confluence_base_url: str = ""
     confluence_pat: str = ""
     cors_origins: str = ""

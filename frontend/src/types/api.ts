@@ -378,6 +378,28 @@ export interface TestCasesResponse {
   last_ask_covered_by: string[]
 }
 
+// Test DB (SQL artifact execution) types
+export interface TestDbStatus {
+  configured: boolean
+  host: string | null
+  database: string | null
+}
+
+export interface SqlStatementResult {
+  statement: string
+  status: string
+  columns: string[] | null
+  rows: (string | number | boolean | null)[][] | null
+  truncated: boolean
+}
+
+export interface SqlExecuteResponse {
+  results: SqlStatementResult[]
+  error: string | null
+  failed_statement: number | null
+  duration_ms: number
+}
+
 // Bug Report types
 export type BugStatus = "open" | "fixed" | "verified"
 export type BugSeverity = "critical" | "major" | "minor" | "trivial"
