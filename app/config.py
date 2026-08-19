@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Artifacts are generated with explicit schema prefixes (schema == service name),
     # so no search_path is needed.
     test_db_url: str = ""
+    # Test stand base URL for executing curl artifacts (empty = feature off).
+    # Requests go to {test_stand_url}/{service_name}{path} — service name comes
+    # from the feature's source document.
+    test_stand_url: str = ""
     confluence_base_url: str = ""
     confluence_pat: str = ""
     cors_origins: str = ""

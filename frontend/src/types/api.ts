@@ -400,6 +400,33 @@ export interface SqlExecuteResponse {
   duration_ms: number
 }
 
+// Test stand (curl artifact execution) types
+export interface TestStandStatus {
+  configured: boolean
+  base_url: string | null
+  service: string | null
+  target_base: string | null
+}
+
+export interface HttpExecuteRequest {
+  method: string
+  path: string
+  headers: Record<string, string>
+  body: string | null
+}
+
+export interface HttpExecuteResponse {
+  url: string
+  method: string
+  status_code: number | null
+  reason: string | null
+  headers: { name: string; value: string }[]
+  body: string | null
+  body_truncated: boolean
+  duration_ms: number
+  error: string | null
+}
+
 // Bug Report types
 export type BugStatus = "open" | "fixed" | "verified"
 export type BugSeverity = "critical" | "major" | "minor" | "trivial"

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
+import { CurlArtifact } from "@/components/feature/CurlArtifact"
 import { Check, ChevronDown, ChevronUp, Copy, Database, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
@@ -434,6 +435,23 @@ function TestCaseCard({
                       )
                     }
 
+                    if (artifact.key === "curl_command" && tc.curl_command) {
+                      return (
+                        <CurlArtifact
+                          key={artifact.key}
+                          value={tc.curl_command}
+                          projectSlug={projectSlug}
+                          featureName={featureName}
+                          copied={copiedField === artifact.key}
+                          onCopy={() => {
+                            navigator.clipboard.writeText(tc.curl_command!)
+                            setCopiedField(artifact.key)
+                            setTimeout(() => setCopiedField(null), 1500)
+                          }}
+                        />
+                      )
+                    }
+
                     if (artifact.key === "sql_setup" && tc.sql_setup) {
                       return (
                         <SqlSetupArtifact
@@ -491,6 +509,18 @@ function TestCaseCard({
                         }}
                       />
                     </div>
+                  ) : activeArtifact === "curl_command" && tc.curl_command ? (
+                    <CurlArtifact
+                      value={tc.curl_command}
+                      projectSlug={projectSlug}
+                      featureName={featureName}
+                      copied={copiedField === "curl_command"}
+                      onCopy={() => {
+                        navigator.clipboard.writeText(tc.curl_command!)
+                        setCopiedField("curl_command")
+                        setTimeout(() => setCopiedField(null), 1500)
+                      }}
+                    />
                   ) : activeArtifact === "sql_setup" && tc.sql_setup ? (
                     <SqlSetupArtifact
                       value={tc.sql_setup}
