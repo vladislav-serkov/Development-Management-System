@@ -449,9 +449,13 @@ export interface BugItem {
   status: BugStatus
   analyst_text: string | null
   created_at: string
+  jira_key?: string | null
+  jira_url?: string | null
+  jira_status?: string | null
 }
 
 export interface BugsResponse {
   bugs: BugItem[]
   bug_count: number
+  jira_configured?: boolean
 }

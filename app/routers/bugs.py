@@ -2,7 +2,8 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Path
 
-from app.schemas.bugs import BugGenerateRequest, BugPatchRequest
+from app.schemas.bugs import BugExportRequest, BugGenerateRequest, BugPatchRequest
+from app.services import jira
 from app.services.bugs import generate_bug_report
 from app.storage import ProjectStore
 
@@ -61,7 +62,103 @@ async def list_bugs(
         )
     feature_name = feature["name"]
     bugs = await store.get_bugs(project_slug, feature_name)
-    return {"bugs": bugs, "bug_count": len(bugs)}
+    return {"bugs": bugs, "bug_count": len(bugs), "jira_configured": jira.is_configured()}
+
+
+async def _source_doc_info(project_slug: str, feature: dict) -> tuple[str | None, str | None]:
+    """(confluence_url, service_name) of the feature's source spec document."""
+    doc_slug = feature.get("source_document")
+    if not doc_slug:
+        return None, None
+    doc = await store.get_document(project_slug, doc_slug) or {}
+    return doc.get("confluence_url"), doc.get("service_name")
+
+
+@router.post("/{bug_index}/export-jira")
+async def export_bug_to_jira(
+    project_slug: str,
+    feature_name: str,
+    bug_index: int = Path(..., description="Zero-based index of bug to export"),
+    body: BugExportRequest | None = None,
+):
+    """Create a Jira issue from a stored bug and remember its key/url on the bug."""
+    feature = await store.get_feature(project_slug, feature_name)
+    if feature is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
+        )
+    feature_name = feature["name"]
+
+    if not jira.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Jira не настроена — задайте JIRA_BASE_URL и JIRA_PAT в .env",
+        )
+
+    bugs = await store.get_bugs(project_slug, feature_name)
+    if bug_index < 0 or bug_index >= len(bugs):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Bug index {bug_index} out of range (total: {len(bugs)})",
+        )
+    bug = bugs[bug_index]
+    if bug.get("jira_key"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Баг уже создан в Jira: {bug['jira_key']}",
+        )
+
+    spec_url, service_name = await _source_doc_info(project_slug, feature)
+    feature_ticket = body.feature_ticket if body else None
+    try:
+        issue = await jira.create_bug_issue(bug, feature, spec_url, service_name, feature_ticket)
+    except jira.JiraError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    bug["jira_key"] = issue["key"]
+    bug["jira_url"] = issue["url"]
+    bug["jira_status"] = None
+    await store.save_bugs(project_slug, feature_name, bugs)
+
+    logger.info("export_bug_to_jira: project=%s, feature=%s, index=%d, key=%s",
+                project_slug, feature_name, bug_index, issue["key"])
+    return {"bugs": bugs}
+
+
+@router.post("/sync-jira")
+async def sync_jira_statuses(
+    project_slug: str,
+    feature_name: str,
+):
+    """Refresh jira_status from Jira for every exported bug of the feature."""
+    feature = await store.get_feature(project_slug, feature_name)
+    if feature is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
+        )
+    feature_name = feature["name"]
+
+    bugs = await store.get_bugs(project_slug, feature_name)
+    keys = [b["jira_key"] for b in bugs if b.get("jira_key")]
+    if not jira.is_configured() or not keys:
+        return {"bugs": bugs, "synced": False}
+
+    try:
+        statuses = await jira.fetch_issue_statuses(keys)
+    except jira.JiraError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    changed = False
+    for bug in bugs:
+        key = bug.get("jira_key")
+        if key and bug.get("jira_status") != statuses.get(key):
+            bug["jira_status"] = statuses.get(key)
+            changed = True
+    if changed:
+        await store.save_bugs(project_slug, feature_name, bugs)
+    return {"bugs": bugs, "synced": True}
 
 
 @router.patch("/{bug_index}")

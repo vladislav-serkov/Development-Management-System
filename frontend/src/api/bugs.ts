@@ -46,6 +46,42 @@ export async function patchBug(
   return res.json()
 }
 
+export async function exportBugToJira(
+  projectSlug: string,
+  featureName: string,
+  bugIndex: number,
+  featureTicket?: string | null,
+): Promise<{ bugs: BugItem[] }> {
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/${bugIndex}/export-jira`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ feature_ticket: featureTicket || null }),
+    }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Jira export failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function syncJiraStatuses(
+  projectSlug: string,
+  featureName: string,
+): Promise<{ bugs: BugItem[]; synced: boolean }> {
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/sync-jira`,
+    { method: "POST" }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Jira sync failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function deleteBug(
   projectSlug: string,
   featureName: string,

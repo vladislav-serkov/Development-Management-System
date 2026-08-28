@@ -63,6 +63,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `table_mapping.py` — deterministic conversion of parsed spec tables ([TABLE:Tn] markers) into `SpecTable` structures mirroring the spec verbatim: columns kept as-is with role annotations (header synonyms → type/required/constraint/source/description), colspan depth → field nesting, [LINK:Ln] in source cells → `source_refs`
   - `auto_enrich.py` — after import, auto-enriches stub dependencies from Confluence pages linked in the spec (`source_doc_title` ← link text)
   - `confluence.py` — Confluence DC integration: fetch page by URL via PAT (Bearer), convert storage XHTML → markdown for extraction (`POST /documents/import-confluence`)
+  - `jira.py` — Jira DC integration: create Bug issues from stored bug reports (wiki-markup description, severity → priority) and read back live issue statuses (`POST .../bugs/{index}/export-jira`, `POST .../bugs/sync-jira`)
   - `gaps.py` — Gaps analysis via Claude
   - `test_cases.py` — Test case generation via Claude
   - `bugs.py` — Bug report generation from test case review via Claude
@@ -112,4 +113,5 @@ There is no linked-project registry anymore; the DB is the single source of trut
 - `CLAUDE_MODEL` / `GAPS_MODEL` / `TEST_CASES_MODEL` / `BUGS_MODEL` — optional model overrides
 - `DATABASE_URL` — PostgreSQL DSN (default: `postgresql+asyncpg://extract:extract@localhost:5432/extract_agent`)
 - `CONFLUENCE_BASE_URL` / `CONFLUENCE_PAT` — optional, enable importing Confluence pages as documents (Data Center PAT, Bearer auth)
+- `JIRA_BASE_URL` / `JIRA_PAT` — optional, enable exporting bug reports as Jira issues (Data Center PAT, Bearer auth; a separate Jira token — the Confluence PAT is not accepted). `JIRA_PROJECT_KEY` (default `MTSPAY`) / `JIRA_ISSUE_TYPE` (default `Bug`) pick the target project and issue type for every exported bug
 - Python 3.12+, Node 22+

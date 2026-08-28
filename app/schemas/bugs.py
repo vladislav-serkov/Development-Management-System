@@ -32,12 +32,21 @@ class BugItem(BaseModel):
     status: str = "open"  # "open" | "fixed" | "verified"
     analyst_text: str | None = None
     created_at: str
+    # Set once the bug is exported to Jira; jira_status mirrors the live issue status
+    jira_key: str | None = None
+    jira_url: str | None = None
+    jira_status: str | None = None
 
 
 class BugGenerateRequest(BaseModel):
     """POST /generate request body."""
     tc_index: int
     analyst_text: str | None = None
+
+
+class BugExportRequest(BaseModel):
+    """POST /{bug_index}/export-jira request body."""
+    feature_ticket: str | None = None  # Feature Link — key of the feature epic being tested
 
 
 class BugPatchRequest(BaseModel):

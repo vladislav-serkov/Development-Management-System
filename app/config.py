@@ -22,6 +22,20 @@ class Settings(BaseSettings):
     test_stand_url: str = ""
     confluence_base_url: str = ""
     confluence_pat: str = ""
+    # Jira DC integration for exporting bug reports as issues (empty = feature off).
+    # The PAT is a *Jira* personal access token — a Confluence PAT is not accepted.
+    jira_base_url: str = ""
+    jira_pat: str = ""
+    jira_project_key: str = "MTSPAY"
+    jira_issue_type: str = "Bug"
+    # Required MTSPAY custom fields (empty = omit the field on create):
+    jira_bug_type: str = "Feature testing"  # customfield_10519 (radio)
+    jira_system: str = "UMP"  # customfield_10523 (multiselect)
+    jira_team: str = "Flex core"  # customfield_20600 (multiselect)
+    # Optional fields the team fills on every bug (empty = omit):
+    jira_developer: str = ""  # ОР, customfield_10402 (multiuserpicker) — Jira login
+    jira_fix_version: str = ""  # Fix Version/s — current release name, update per release
+    jira_board_id: int = 1880  # agile board whose active sprint lands in Спринт (0 = off)
     cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")

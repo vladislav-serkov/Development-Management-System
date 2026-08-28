@@ -1,8 +1,8 @@
-import { useState } from "react"
-import { useFeatureBugs, usePatchBug, useDeleteBug } from "@/hooks/useBugs"
+import { useEffect, useRef, useState } from "react"
+import { useFeatureBugs, usePatchBug, useDeleteBug, useExportBugToJira, useSyncJiraStatuses } from "@/hooks/useBugs"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { AlertTriangle, Bug, Check, Copy, Loader2, Search, ShieldCheck, Wrench } from "lucide-react"
+import { AlertTriangle, Bug, Check, Copy, ExternalLink, Loader2, Search, Send, ShieldCheck, Wrench } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { BugItem, BugSeverity } from "@/types/api"
 
@@ -143,19 +143,24 @@ function BugCard({
   index,
   projectSlug,
   featureName,
+  jiraConfigured,
 }: {
   bug: BugItem
   index: number
   projectSlug: string
   featureName: string
+  jiraConfigured: boolean
 }) {
   const patchMut = usePatchBug(projectSlug, featureName)
   const deleteMut = useDeleteBug(projectSlug, featureName)
+  const exportMut = useExportBugToJira(projectSlug, featureName)
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
+  const [jiraFormOpen, setJiraFormOpen] = useState(false)
+  const [featureTicket, setFeatureTicket] = useState("")
 
-  const isBusy = patchMut.isPending || deleteMut.isPending
+  const isBusy = patchMut.isPending || deleteMut.isPending || exportMut.isPending
   const isFixed = bug.status === "fixed"
   const isVerified = bug.status === "verified"
   const isDone = isFixed || isVerified
@@ -240,9 +245,36 @@ function BugCard({
                         {statusLabel}
                       </span>
                     </div>
+                    {exportMut.error && (
+                      <p className="mt-2 text-[0.75rem] text-destructive">{(exportMut.error as Error).message}</p>
+                    )}
                   </div>
 
                   <div className="shrink-0 flex items-start gap-2">
+                    {bug.jira_key ? (
+                      <a
+                        href={bug.jira_url ?? undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[0.6875rem] font-medium text-blue-700 ring-1 ring-blue-200 transition-colors hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-400 dark:ring-blue-900/40"
+                        title={bug.jira_status ? `Статус в Jira: ${bug.jira_status}` : "Открыть в Jira"}
+                      >
+                        {bug.jira_key}
+                        {bug.jira_status && <span className="font-normal text-blue-600/80 dark:text-blue-400/80">· {bug.jira_status}</span>}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ) : jiraConfigured && (
+                      <button
+                        className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:border-blue-300 hover:text-blue-700 dark:hover:text-blue-400 disabled:opacity-60"
+                        onClick={(e) => { e.stopPropagation(); setJiraFormOpen(!jiraFormOpen) }}
+                        disabled={isBusy}
+                        title="Создать задачу в Jira"
+                      >
+                        {exportMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                        Создать в Jira
+                      </button>
+                    )}
                     {bug.severity && (
                       <span className={cn("rounded-full px-2.5 py-1 text-[0.625rem] font-semibold uppercase tracking-wide", SEVERITY_STYLE[bug.severity])}>
                         {bug.severity}
@@ -263,6 +295,43 @@ function BugCard({
               </div>
             </div>
           </div>
+
+          {jiraFormOpen && !bug.jira_key && (
+            <div className="mx-5 mb-4 ml-12 rounded-lg border border-blue-200/70 bg-blue-50/40 p-3.5 dark:border-blue-900/40 dark:bg-blue-950/10">
+              <p className="text-[0.75rem] font-medium text-foreground/80">Создать задачу в Jira</p>
+              <Input
+                value={featureTicket}
+                onChange={(e) => setFeatureTicket(e.target.value)}
+                placeholder="Feature Link — тикет фичи, напр. MTSPAY-14684 (необязательно)"
+                className="mt-2 bg-background text-sm"
+                disabled={exportMut.isPending}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <div className="mt-2.5 flex items-center gap-2">
+                <button
+                  className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3.5 py-1.5 text-[0.75rem] font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    exportMut.mutate(
+                      { bugIndex: index, featureTicket: featureTicket.trim() || null },
+                      { onSuccess: () => { setJiraFormOpen(false); setFeatureTicket("") } },
+                    )
+                  }}
+                  disabled={isBusy}
+                >
+                  {exportMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                  Создать
+                </button>
+                <button
+                  className="rounded-md px-2.5 py-1.5 text-[0.75rem] text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={(e) => { e.stopPropagation(); setJiraFormOpen(false); setFeatureTicket("") }}
+                  disabled={exportMut.isPending}
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
 
           {open && (
             <div className="ml-7 space-y-6 px-5 pb-5">
@@ -517,11 +586,24 @@ function BugActionRow({ children }: { children: React.ReactNode }) {
 
 export function BugsView({ projectSlug, featureName }: { projectSlug: string; featureName: string }) {
   const { data: bugsData, isLoading } = useFeatureBugs(projectSlug, featureName)
+  const syncJiraMut = useSyncJiraStatuses(projectSlug, featureName)
   const [statusFilter, setStatusFilter] = useState<BugStatusFilter>("all")
   const [severityFilter, setSeverityFilter] = useState<BugSeverity | "all">("all")
   const [query, setQuery] = useState("")
 
   const bugs = bugsData?.bugs ?? []
+  const jiraConfigured = bugsData?.jira_configured ?? false
+
+  // Refresh Jira statuses once per opened feature — silently, stale data stays on error
+  const syncedFor = useRef<string | null>(null)
+  const hasExported = bugs.some((bug) => bug.jira_key)
+  const syncKey = `${projectSlug}/${featureName}`
+  useEffect(() => {
+    if (!jiraConfigured || !hasExported || syncedFor.current === syncKey) return
+    syncedFor.current = syncKey
+    syncJiraMut.mutate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jiraConfigured, hasExported, syncKey])
   const resolvedCount = bugs.filter(b => b.status === "fixed" || b.status === "verified").length
   const openCount = bugs.filter((bug) => bug.status === "open").length
   const fixedCount = bugs.filter((bug) => bug.status === "fixed").length
@@ -664,6 +746,7 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
                   index={idx}
                   projectSlug={projectSlug}
                   featureName={featureName}
+                  jiraConfigured={jiraConfigured}
                 />
               ))}
             </div>
