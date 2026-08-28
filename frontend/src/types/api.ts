@@ -452,6 +452,12 @@ export interface BugItem {
   jira_key?: string | null
   jira_url?: string | null
   jira_status?: string | null
+  fix_status?: "queued" | "running" | "fix_proposed" | "failed" | null
+  fix_service?: string | null
+  fix_branch?: string | null
+  fix_mr_url?: string | null
+  fix_summary?: string | null
+  fix_error?: string | null
 }
 
 export interface BugsResponse {

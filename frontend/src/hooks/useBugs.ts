@@ -1,11 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { fetchBugs, generateBug, patchBug, deleteBug, exportBugToJira, syncJiraStatuses } from "@/api/bugs"
+import { fetchBugs, generateBug, patchBug, deleteBug, exportBugToJira, syncJiraStatuses, fixBug } from "@/api/bugs"
 
 export function useFeatureBugs(projectSlug: string | null, featureName: string | null) {
   return useQuery({
     queryKey: ["projects", projectSlug, "features", featureName, "bugs"],
     queryFn: () => fetchBugs(projectSlug!, featureName!),
     enabled: !!projectSlug && !!featureName,
+    // A fix run takes minutes — keep polling while Claude Code works on any bug
+    refetchInterval: (query) => {
+      const bugs = query.state.data?.bugs ?? []
+      return bugs.some((b) => b.fix_status === "queued" || b.fix_status === "running") ? 5000 : false
+    },
   })
 }
 
@@ -58,6 +63,16 @@ export function useSyncJiraStatuses(projectSlug: string, featureName: string) {
       if (data.synced) {
         qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "bugs"] })
       }
+    },
+  })
+}
+
+export function useFixBug(projectSlug: string, featureName: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (bugIndex: number) => fixBug(projectSlug, featureName, bugIndex),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "bugs"] })
     },
   })
 }

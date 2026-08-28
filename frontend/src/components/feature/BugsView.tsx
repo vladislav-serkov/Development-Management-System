@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react"
-import { useFeatureBugs, usePatchBug, useDeleteBug, useExportBugToJira, useSyncJiraStatuses } from "@/hooks/useBugs"
+import { useFeatureBugs, usePatchBug, useDeleteBug, useExportBugToJira, useFixBug, useSyncJiraStatuses } from "@/hooks/useBugs"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { AlertTriangle, Bug, Check, Copy, ExternalLink, Loader2, Search, Send, ShieldCheck, Wrench } from "lucide-react"
+import { AlertTriangle, Bot, Bug, Check, Copy, ExternalLink, Loader2, Search, Send, ShieldCheck, Wrench } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { BugItem, BugSeverity } from "@/types/api"
 
@@ -154,13 +154,14 @@ function BugCard({
   const patchMut = usePatchBug(projectSlug, featureName)
   const deleteMut = useDeleteBug(projectSlug, featureName)
   const exportMut = useExportBugToJira(projectSlug, featureName)
+  const fixMut = useFixBug(projectSlug, featureName)
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [jiraFormOpen, setJiraFormOpen] = useState(false)
   const [featureTicket, setFeatureTicket] = useState("")
 
-  const isBusy = patchMut.isPending || deleteMut.isPending || exportMut.isPending
+  const isBusy = patchMut.isPending || deleteMut.isPending || exportMut.isPending || fixMut.isPending
   const isFixed = bug.status === "fixed"
   const isVerified = bug.status === "verified"
   const isDone = isFixed || isVerified
@@ -247,6 +248,56 @@ function BugCard({
                     </div>
                     {exportMut.error && (
                       <p className="mt-2 text-[0.75rem] text-destructive">{(exportMut.error as Error).message}</p>
+                    )}
+                    {fixMut.error && (
+                      <p className="mt-2 text-[0.75rem] text-destructive">{(fixMut.error as Error).message}</p>
+                    )}
+                    {bug.fix_status && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[0.75rem]">
+                        {bug.fix_status === "queued" && (
+                          <span className="flex items-center gap-1.5 text-muted-foreground">
+                            <Bot className="h-3.5 w-3.5" /> Claude Code: в очереди
+                          </span>
+                        )}
+                        {bug.fix_status === "running" && (
+                          <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code чинит…
+                          </span>
+                        )}
+                        {bug.fix_status === "fix_proposed" && (
+                          <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                            <Bot className="h-3.5 w-3.5" />
+                            Фикс готов
+                            {bug.fix_mr_url && (
+                              <a
+                                href={bug.fix_mr_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="font-medium underline underline-offset-2 hover:text-emerald-700 dark:hover:text-emerald-300"
+                              >
+                                MR
+                              </a>
+                            )}
+                            {bug.fix_summary && <span className="text-foreground/60">— {bug.fix_summary}</span>}
+                          </span>
+                        )}
+                        {bug.fix_status === "failed" && (
+                          <>
+                            <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                              <Bot className="h-3.5 w-3.5" />
+                              Claude Code не смог{bug.fix_error ? `: ${bug.fix_error}` : ""}
+                            </span>
+                            <button
+                              className="rounded-md border border-border px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+                              onClick={(e) => { e.stopPropagation(); fixMut.mutate(index) }}
+                              disabled={isBusy}
+                            >
+                              {fixMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Повторить"}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
 

@@ -36,6 +36,17 @@ class BugItem(BaseModel):
     jira_key: str | None = None
     jira_url: str | None = None
     jira_status: str | None = None
+    # Bug fixer (headless Claude Code run in the service repo)
+    fix_status: str | None = None  # "queued" | "running" | "fix_proposed" | "failed"
+    fix_service: str | None = None
+    fix_branch: str | None = None
+    fix_mr_url: str | None = None
+    fix_summary: str | None = None
+    fix_error: str | None = None
+    fix_log: str | None = None
+    fix_requested_at: str | None = None
+    fix_started_at: str | None = None
+    fix_finished_at: str | None = None
 
 
 class BugGenerateRequest(BaseModel):

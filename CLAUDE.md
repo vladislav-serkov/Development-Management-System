@@ -64,6 +64,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `auto_enrich.py` — after import, auto-enriches stub dependencies from Confluence pages linked in the spec (`source_doc_title` ← link text)
   - `confluence.py` — Confluence DC integration: fetch page by URL via PAT (Bearer), convert storage XHTML → markdown for extraction (`POST /documents/import-confluence`)
   - `jira.py` — Jira DC integration: create Bug issues from stored bug reports (wiki-markup description, severity → priority) and read back live issue statuses (`POST .../bugs/{index}/export-jira`, `POST .../bugs/sync-jira`)
+  - `bug_fixer.py` — hands an exported Jira bug to a headless Claude Code run (`claude -p`, subscription OAuth token, SSH-tunneled proxy) inside the service repo resolved from `REPOS_DIRS`; the run follows the user's global `~/.claude/CLAUDE.md` bug flow (spec check, red regression test → green fix, MR via push options, Jira transitions) and returns a JSON verdict stored on the bug (`fix_status`/`fix_mr_url`/...). One running fix per service repo (task kind `bug_fix`, target = service); exporting a bug to Jira auto-queues it (`BUG_FIXER_AUTO`), `POST .../bugs/{index}/fix` retries manually
   - `gaps.py` — Gaps analysis via Claude
   - `test_cases.py` — Test case generation via Claude
   - `bugs.py` — Bug report generation from test case review via Claude

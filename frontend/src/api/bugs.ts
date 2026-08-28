@@ -82,6 +82,22 @@ export async function syncJiraStatuses(
   return res.json()
 }
 
+export async function fixBug(
+  projectSlug: string,
+  featureName: string,
+  bugIndex: number,
+): Promise<{ bugs: BugItem[] }> {
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/${bugIndex}/fix`,
+    { method: "POST" }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Fix request failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function deleteBug(
   projectSlug: string,
   featureName: string,

@@ -2,8 +2,9 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Path
 
+from app.config import settings
 from app.schemas.bugs import BugExportRequest, BugGenerateRequest, BugPatchRequest
-from app.services import jira
+from app.services import bug_fixer, jira
 from app.services.bugs import generate_bug_report
 from app.storage import ProjectStore
 
@@ -123,7 +124,42 @@ async def export_bug_to_jira(
 
     logger.info("export_bug_to_jira: project=%s, feature=%s, index=%d, key=%s",
                 project_slug, feature_name, bug_index, issue["key"])
-    return {"bugs": bugs}
+
+    # An exported bug is a confirmed bug — hand it to the fixer right away
+    if settings.bug_fixer_auto and bug_fixer.is_configured():
+        try:
+            await bug_fixer.request_fix(store, project_slug, feature_name, bug_index)
+        except bug_fixer.BugFixerError as exc:
+            logger.warning("export_bug_to_jira: auto-fix not queued: %s", exc)
+            bugs[bug_index]["fix_status"] = "failed"
+            bugs[bug_index]["fix_error"] = str(exc)
+            await store.save_bugs(project_slug, feature_name, bugs)
+
+    return {"bugs": await store.get_bugs(project_slug, feature_name)}
+
+
+@router.post("/{bug_index}/fix")
+async def fix_bug(
+    project_slug: str,
+    feature_name: str,
+    bug_index: int = Path(..., description="Zero-based index of bug to fix"),
+):
+    """Queue a headless Claude Code run that fixes the bug in the service repo."""
+    feature = await store.get_feature(project_slug, feature_name)
+    if feature is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
+        )
+    feature_name = feature["name"]
+
+    try:
+        await bug_fixer.request_fix(store, project_slug, feature_name, bug_index)
+    except bug_fixer.BugFixerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    logger.info("fix_bug: project=%s, feature=%s, index=%d", project_slug, feature_name, bug_index)
+    return {"bugs": await store.get_bugs(project_slug, feature_name)}
 
 
 @router.post("/sync-jira")

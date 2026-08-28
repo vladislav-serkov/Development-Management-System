@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     jira_developer: str = ""  # ОР, customfield_10402 (multiuserpicker) — Jira login
     jira_fix_version: str = ""  # Fix Version/s — current release name, update per release
     jira_board_id: int = 1880  # agile board whose active sprint lands in Спринт (0 = off)
+    # Bug fixer: headless Claude Code runs that fix exported bugs in the service repos.
+    # Auth is a subscription OAuth token from `claude setup-token` (empty = feature off).
+    claude_code_oauth_token: str = ""
+    claude_cli: str = "claude"
+    # Anthropic API is reached through a local SSH tunnel (same as the user's shell wrapper)
+    claude_proxy: str = "http://127.0.0.1:8888"
+    claude_proxy_ssh_host: str = "claude-proxy"
+    # Roots where service repos live; a service name must match a directory name
+    repos_dirs: str = "~/IdeaProjects:~/IdeaProjects/flp"
+    bug_fixer_auto: bool = True  # enqueue a fix as soon as a bug is exported to Jira
+    bug_fix_timeout_seconds: int = 3600
+    bug_fix_log_dir: str = "logs/bug-fixer"
     cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")
