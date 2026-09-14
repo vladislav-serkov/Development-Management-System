@@ -17,6 +17,7 @@ data/
 *.png
 !frontend/src/assets/*.png
 fixtures/
+logs/
 
 # macOS
 .DS_Store
