@@ -76,6 +76,7 @@ def test_issue_fields_payload(monkeypatch):
     assert fields["fixVersions"] == [{"name": "BNPL Backend 1.0.20"}]
     assert fields["customfield_10108"] == 12905
     assert fields["customfield_10107"] == "MTSPAY-14684"
+    assert fields["labels"] == ["extract-agent"]
 
 
 def test_issue_fields_keeps_existing_bracket_prefix(monkeypatch):

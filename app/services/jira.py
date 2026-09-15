@@ -141,6 +141,8 @@ def build_issue_fields(
         "summary": summary,
         "description": format_bug_description(bug, feature, spec_url),
         "priority": {"name": SEVERITY_TO_PRIORITY.get(bug.get("severity", ""), "Medium")},
+        # Label makes platform-created bugs countable by plain JQL (labels = extract-agent)
+        "labels": ["extract-agent"],
     }
     if settings.jira_bug_type:
         fields["customfield_10519"] = {"value": settings.jira_bug_type}
