@@ -367,6 +367,10 @@ export interface TestCaseItem {
   kafka_message: { key: string; value: string } | null
   sql_setup: string | null
   mock_config: string | null
+  autotest_status?: "queued" | "running" | "generated" | "failed" | null
+  autotest_mr_url?: string | null
+  autotest_summary?: string | null
+  autotest_error?: string | null
 }
 
 export interface TestCasesResponse {

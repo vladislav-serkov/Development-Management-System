@@ -40,6 +40,18 @@ export async function deleteTestCase(projectSlug: string, featureName: string, t
   return res.json()
 }
 
+export async function requestAutotest(projectSlug: string, featureName: string, tcIndex: number): Promise<{ test_cases: TestCaseItem[] }> {
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}/autotest`,
+    { method: "POST" }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Autotest request failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function patchTestCase(
   projectSlug: string,
   featureName: string,

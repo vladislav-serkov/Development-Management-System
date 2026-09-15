@@ -2,7 +2,9 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Path
 
+from app.config import settings
 from app.schemas.test_cases import TestCaseAskRequest, TestCaseReviewRequest
+from app.services import autotest_generator
 from app.services.task_manager import task_manager
 from app.services.test_cases import (
     _check_enrichment_gate,
@@ -172,7 +174,42 @@ async def review_test_case(
 
     await store.save_test_cases(project_slug, feature_name, test_cases)
 
-    return {"test_cases": test_cases}
+    # An accepted test case becomes an autotest — hand it to the generator right away
+    if body.status == "approved" and settings.autotest_auto and autotest_generator.is_configured():
+        try:
+            await autotest_generator.request_generation(store, project_slug, feature_name, tc_index)
+        except autotest_generator.AutotestError as exc:
+            logger.warning("review_test_case: autotest not queued: %s", exc)
+            test_cases = await store.get_test_cases(project_slug, feature_name)
+            test_cases[tc_index]["autotest_status"] = "failed"
+            test_cases[tc_index]["autotest_error"] = str(exc)
+            await store.save_test_cases(project_slug, feature_name, test_cases)
+
+    return {"test_cases": await store.get_test_cases(project_slug, feature_name)}
+
+
+@router.post("/{tc_index}/autotest")
+async def generate_autotest(
+    project_slug: str,
+    feature_name: str,
+    tc_index: int = Path(..., description="Zero-based index of test case in the list"),
+):
+    """Queue a headless Claude Code run that writes a Java autotest for the accepted case."""
+    feature = await store.get_feature(project_slug, feature_name)
+    if feature is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
+        )
+    feature_name = feature["name"]
+
+    try:
+        await autotest_generator.request_generation(store, project_slug, feature_name, tc_index)
+    except autotest_generator.AutotestError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    logger.info("generate_autotest: project=%s, feature=%s, index=%d", project_slug, feature_name, tc_index)
+    return {"test_cases": await store.get_test_cases(project_slug, feature_name)}
 
 
 @router.delete("/{tc_index}")

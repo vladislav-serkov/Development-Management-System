@@ -121,7 +121,7 @@ def build_prompt(bug: dict, feature: dict, spec_url: str | None) -> str:
     return "\n".join(parts)
 
 
-def extract_result_json(text: str) -> dict | None:
+def extract_result_json(text: str, statuses: tuple[str, ...] = ("fix_proposed", "failed")) -> dict | None:
     """Pull the trailing {"status": ...} object out of the agent's final message."""
     matches = re.findall(r"\{[^{}]*\"status\"[^{}]*\}", text, re.DOTALL)
     for raw in reversed(matches):
@@ -129,7 +129,7 @@ def extract_result_json(text: str) -> dict | None:
             data = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if data.get("status") in ("fix_proposed", "failed"):
+        if data.get("status") in statuses:
             return data
     return None
 
@@ -293,12 +293,17 @@ _CONTINUE_PROMPT = (
 )
 
 
-async def _run_claude(prompt: str, repo: Path, log_path: Path) -> dict:
+async def _run_claude(
+    prompt: str, repo: Path, log_path: Path,
+    statuses: tuple[str, ...] = ("fix_proposed", "failed"),
+    continue_prompt: str | None = None,
+) -> dict:
     """Headless Claude Code run; returns the agent's final JSON verdict.
 
     A one-shot -p session dies the moment the agent ends its turn, even if it ended
     it "waiting" for something — so when the final message carries no verdict, the
-    same session is resumed once and asked to finish the job.
+    same session is resumed once and asked to finish the job. The autotest
+    generator reuses this runner with its own verdict statuses/continue prompt.
     """
     env = os.environ.copy()
     env.update({
@@ -314,13 +319,13 @@ async def _run_claude(prompt: str, repo: Path, log_path: Path) -> dict:
     deadline = asyncio.get_running_loop().time() + settings.bug_fix_timeout_seconds
     result_text, session_id = await _one_pass(["-p", prompt], repo, env, log_path, deadline, mode="w")
 
-    verdict = extract_result_json(result_text)
+    verdict = extract_result_json(result_text, statuses)
     if verdict is None and session_id:
         logger.warning("[bug_fixer] No verdict in final message — resuming session %s once", session_id)
         result_text, _ = await _one_pass(
-            ["-p", "--resume", session_id, _CONTINUE_PROMPT], repo, env, log_path, deadline, mode="a",
+            ["-p", "--resume", session_id, continue_prompt or _CONTINUE_PROMPT], repo, env, log_path, deadline, mode="a",
         )
-        verdict = extract_result_json(result_text)
+        verdict = extract_result_json(result_text, statuses)
 
     if verdict is None:
         raise BugFixerError(

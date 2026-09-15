@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useAskTestCase } from "@/hooks/useTestCases"
+import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useAskTestCase, useRequestAutotest } from "@/hooks/useTestCases"
 import { useGenerateBug } from "@/hooks/useBugs"
 import { useExecuteSql, useTestDbStatus } from "@/hooks/useTestDb"
 import { Button } from "@/components/ui/button"
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
 import { CurlArtifact } from "@/components/feature/CurlArtifact"
-import { Check, ChevronDown, ChevronUp, Copy, Database, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
+import { Bot, Check, ChevronDown, ChevronUp, Copy, Database, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
 
@@ -193,6 +193,7 @@ function TestCaseCard({
   const patchMut = usePatchTestCase(projectSlug, featureName)
   const deleteMut = useDeleteTestCase(projectSlug, featureName)
   const generateBugMut = useGenerateBug(projectSlug, featureName)
+  const autotestMut = useRequestAutotest(projectSlug, featureName)
   const [showBugForm, setShowBugForm] = useState(false)
   const [bugComment, setBugComment] = useState("")
   const [activeArtifact, setActiveArtifact] = useState<string | null>(null)
@@ -327,6 +328,57 @@ function TestCaseCard({
           </Button>
         </div>
       </div>
+
+      {tc.autotest_status && (
+        <div className="flex flex-wrap items-center gap-2.5 border-t border-border/50 bg-muted/[0.12] px-4 py-2 text-[0.75rem] md:px-5">
+          {tc.autotest_status === "queued" && (
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <Bot className="h-3.5 w-3.5" /> Автотест: в очереди
+            </span>
+          )}
+          {tc.autotest_status === "running" && (
+            <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code пишет автотест…
+            </span>
+          )}
+          {tc.autotest_status === "generated" && (
+            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+              <Bot className="h-3.5 w-3.5" />
+              Автотест готов
+              {tc.autotest_mr_url && (
+                <a
+                  href={tc.autotest_mr_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="font-medium underline underline-offset-2 hover:text-emerald-700 dark:hover:text-emerald-300"
+                >
+                  MR
+                </a>
+              )}
+              {tc.autotest_summary && <span className="text-foreground/60">— {tc.autotest_summary}</span>}
+            </span>
+          )}
+          {tc.autotest_status === "failed" && (
+            <>
+              <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                <Bot className="h-3.5 w-3.5" />
+                Автотест не создан{tc.autotest_error ? `: ${tc.autotest_error}` : ""}
+              </span>
+              <button
+                className="rounded-md border border-border px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+                onClick={(e) => { e.stopPropagation(); autotestMut.mutate(index) }}
+                disabled={isBusy || autotestMut.isPending}
+              >
+                {autotestMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Повторить"}
+              </button>
+            </>
+          )}
+          {autotestMut.error && (
+            <span className="text-destructive">{(autotestMut.error as Error).message}</span>
+          )}
+        </div>
+      )}
 
       {!isOpen ? null : (
         <div className="space-y-4 px-4 py-4 md:px-5">

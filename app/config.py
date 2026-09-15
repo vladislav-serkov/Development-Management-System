@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     bug_fixer_auto: bool = True  # enqueue a fix as soon as a bug is exported to Jira
     bug_fix_timeout_seconds: int = 3600
     bug_fix_log_dir: str = "logs/bug-fixer"
+    # Autotest generator: headless Claude Code runs that turn accepted test cases
+    # into Java autotests in the flp-autotests repo (empty dir = feature off).
+    # Shares the Claude Code auth/proxy/timeout settings with the bug fixer.
+    autotests_repo_dir: str = ""
+    autotest_auto: bool = True  # queue generation as soon as a test case is approved
+    autotest_log_dir: str = "logs/autotest-gen"
     cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")
