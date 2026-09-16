@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from app.schemas.extraction import FeaturePatchRequest, FeatureResponse, ProjectResponse
+from app.services import feature_implementer
 from app.services.context_serializer import dump_project, export_context_dir, load_context_project
 from app.services.export import create_project_zip
 from app.storage import ProjectStore
@@ -287,6 +288,31 @@ async def patch_feature(project_slug: str, feature_name: str, patch: FeaturePatc
     return _feature_to_response(feature, active_tasks=active_tasks)
 
 
+class FeatureImplementRequest(BaseModel):
+    """POST body for launching the feature implementer."""
+    jira_key: str = Field(min_length=3, max_length=50)
+
+
+@router.post("/{project_slug}/features/{feature_name}/implement", response_model=FeatureResponse)
+async def implement_feature(project_slug: str, feature_name: str, body: FeatureImplementRequest):
+    """Queue a headless Claude Code run that implements the feature task in the service repo."""
+    feature = await store.get_feature(project_slug, feature_name)
+    if feature is None:
+        raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
+    feature_name = feature["name"]
+
+    try:
+        feature = await feature_implementer.request_implementation(
+            store, project_slug, feature_name, body.jira_key,
+        )
+    except feature_implementer.ImplementError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    logger.info("implement_feature: project=%s, feature=%s, jira=%s", project_slug, feature_name, body.jira_key)
+    active_tasks = await store.list_tasks(project_slug, status="running")
+    return _feature_to_response(feature, active_tasks=active_tasks)
+
+
 @router.delete("/{project_slug}/features/{feature_name}")
 async def delete_feature(project_slug: str, feature_name: str):
     """Delete a feature and all its sub-files (gaps, test-cases, bugs)."""
@@ -335,4 +361,9 @@ def _feature_to_response(
         test_case_count=f.get("test_case_count", 0),
         pending_test_case_count=f.get("pending_test_case_count", 0),
         test_cases_running="test_cases" in running_kinds,
+        impl_status=f.get("impl_status"),
+        impl_jira_key=f.get("impl_jira_key"),
+        impl_mr_url=f.get("impl_mr_url"),
+        impl_summary=f.get("impl_summary"),
+        impl_error=f.get("impl_error"),
     )

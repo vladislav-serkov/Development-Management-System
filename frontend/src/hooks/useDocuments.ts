@@ -3,7 +3,7 @@ import {
   fetchProjects, fetchProject, createProject, patchProject,
   fetchProjectFeatures,
   importConfluencePage,
-  patchFeature, deleteFeature, importProjectZip,
+  patchFeature, deleteFeature, implementFeature, importProjectZip,
   importContext, deleteProject,
 } from "@/api/documents"
 import type { ProjectResponse } from "@/types/api"
@@ -57,6 +57,7 @@ export function useProjectFeatures(projectSlug: string | null, projectStatus?: P
       const features = query.state.data
       const hasRunning = features?.some(
         f => f.gaps_running || f.test_cases_running || f.apply_running
+          || f.impl_status === "queued" || f.impl_status === "running"
       )
       const hasExtracting = features?.some(f => f.status === "extracting")
       const projectProcessing = projectStatus === "processing"
@@ -111,6 +112,17 @@ export function useSaveFeature(projectSlug: string) {
       patchFeature(projectSlug, featureName, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects"] })
+      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
+    },
+  })
+}
+
+export function useImplementFeature(projectSlug: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ featureName, jiraKey }: { featureName: string; jiraKey: string }) =>
+      implementFeature(projectSlug, featureName, jiraKey),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
     },
   })

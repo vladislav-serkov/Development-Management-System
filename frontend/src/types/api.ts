@@ -110,6 +110,11 @@ export interface FeatureResponse {
   pending_test_case_count?: number
   test_cases_running?: boolean
   bug_count?: number
+  impl_status?: "queued" | "running" | "implemented" | "no_changes_needed" | "failed" | null
+  impl_jira_key?: string | null
+  impl_mr_url?: string | null
+  impl_summary?: string | null
+  impl_error?: string | null
 }
 
 // Background tasks (per-project log)

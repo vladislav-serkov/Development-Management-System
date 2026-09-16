@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     autotests_repo_dir: str = ""
     autotest_auto: bool = True  # queue generation as soon as a test case is approved
     autotest_log_dir: str = "logs/autotest-gen"
+    # Feature implementer: headless Claude Code runs that implement a feature task
+    # ("реализовать/доработать метод") in the service repo. Shares Claude Code auth.
+    implement_log_dir: str = "logs/implement"
     cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")

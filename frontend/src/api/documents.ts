@@ -102,6 +102,19 @@ export async function deleteFeature(projectSlug: string, featureName: string): P
   if (!res.ok) throw new Error(`Failed to delete feature: ${res.status}`)
 }
 
+export async function implementFeature(projectSlug: string, featureName: string, jiraKey: string): Promise<FeatureResponse> {
+  const res = await apiFetch(`/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/implement`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jira_key: jiraKey }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Implement failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function createDependency(projectSlug: string, req: CreateDependencyRequest): Promise<ProjectDependency> {
   const res = await apiFetch(`/projects/${projectSlug}/dependencies/`, {
     method: "POST",

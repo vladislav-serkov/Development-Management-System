@@ -1,22 +1,26 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useUIStore } from "@/stores/uiStore"
-import { useProject, useImportConfluence, useProjectFeatures, useDeleteFeature } from "@/hooks/useDocuments"
+import { useProject, useImportConfluence, useProjectFeatures, useDeleteFeature, useImplementFeature } from "@/hooks/useDocuments"
 import { useProjectDependencies } from "@/hooks/useDependencies"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ProjectSidebar, MethodBadge } from "@/components/sidebar"
 import {
   ArrowRight,
+  Bot,
   Files,
   FolderKanban,
   Gauge,
   Inbox,
+  Loader2,
   Sparkles,
   Trash2,
   Workflow,
+  X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { dependencyPath, featurePath, isFeatureTab, projectPath, type FeatureTab } from "@/lib/routes"
@@ -171,8 +175,11 @@ function ProjectContentArea({
   const navigate = useNavigate()
   const askConfirm = useConfirm()
   const deleteFeatureMutation = useDeleteFeature(projectSlug)
+  const implementMutation = useImplementFeature(projectSlug)
 
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false)
+  const [showImplementForm, setShowImplementForm] = useState(false)
+  const [implementJiraKey, setImplementJiraKey] = useState("")
 
   if (selectedDep) {
     return (
@@ -239,6 +246,17 @@ function ProjectContentArea({
               </div>
 
               <div className="ml-auto flex items-center gap-2 self-start">
+                {selectedFeature.impl_status !== "queued" && selectedFeature.impl_status !== "running" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-200 text-emerald-700 shadow-none hover:bg-emerald-50 hover:text-emerald-800"
+                    onClick={() => setShowImplementForm((v) => !v)}
+                  >
+                    <Bot className="h-3.5 w-3.5" />
+                    Реализовать по ТЗ
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -262,6 +280,81 @@ function ProjectContentArea({
                 </Button>
               </div>
             </div>
+
+            {showImplementForm && selectedFeature.impl_status !== "queued" && selectedFeature.impl_status !== "running" && (
+              <form
+                className="mb-4 flex flex-col gap-2 rounded-2xl border border-emerald-200/70 bg-emerald-50/40 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/10 sm:flex-row sm:items-center"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const key = implementJiraKey.trim()
+                  if (key.length < 3 || implementMutation.isPending) return
+                  implementMutation.mutate(
+                    { featureName: selectedFeature.name, jiraKey: key },
+                    { onSuccess: () => { setShowImplementForm(false); setImplementJiraKey("") } }
+                  )
+                }}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground">Реализовать задачу по этой фиче</p>
+                  <p className="mt-0.5 text-[0.8125rem] text-muted-foreground">Агент возьмёт тикет в работу по стандартному флоу: ТЗ, реализация с тестами, MR, статусы Jira.</p>
+                  {implementMutation.error && (
+                    <p className="mt-1 text-[0.75rem] text-destructive">{(implementMutation.error as Error).message}</p>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Input
+                    value={implementJiraKey}
+                    onChange={(e) => setImplementJiraKey(e.target.value)}
+                    placeholder="MTSPAY-12345"
+                    className="w-40 font-mono text-sm"
+                    disabled={implementMutation.isPending}
+                  />
+                  <Button size="sm" type="submit" disabled={implementMutation.isPending || implementJiraKey.trim().length < 3}>
+                    {implementMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Запустить"}
+                  </Button>
+                  <Button size="icon-sm" type="button" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => setShowImplementForm(false)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {selectedFeature.impl_status && (
+              <div className="mb-4 flex flex-wrap items-center gap-2.5 rounded-2xl border border-border/70 bg-muted/[0.15] px-4 py-2.5 text-[0.8125rem]">
+                {selectedFeature.impl_status === "queued" && (
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Bot className="h-3.5 w-3.5" /> {selectedFeature.impl_jira_key}: в очереди на реализацию
+                  </span>
+                )}
+                {selectedFeature.impl_status === "running" && (
+                  <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code делает {selectedFeature.impl_jira_key}…
+                  </span>
+                )}
+                {selectedFeature.impl_status === "implemented" && (
+                  <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                    <Bot className="h-3.5 w-3.5" />
+                    {selectedFeature.impl_jira_key}: реализовано
+                    {selectedFeature.impl_mr_url && (
+                      <a href={selectedFeature.impl_mr_url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-emerald-700 dark:hover:text-emerald-300">MR</a>
+                    )}
+                    {selectedFeature.impl_summary && <span className="text-foreground/60">— {selectedFeature.impl_summary}</span>}
+                  </span>
+                )}
+                {selectedFeature.impl_status === "no_changes_needed" && (
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Bot className="h-3.5 w-3.5" />
+                    {selectedFeature.impl_jira_key}: изменения не требуются{selectedFeature.impl_error ? ` — ${selectedFeature.impl_error}` : ""}
+                  </span>
+                )}
+                {selectedFeature.impl_status === "failed" && (
+                  <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                    <Bot className="h-3.5 w-3.5" />
+                    {selectedFeature.impl_jira_key}: агент остановился{selectedFeature.impl_error ? `: ${selectedFeature.impl_error}` : ""}
+                  </span>
+                )}
+              </div>
+            )}
 
         <div className="grid overflow-hidden rounded-2xl border border-border/70 bg-muted/10 md:grid-cols-3 md:divide-x md:divide-border/70">
           <FeatureOverviewCard
