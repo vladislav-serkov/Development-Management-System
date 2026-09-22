@@ -152,6 +152,164 @@ class TestDiffFeature:
         ]
 
 
+class TestNoiseSuppression:
+    """LLM run-to-run variance must not read as spec changes."""
+
+    def test_table_moved_to_another_step_is_not_a_change(self):
+        table = {
+            "caption": "Тело ответа",
+            "columns": [{"header": "Поле"}, {"header": "Тип"}],
+            "fields": [{"name": "amount", "cells": ["amount", "number"], "children": []}],
+        }
+        old = _feature()
+        old["structured_logic_json"]["response_tables"] = [dict(table)]
+        new = _feature()
+        new["structured_logic_json"]["logic_steps"][1]["mapping_tables"] = [dict(table)]
+        assert diff_feature(old, new) is None
+
+    def test_table_attached_this_run_but_changed_is_still_a_change(self):
+        import copy
+
+        table = {
+            "caption": None,
+            "columns": [{"header": "Поле"}, {"header": "Тип"}],
+            "fields": [{"name": "amount", "cells": ["amount", "number"], "children": []}],
+        }
+        old = _feature()
+        old["structured_logic_json"]["response_tables"] = [copy.deepcopy(table)]
+        new = _feature()
+        moved = copy.deepcopy(table)
+        moved["fields"][0]["cells"] = ["amount", "string"]
+        new["structured_logic_json"]["logic_steps"][1]["mapping_tables"] = [moved]
+        detail = diff_feature(old, new)
+        assert detail["material"] is True
+
+    def test_inserted_step_renumbers_the_rest_without_material_changed(self):
+        old = _feature()
+        new = _feature()
+        new["structured_logic_json"]["logic_steps"] = [
+            {"number": "1", "text": "Проверить клиента", "children": [], "mapping_tables": []},
+            {"number": "2", "text": "Записать аудит", "children": [], "mapping_tables": []},
+            {"number": "3", "text": "Вернуть данные", "children": [], "mapping_tables": []},
+        ]
+        detail = diff_feature(old, new)
+        assert detail["material"] is True  # a step was genuinely added
+        assert detail["steps"]["added"] == [{"number": "2", "text": "Записать аудит"}]
+        assert detail["steps"]["changed"] == []
+        assert detail["steps"]["removed"] == []
+        assert detail["steps"]["renumbered"] == [
+            {"old_number": "2", "new_number": "3", "text": "Вернуть данные"}
+        ]
+
+    def test_pure_renumbering_is_not_material(self):
+        old = _feature()
+        new = _feature()
+        new["structured_logic_json"]["logic_steps"] = [
+            {"number": "1.1", "text": "Проверить клиента", "children": [], "mapping_tables": []},
+            {"number": "1.2", "text": "Вернуть данные", "children": [], "mapping_tables": []},
+        ]
+        detail = diff_feature(old, new)
+        assert detail["material"] is False
+        assert len(detail["steps"]["renumbered"]) == 2
+
+    def test_step_split_into_substeps_is_not_material(self):
+        old = _feature()
+        old["structured_logic_json"]["logic_steps"] = [
+            {"number": "1", "text": "Проверить клиента", "children": [], "mapping_tables": []},
+            {
+                "number": "2",
+                "text": "количество записей purchase, отвечающих требованиям: msisdn = msisdn из входных параметров, status = 'ACTIVE'.",
+                "children": [],
+                "mapping_tables": [],
+            },
+        ]
+        new = _feature()
+        new["structured_logic_json"]["logic_steps"] = [
+            {"number": "1", "text": "Проверить клиента", "children": [], "mapping_tables": []},
+            {
+                "number": "2",
+                "text": "количество записей purchase, отвечающих требованиям:",
+                "children": [
+                    {"number": "2.1", "text": "msisdn = msisdn из входных параметров,", "children": [], "mapping_tables": []},
+                    {"number": "2.2", "text": "status = 'ACTIVE'.", "children": [], "mapping_tables": []},
+                ],
+                "mapping_tables": [],
+            },
+        ]
+        detail = diff_feature(old, new)
+        assert detail["material"] is False
+        assert detail["steps"]["added"] == []
+        assert detail["steps"]["changed"] == []
+        assert detail["steps"]["resliced"] == [{"number": "2"}]
+        # And the merge back (new run collapses sub-steps) is symmetric
+        detail_back = diff_feature(new, old)
+        assert detail_back["material"] is False
+        assert detail_back["steps"]["resliced"] == [{"number": "2"}]
+
+    def test_dep_rename_by_containment_is_not_material(self):
+        old = _with_logic(
+            _feature(),
+            used_dependencies=[{"type": "external_doc", "name": "Коэффициент minutesToSubtractToGetDebt", "description": ""}],
+        )
+        new = _with_logic(
+            _feature(),
+            used_dependencies=[{"type": "external_doc", "name": "minutesToSubtractToGetDebt", "description": ""}],
+        )
+        detail = diff_feature(old, new)
+        assert detail["material"] is False
+        assert detail["dependencies"]["added"] == []
+        assert detail["dependencies"]["removed"] == []
+        assert detail["dependencies"]["renamed"] == [
+            {"type": "external_doc", "old_name": "Коэффициент minutesToSubtractToGetDebt", "new_name": "minutesToSubtractToGetDebt"}
+        ]
+
+    def test_dep_rename_by_link_key_without_name_overlap(self):
+        old = _with_logic(
+            _feature(),
+            used_dependencies=[{"type": "external_doc", "name": "Справочник коэффициентов", "description": "", "link_keys": ["page:555"]}],
+        )
+        new = _with_logic(
+            _feature(),
+            used_dependencies=[{"type": "external_doc", "name": "Настройки Consul", "description": "", "link_keys": ["page:555"]}],
+        )
+        detail = diff_feature(old, new)
+        assert detail["material"] is False
+        [renamed] = detail["dependencies"]["renamed"]
+        assert renamed["new_name"] == "Настройки Consul"
+
+    def test_genuinely_new_dep_stays_material(self):
+        old = _feature()
+        new = _with_logic(
+            _feature(),
+            used_dependencies=[
+                {"type": "db_table", "name": "credit_line", "description": ""},
+                {"type": "db_table", "name": "outbox_payment", "description": ""},
+            ],
+        )
+        detail = diff_feature(old, new)
+        assert detail["material"] is True
+        assert detail["dependencies"]["added"] == [{"type": "db_table", "name": "outbox_payment"}]
+
+
+class TestLinkKeys:
+    def test_annotate_dep_link_keys(self):
+        from app.services.extraction import _annotate_dep_link_keys
+
+        logic = {
+            "used_dependencies": [
+                {"type": "external_doc", "name": "X", "link_ids": ["L1", "L2", "L9"]},
+                {"type": "db_table", "name": "t", "link_ids": []},
+            ]
+        }
+        links = {
+            "L1": {"id": "L1", "page_id": "555"},
+            "L2": {"id": "L2", "space_key": "flp", "title": "  [flp-order]  DB ", "anchor": ""},
+        }
+        _annotate_dep_link_keys(logic, links)
+        assert logic["used_dependencies"][0]["link_keys"] == ["page:555", "title:FLP/[flp-order] db#"]
+        assert "link_keys" not in logic["used_dependencies"][1]
+
+
 class TestComputeSpecDiff:
     def test_added_removed_and_material_flag(self):
         prior = {"GET /v1/x": _feature()}

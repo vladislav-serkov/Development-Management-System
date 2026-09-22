@@ -65,7 +65,7 @@ export function SpecDiffDialog({ doc, onClose }: SpecDiffDialogProps) {
 
             {diff.changed.some((c) => !c.material) && (
               <p className="text-xs text-muted-foreground">
-                Только формулировки описаний: {diff.changed.filter((c) => !c.material).map((c) => c.display_name ?? c.name).join(", ")}
+                Непринципиальные отличия (формулировки, нумерация, имена): {diff.changed.filter((c) => !c.material).map((c) => c.display_name ?? c.name).join(", ")}
               </p>
             )}
           </div>
@@ -108,7 +108,7 @@ function FeatureDiffBlock({ change }: { change: FeatureDiff }) {
           <TableDiffBlock key={i} table={table} />
         ))}
 
-        {change.steps && (
+        {change.steps && (change.steps.added.length > 0 || change.steps.removed.length > 0 || change.steps.changed.length > 0 || (change.steps.renumbered?.length ?? 0) > 0 || (change.steps.resliced?.length ?? 0) > 0) && (
           <div className="space-y-1 text-[0.8125rem]">
             <p className="text-xs font-semibold text-muted-foreground">Шаги логики</p>
             {change.steps.added.map((s) => (
@@ -124,10 +124,20 @@ function FeatureDiffBlock({ change }: { change: FeatureDiff }) {
                 <p className="pl-4 text-emerald-700 dark:text-emerald-400">{s.new_text}</p>
               </div>
             ))}
+            {(change.steps.renumbered ?? []).map((s) => (
+              <p key={`n${s.old_number}`} className="text-muted-foreground">
+                шаг {s.old_number} → {s.new_number} (текст не менялся)
+              </p>
+            ))}
+            {(change.steps.resliced ?? []).map((s) => (
+              <p key={`s${s.number}`} className="text-muted-foreground">
+                шаг {s.number} разбит на подшаги иначе (текст не менялся)
+              </p>
+            ))}
           </div>
         )}
 
-        {change.dependencies && (
+        {change.dependencies && (change.dependencies.added.length > 0 || change.dependencies.removed.length > 0 || (change.dependencies.renamed?.length ?? 0) > 0) && (
           <div className="space-y-1 text-[0.8125rem]">
             <p className="text-xs font-semibold text-muted-foreground">Зависимости</p>
             {change.dependencies.added.map((d) => (
@@ -135,6 +145,11 @@ function FeatureDiffBlock({ change }: { change: FeatureDiff }) {
             ))}
             {change.dependencies.removed.map((d) => (
               <p key={`r${d.type}${d.name}`} className="text-red-700 dark:text-red-400">− {d.type}: {d.name}</p>
+            ))}
+            {(change.dependencies.renamed ?? []).map((d) => (
+              <p key={`n${d.type}${d.old_name}`} className="text-muted-foreground">
+                {d.type}: {d.old_name} → {d.new_name} (та же сущность)
+              </p>
             ))}
           </div>
         )}

@@ -146,6 +146,37 @@ def _dedupe_external_docs(structured_logic) -> list[str]:
     return removed
 
 
+def _link_stable_key(link: dict) -> str | None:
+    """Version-independent identity of a link target.
+
+    [LINK:Ln] ids are numbered per parse and shift when links are added to the
+    page; the target page they point at does not. The spec diff matches
+    dependencies across versions by these keys."""
+    page_id = str(link.get("page_id") or "").strip()
+    if page_id:
+        return f"page:{page_id}"
+    title = " ".join(str(link.get("title") or "").split()).lower()
+    if not title:
+        return None
+    space = str(link.get("space_key") or "").upper()
+    anchor = str(link.get("anchor") or "").strip()
+    return f"title:{space}/{title}#{anchor}"
+
+
+def _annotate_dep_link_keys(structured_logic: dict, links_by_id: dict[str, dict]) -> None:
+    """Resolve each dependency's [LINK:Ln] ids to stable target keys, stored
+    as ``link_keys`` next to ``link_ids`` inside structured_logic_json."""
+    for dep in structured_logic.get("used_dependencies") or []:
+        keys = []
+        for link_id in dep.get("link_ids") or []:
+            link = links_by_id.get(str(link_id).strip())
+            key = _link_stable_key(link) if link else None
+            if key:
+                keys.append(key)
+        if keys:
+            dep["link_keys"] = list(dict.fromkeys(keys))
+
+
 def _build_link_resolver(used_dependencies) -> Callable[[str], tuple[str, str] | None]:
     """[LINK:Ln] → the dependency Claude attached that link to.
 
@@ -251,6 +282,10 @@ async def _detect_features(
         max_tokens=settings.extraction_max_tokens,
         tools=[tool],
         tool_choice={"type": "tool", "name": "detect_features"},
+        # NOTE: current Claude models (Sonnet 5 / Opus 5+) removed the sampling
+        # params (temperature/top_p/top_k return 400), so run-to-run extraction
+        # variance cannot be pinned at the API level. The spec diff neutralizes
+        # it structurally instead (see app/services/spec_diff.py).
     )
     if system_prompt:
         create_kwargs["system"] = system_prompt
@@ -317,6 +352,7 @@ async def _process_single_feature(
     now_iso: str,
     tables_by_id: dict[str, dict],
     prior_feature: dict | None = None,
+    links_by_id: dict[str, dict] | None = None,
 ) -> None:
     """Fill mappings from document tables, save the feature, upsert dependency stubs.
 
@@ -355,6 +391,8 @@ async def _process_single_feature(
         "status": "done",
         "extracted_at": datetime.now(UTC).isoformat(),
     }
+    if links_by_id:
+        _annotate_dep_link_keys(feature_data["structured_logic_json"], links_by_id)
     await store.save_feature(project_slug, merge_reextracted_feature(prior_feature, feature_data))
 
     # Upsert dependency stubs (non-fatal)
@@ -428,6 +466,15 @@ async def run_extraction_pipeline(
     if doc_data is None:
         logger.error("Document record not found for %s/%s", project_slug, doc_slug)
         return
+
+    # Stable link targets for dependency identity across spec versions
+    links_by_id: dict[str, dict] = {}
+    try:
+        source = await store.get_document_source(project_slug, doc_slug)
+        if source:
+            links_by_id = {str(l.get("id")): l for l in source.get("links") or [] if l.get("id")}
+    except Exception as exc:
+        logger.warning("Loading document source links failed (non-fatal): %s", exc)
 
     # Snapshot this document's features before re-extraction: the source of the
     # spec diff and of the analysis state carried over per feature.
@@ -512,6 +559,7 @@ async def run_extraction_pipeline(
                 now_iso=now_iso,
                 tables_by_id=tables_by_id,
                 prior_feature=prior_features.get(detected.name),
+                links_by_id=links_by_id,
             )
             succeeded.append(detected.name)
         except Exception as exc:

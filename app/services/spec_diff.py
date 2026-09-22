@@ -6,9 +6,17 @@ the deterministic parts of extraction (tables parsed verbatim from grids,
 dependency lists, feature identity) so the diff reflects the spec, not LLM
 noise: a version bump with identical structures is reported as non-material.
 
+Run-to-run LLM variance is neutralized structurally, not by thresholds:
+tables are matched globally by content fingerprint (a table the LLM attached
+to a different step this run is a move, not a change), steps are matched by
+verbatim text first (renumbering after an inserted step is non-material), and
+dependencies are matched by the stable link target behind them (an LLM-phrased
+dependency name is a rename, not remove+add).
+
 The diff dict is stored on the document (``last_diff``) and rendered by the UI.
 """
 
+import json
 from datetime import UTC, datetime
 
 # Keys the extraction pipeline owns: on re-extraction these come from the new
@@ -104,6 +112,68 @@ def _diff_table_pair(old: dict, new: dict) -> dict | None:
     return {"added_fields": added, "removed_fields": removed, "changed_fields": changed}
 
 
+def _table_fingerprint(table: dict) -> str:
+    """Content identity of a SpecTable, independent of where the LLM attached it.
+
+    Covers the deterministic payload (columns + field tree with cells); caption,
+    table_id and section are location metadata and stay out.
+    """
+
+    def _field(f: dict) -> list:
+        return [
+            _norm(f.get("name")),
+            [_norm(c) for c in f.get("cells") or []],
+            [_field(c) for c in f.get("children") or []],
+        ]
+
+    payload = [
+        [_norm(c.get("header")) for c in table.get("columns") or []],
+        [_field(f) for f in table.get("fields") or []],
+    ]
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _collect_tables(logic: dict) -> list[tuple[str, dict]]:
+    """All of a feature's SpecTables with their section labels, in spec order."""
+    out: list[tuple[str, dict]] = []
+    for table in logic.get("input_tables") or []:
+        out.append(("входные параметры", table))
+    for table in logic.get("response_tables") or []:
+        out.append(("выходные параметры", table))
+    for number, step in sorted(
+        _flatten_steps(logic.get("logic_steps") or []).items(), key=_step_sort_key
+    ):
+        for table in step.get("mapping_tables") or []:
+            out.append((f"шаг {number}", table))
+    return out
+
+
+def _cancel_identical_tables(
+    old_tabs: list[tuple[str, dict]], new_tabs: list[tuple[str, dict]]
+) -> tuple[list[tuple[str, dict]], list[tuple[str, dict]]]:
+    """Drop table pairs with identical content regardless of section.
+
+    A table the LLM attached to step 12 this run but left unattached (or on
+    another step) last run cancels out here instead of surfacing as
+    added/removed noise.
+    """
+    new_by_fp: dict[str, list[int]] = {}
+    for i, (_, table) in enumerate(new_tabs):
+        new_by_fp.setdefault(_table_fingerprint(table), []).append(i)
+
+    old_rest: list[tuple[str, dict]] = []
+    consumed: set[int] = set()
+    for section, table in old_tabs:
+        candidates = new_by_fp.get(_table_fingerprint(table), [])
+        match = next((i for i in candidates if i not in consumed), None)
+        if match is None:
+            old_rest.append((section, table))
+        else:
+            consumed.add(match)
+    new_rest = [pair for i, pair in enumerate(new_tabs) if i not in consumed]
+    return old_rest, new_rest
+
+
 def _match_tables(old_tables: list[dict], new_tables: list[dict]) -> list[tuple[dict | None, dict | None]]:
     """Pair tables of one section: by caption first, leftovers by order."""
     old_left = list(old_tables or [])
@@ -154,32 +224,114 @@ def _flatten_steps(steps: list[dict]) -> dict[str, dict]:
     return out
 
 
+def _number_key(number: str) -> list:
+    return [int(p) if p.isdigit() else p for p in number.split(".")]
+
+
+def _step_sort_key(item: tuple[str, dict]) -> list:
+    return _number_key(item[0])
+
+
 def _diff_steps(old_steps: list[dict], new_steps: list[dict]) -> dict | None:
+    """Diff logic steps, matching by verbatim text first and number second.
+
+    Text is the spec's own content; numbering is the LLM's slicing of it. An
+    inserted step shifts every number after it — text-first matching turns that
+    shift into non-material ``renumbered`` entries instead of a wall of fake
+    ``changed`` ones.
+    """
     old_flat = _flatten_steps(old_steps)
     new_flat = _flatten_steps(new_steps)
 
-    added = [{"number": n, "text": _norm(new_flat[n].get("text"))} for n in new_flat if n not in old_flat]
-    removed = [{"number": n, "text": _norm(old_flat[n].get("text"))} for n in old_flat if n not in new_flat]
+    # Pass 1: identical text — same step, possibly under a new number
+    new_by_text: dict[str, list[str]] = {}
+    for number in sorted(new_flat, key=_number_key):
+        new_by_text.setdefault(_norm(new_flat[number].get("text")), []).append(number)
+
+    renumbered = []
+    matched_old: set[str] = set()
+    matched_new: set[str] = set()
+    for number in sorted(old_flat, key=_number_key):
+        text = _norm(old_flat[number].get("text"))
+        candidates = [n for n in new_by_text.get(text, []) if n not in matched_new]
+        if not candidates:
+            continue
+        # Prefer keeping the same number when the text occurs more than once
+        target = number if number in candidates else candidates[0]
+        matched_old.add(number)
+        matched_new.add(target)
+        if target != number:
+            renumbered.append({"old_number": number, "new_number": target, "text": text})
+
+    # Pass 2: same number, different text — a genuine edit of that step
     changed = []
-    for number in old_flat.keys() & new_flat.keys():
-        old_text = _norm(old_flat[number].get("text"))
-        new_text = _norm(new_flat[number].get("text"))
-        if old_text != new_text:
-            changed.append({"number": number, "old_text": old_text, "new_text": new_text})
+    for number in sorted(old_flat.keys() & new_flat.keys(), key=_number_key):
+        if number in matched_old or number in matched_new:
+            continue
+        matched_old.add(number)
+        matched_new.add(number)
+        changed.append({
+            "number": number,
+            "old_text": _norm(old_flat[number].get("text")),
+            "new_text": _norm(new_flat[number].get("text")),
+        })
 
-    if not added and not removed and not changed:
+    added = [
+        {"number": n, "text": _norm(new_flat[n].get("text"))}
+        for n in sorted(new_flat.keys() - matched_new, key=_number_key)
+    ]
+    removed = [
+        {"number": n, "text": _norm(old_flat[n].get("text"))}
+        for n in sorted(old_flat.keys() - matched_old, key=_number_key)
+    ]
+
+    # Pass 3: re-slicing — the LLM split one step into sub-steps (or merged
+    # them back). The subtree's concatenated verbatim text is identical, so
+    # nothing in the spec changed: cancel the fake changed+added/removed set.
+    def _subtree_text(flat: dict[str, dict], number: str) -> str:
+        prefix = number + "."
+        numbers = [number] + sorted((n for n in flat if n.startswith(prefix)), key=_number_key)
+        return _norm(" ".join(_norm(flat[n].get("text")) for n in numbers))
+
+    resliced = []
+    for entry in list(changed):
+        number = entry["number"]
+        if _subtree_text(old_flat, number) == _subtree_text(new_flat, number):
+            prefix = number + "."
+            changed.remove(entry)
+            added[:] = [a for a in added if not a["number"].startswith(prefix)]
+            removed[:] = [r for r in removed if not r["number"].startswith(prefix)]
+            resliced.append({"number": number})
+
+    if not added and not removed and not changed and not renumbered and not resliced:
         return None
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "renumbered": renumbered,
+        "resliced": resliced,
+    }
 
-    def _key(entry: dict):
-        return [int(p) if p.isdigit() else p for p in entry["number"].split(".")]
 
-    added.sort(key=_key)
-    removed.sort(key=_key)
-    changed.sort(key=_key)
-    return {"added": added, "removed": removed, "changed": changed}
+def _dep_link_keys(dep: dict) -> set[str]:
+    return {k for k in dep.get("link_keys") or [] if k}
+
+
+def _names_contain(a: str, b: str) -> bool:
+    """One name contains the other — the usual shape of LLM rename noise
+    ('Коэффициент minutesToSubtractToGetDebt' vs 'minutesToSubtractToGetDebt')."""
+    a, b = a.lower(), b.lower()
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return len(shorter) >= 6 and shorter in longer
 
 
 def _diff_dependencies(old_logic: dict, new_logic: dict) -> dict | None:
+    """Diff used dependencies. Identity, in order of trust: exact (type, name),
+    the stable link target behind the dependency (``link_keys``, resolved from
+    the page's [LINK:Ln] markers at extraction time), then name containment.
+    Link/containment matches are renames — reported but non-material."""
+
     def _deps(logic: dict) -> dict[tuple[str, str], dict]:
         return {
             (_norm(d.get("type")), _norm(d.get("name"))): d
@@ -188,24 +340,33 @@ def _diff_dependencies(old_logic: dict, new_logic: dict) -> dict | None:
 
     old_deps = _deps(old_logic)
     new_deps = _deps(new_logic)
-    added = [{"type": t, "name": n} for t, n in sorted(new_deps.keys() - old_deps.keys())]
-    removed = [{"type": t, "name": n} for t, n in sorted(old_deps.keys() - new_deps.keys())]
-    if not added and not removed:
+    old_only = {k: v for k, v in old_deps.items() if k not in new_deps}
+    new_only = {k: v for k, v in new_deps.items() if k not in old_deps}
+
+    renamed = []
+    for (old_type, old_name), old_dep in sorted(old_only.items()):
+        match = None
+        old_links = _dep_link_keys(old_dep)
+        for (new_type, new_name), new_dep in sorted(new_only.items()):
+            if new_type != old_type:
+                continue
+            if (old_links and old_links & _dep_link_keys(new_dep)) or _names_contain(old_name, new_name):
+                match = (new_type, new_name)
+                break
+        if match is not None:
+            new_only.pop(match)
+            if old_name != match[1]:
+                renamed.append({"type": old_type, "old_name": old_name, "new_name": match[1]})
+
+    added = [{"type": t, "name": n} for t, n in sorted(new_only)]
+    removed = [
+        {"type": t, "name": n}
+        for t, n in sorted(old_only)
+        if not any(r["type"] == t and r["old_name"] == n for r in renamed)
+    ]
+    if not added and not removed and not renamed:
         return None
-    return {"added": added, "removed": removed}
-
-
-def _step_mapping_diffs(old_steps: dict[str, dict], new_steps: dict[str, dict]) -> list[dict]:
-    out = []
-    for number in sorted(old_steps.keys() & new_steps.keys(), key=lambda n: [int(p) if p.isdigit() else p for p in n.split(".")]):
-        out.extend(
-            _diff_tables_section(
-                f"шаг {number}",
-                old_steps[number].get("mapping_tables") or [],
-                new_steps[number].get("mapping_tables") or [],
-            )
-        )
-    return out
+    return {"added": added, "removed": removed, "renamed": renamed}
 
 
 def diff_feature(old: dict, new: dict) -> dict | None:
@@ -228,17 +389,27 @@ def diff_feature(old: dict, new: dict) -> dict | None:
         if o != n:
             identity.append({"field": label, "old": o, "new": n})
 
+    # Tables: cancel content-identical ones globally first (a table attached to
+    # a different section this run is a move, not a change), then diff the rest
+    # within their sections.
+    old_rest, new_rest = _cancel_identical_tables(_collect_tables(old_logic), _collect_tables(new_logic))
+    sections = list(dict.fromkeys([s for s, _ in old_rest] + [s for s, _ in new_rest]))
     tables = []
-    tables += _diff_tables_section("входные параметры", old_logic.get("input_tables") or [], new_logic.get("input_tables") or [])
-    tables += _diff_tables_section("выходные параметры", old_logic.get("response_tables") or [], new_logic.get("response_tables") or [])
-    tables += _step_mapping_diffs(_flatten_steps(old_logic.get("logic_steps") or []), _flatten_steps(new_logic.get("logic_steps") or []))
+    for section in sections:
+        tables += _diff_tables_section(
+            section,
+            [t for s, t in old_rest if s == section],
+            [t for s, t in new_rest if s == section],
+        )
 
     steps = _diff_steps(old_logic.get("logic_steps") or [], new_logic.get("logic_steps") or [])
     dependencies = _diff_dependencies(old_logic, new_logic)
     summary_changed = _norm(old.get("summary")) != _norm(new.get("summary"))
 
-    material = bool(identity or tables or steps or dependencies)
-    if not material and not summary_changed:
+    steps_material = steps is not None and bool(steps["added"] or steps["removed"] or steps["changed"])
+    deps_material = dependencies is not None and bool(dependencies["added"] or dependencies["removed"])
+    material = bool(identity or tables or steps_material or deps_material)
+    if not material and not summary_changed and steps is None and dependencies is None:
         return None
     return {
         "name": new.get("name") or old.get("name"),

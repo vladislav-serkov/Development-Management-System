@@ -206,11 +206,17 @@ export interface SpecStepsDiff {
   added: { number: string; text: string }[]
   removed: { number: string; text: string }[]
   changed: SpecStepChange[]
+  /** Same verbatim text under a new number (e.g. after an inserted step) — non-material */
+  renumbered?: { old_number: string; new_number: string; text: string }[]
+  /** Step split into sub-steps (or merged back) with identical verbatim text — non-material */
+  resliced?: { number: string }[]
 }
 
 export interface SpecDepsDiff {
   added: { type: string; name: string }[]
   removed: { type: string; name: string }[]
+  /** Same link target / containing name — a rename, non-material */
+  renamed?: { type: string; old_name: string; new_name: string }[]
 }
 
 export interface FeatureDiff {
