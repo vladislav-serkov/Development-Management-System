@@ -423,6 +423,97 @@ def diff_feature(old: dict, new: dict) -> dict | None:
     }
 
 
+# ----------------------------------------------------------------------
+# Enriched-dependency diff (source page moved ahead → what changed in it)
+# ----------------------------------------------------------------------
+
+
+def _diff_named_items(old_items: list[dict], new_items: list[dict], key, fields: list[str]) -> dict | None:
+    """Generic diff of two item lists keyed by ``key(item)``: added/removed
+    names + per-field changes on common items."""
+    old_map = {key(i): i for i in old_items or [] if key(i)}
+    new_map = {key(i): i for i in new_items or [] if key(i)}
+    added = sorted(new_map.keys() - old_map.keys())
+    removed = sorted(old_map.keys() - new_map.keys())
+    changed = []
+    for name in sorted(old_map.keys() & new_map.keys()):
+        field_changes = []
+        for field in fields:
+            o, n = _norm(old_map[name].get(field)), _norm(new_map[name].get(field))
+            if o != n:
+                field_changes.append({"field": field, "old": o, "new": n})
+        if field_changes:
+            changed.append({"name": name, "changes": field_changes})
+    if not added and not removed and not changed:
+        return None
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def _flatten_message_fields(fields: list[dict], prefix: str = "") -> list[dict]:
+    out = []
+    for f in fields or []:
+        name = _norm(f.get("element"))
+        path = f"{prefix}.{name}" if prefix else name
+        out.append({**f, "element": path})
+        out.extend(_flatten_message_fields(f.get("children") or [], path))
+    return out
+
+
+def diff_enriched_data(dep_type: str, old: dict | None, new: dict | None) -> dict | None:
+    """Deterministic diff of a dependency's enrichment between source-page
+    versions. Groundwork for spec-vs-source mismatch detection: a feature whose
+    ``source_refs`` point at a column listed in ``columns.removed`` is a gap
+    that needs no LLM to find.
+
+    Returns None when nothing changed. Shape by dep_type:
+    db_table → {"columns": {...}}, external_api → {"endpoints": {...}},
+    kafka_topic → {"message_fields": {...}}, cache → {"key_patterns": {...}},
+    external_doc → {"content_changed": true}.
+    """
+    if not old or not new:
+        return None
+
+    if dep_type == "db_table":
+        columns = _diff_named_items(
+            old.get("columns") or [], new.get("columns") or [],
+            key=lambda c: _norm(c.get("name")),
+            fields=["col_type", "nullable", "is_pk", "fk_references"],
+        )
+        return {"columns": columns} if columns else None
+
+    if dep_type == "external_api":
+        endpoints = _diff_named_items(
+            old.get("endpoints") or [], new.get("endpoints") or [],
+            key=lambda e: f"{_norm(e.get('method')).upper()} {_norm(e.get('path'))}".strip(),
+            fields=["description"],
+        )
+        return {"endpoints": endpoints} if endpoints else None
+
+    if dep_type == "kafka_topic":
+        fields = _diff_named_items(
+            _flatten_message_fields(old.get("message_fields") or []),
+            _flatten_message_fields(new.get("message_fields") or []),
+            key=lambda f: f.get("element"),
+            fields=["field_type", "required", "cardinality"],
+        )
+        return {"message_fields": fields} if fields else None
+
+    if dep_type == "cache":
+        patterns = _diff_named_items(
+            old.get("key_patterns") or [], new.get("key_patterns") or [],
+            key=lambda p: _norm(p.get("pattern")),
+            fields=["ttl_seconds"],
+        )
+        return {"key_patterns": patterns} if patterns else None
+
+    if dep_type == "external_doc":
+        if _norm(old.get("content_html")) != _norm(new.get("content_html")):
+            return {"content_changed": True}
+        return None
+
+    return None
+
+
 def compute_spec_diff(
     prior_features: dict[str, dict],
     current_features: dict[str, dict],

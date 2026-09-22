@@ -13,7 +13,7 @@ sent to Claude once, no matter how many dependencies it feeds.
 import asyncio
 import logging
 
-from app.services.confluence import fetch_page_by_ref
+from app.services.confluence import fetch_page_by_ref, page_provenance
 from app.services.enrichment import enrich_group_from_page
 
 logger = logging.getLogger(__name__)
@@ -158,6 +158,7 @@ async def _enrich_group(
             text_content=page["markdown"],
             source_name=page["title"],
             store=store,
+            source_page=page_provenance(page),
         )
     except Exception as exc:
         logger.error("Auto-enrich failed: %s/%s: %s", dep_type, dep_names, exc)

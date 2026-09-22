@@ -39,6 +39,14 @@ export function DependencyListItem({ dep, isActive, onClick, onDelete, isDeleteP
             {dep.enrichment_status === "running" && (
               <AnimatedDots className="ml-auto shrink-0 text-xs" />
             )}
+            {dep.source_outdated && dep.enrichment_status !== "running" && (
+              <span
+                className="ml-auto shrink-0 text-[0.6875rem] font-medium text-amber-600 dark:text-amber-400"
+                title={`Страница-источник обновилась: v${dep.source_page_version} → v${dep.latest_source_version}`}
+              >
+                v{dep.latest_source_version}
+              </span>
+            )}
           </div>
         </button>
 

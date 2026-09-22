@@ -165,6 +165,19 @@ async def fetch_page(url: str) -> dict:
     return _page_result(await _fetch_page_data(parse_page_ref(url)))
 
 
+def page_provenance(page: dict) -> dict:
+    """Provenance of a fetched page for storing on enriched dependencies:
+    the stable identity (page_id) + version needed to detect that the source
+    moved ahead, and a canonical URL for one-click re-enrichment."""
+    base = settings.confluence_base_url.rstrip("/")
+    page_id = str(page.get("id") or "")
+    return {
+        "source_page_id": page_id or None,
+        "source_page_version": page.get("version") or None,
+        "source_page_url": f"{base}/pages/viewpage.action?pageId={page_id}" if page_id and base else None,
+    }
+
+
 async def fetch_page_meta(page_id: str) -> dict:
     """Lightweight version probe: title + current version number, no page body.
 

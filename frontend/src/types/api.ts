@@ -271,10 +271,23 @@ export interface SpecUpdateCheck {
   error: string | null
 }
 
+export interface DepSourceCheck {
+  dep_type: string
+  name: string
+  source_page_url: string | null
+  current_version: number | null
+  latest_version: number | null
+  outdated: boolean
+  error: string | null
+}
+
 export interface SpecUpdatesResponse {
   checked: number
   outdated: number
   documents: SpecUpdateCheck[]
+  dependencies_checked?: number
+  dependencies_outdated?: number
+  dependencies?: DepSourceCheck[]
 }
 
 // Project — keyed by slug
@@ -312,6 +325,24 @@ export interface PatchProjectRequest {
 export type DependencyType = "db_table" | "external_api" | "cache" | "kafka_topic" | "external_doc"
 export type DependencyStatus = "stub" | "enriched" | "error" | "running"
 
+// Deterministic diff of a dependency's enrichment vs the previous one
+export interface DepItemsDiff {
+  added: string[]
+  removed: string[]
+  changed: { name: string; changes: { field: string; old: string; new: string }[] }[]
+}
+
+export interface DepSourceDiff {
+  computed_at: string
+  old_version: number | null
+  new_version: number | null
+  columns?: DepItemsDiff
+  endpoints?: DepItemsDiff
+  message_fields?: DepItemsDiff
+  key_patterns?: DepItemsDiff
+  content_changed?: boolean
+}
+
 export interface ProjectDependency {
   project_slug: string
   dep_type: DependencyType
@@ -325,6 +356,14 @@ export interface ProjectDependency {
   method: string | null
   service_name: string | null
   path: string | null
+  /** Source-page provenance + version tracking (Confluence-enriched deps) */
+  source_page_id?: string | null
+  source_page_version?: number | null
+  source_page_url?: string | null
+  latest_source_version?: number | null
+  source_checked_at?: string | null
+  source_outdated?: boolean
+  last_source_diff?: DepSourceDiff | null
 }
 
 // DB enrichment types

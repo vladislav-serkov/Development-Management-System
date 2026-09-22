@@ -295,10 +295,25 @@ class SpecUpdateCheck(BaseModel):
     error: str | None = None
 
 
+class DepSourceCheck(BaseModel):
+    """Version probe result for one enriched dependency's source page."""
+
+    dep_type: str
+    name: str
+    source_page_url: str | None = None
+    current_version: int | None = None
+    latest_version: int | None = None
+    outdated: bool = False
+    error: str | None = None
+
+
 class SpecUpdatesResponse(BaseModel):
     checked: int
     outdated: int
     documents: list[SpecUpdateCheck]
+    dependencies_checked: int = 0
+    dependencies_outdated: int = 0
+    dependencies: list[DepSourceCheck] = []
 
 
 class ProjectResponse(BaseModel):

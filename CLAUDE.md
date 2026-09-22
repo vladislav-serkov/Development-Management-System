@@ -71,7 +71,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `test_cases.py` — Test case generation via Claude
   - `bugs.py` — Bug report generation from test case review via Claude
   - `rules.py` — Validation rules management
-  - `enrichment.py` — Dependency enrichment via Claude (Confluence page markdown)
+  - `enrichment.py` — Dependency enrichment via Claude (Confluence page markdown). Every enrichment write stores source-page provenance (`source_page_id`/`source_page_version`/`source_page_url`, via `confluence.page_provenance`) and a deterministic diff vs the previous enrichment (`last_source_diff`, `spec_diff.diff_enriched_data`: db_table columns, api endpoints, kafka message fields, cache keys) — groundwork for spec-vs-source mismatch detection (a feature whose `source_refs` point at a removed column is a gap needing no LLM). `POST /documents/check-spec-updates` probes dependency source pages too (one probe per distinct page) and persists `source_outdated`; the UI shows an amber badge + one-click «Переобогатить» from the stored URL. Deps enriched before provenance existed are skipped by the check until re-enriched
   - `context_serializer.py` — bidirectional DB ⇄ `.context/` file-layout adapter (DMS interop contract): `dump_project` renders DB state as files, `load_context_project` imports a `.context/` directory as a new project
   - `export.py` — packs `dump_project` output into a zip
   - `import_context.py` — `adapt_feature` (DMS feature.json → canonical shape) + wiki→rules merge helpers

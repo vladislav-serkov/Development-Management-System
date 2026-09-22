@@ -88,8 +88,9 @@ export function useSpecUpdates(projectSlug: string | null) {
     queryKey: ["spec-updates", projectSlug],
     queryFn: async () => {
       const result = await checkSpecUpdates(projectSlug!)
-      // The check persists latest versions on the documents — refresh them
+      // The check persists latest versions on documents AND dependencies — refresh both
       qc.invalidateQueries({ queryKey: ["documents", projectSlug] })
+      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "dependencies"] })
       return result
     },
     enabled: projectSlug !== null,

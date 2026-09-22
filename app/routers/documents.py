@@ -10,7 +10,7 @@ from app.schemas.extraction import (
 )
 import asyncio
 
-from app.schemas.extraction import SpecUpdateCheck, SpecUpdatesResponse
+from app.schemas.extraction import DepSourceCheck, SpecUpdateCheck, SpecUpdatesResponse
 from app.services.confluence import ConfluenceError, fetch_page, fetch_page_meta
 from app.services.extraction import run_extraction_pipeline
 from app.services.task_manager import task_manager
@@ -147,10 +147,11 @@ async def list_documents(project_slug: str = Query(...)):
 
 @router.post("/check-spec-updates", response_model=SpecUpdatesResponse)
 async def check_spec_updates(project_slug: str = Query(...)):
-    """Probe Confluence for new versions of every imported page.
+    """Probe Confluence for new versions of every imported page AND of every
+    page an enriched dependency was built from.
 
-    Lightweight (version numbers only, no page bodies); results are persisted on
-    the documents so the outdated badge survives reloads.
+    Lightweight (version numbers only, no page bodies); results are persisted
+    on documents/dependencies so the outdated badges survive reloads.
     """
     proj = await store.get_project(project_slug)
     if proj is None:
@@ -160,38 +161,89 @@ async def check_spec_updates(project_slug: str = Query(...)):
         d for d in await store.list_documents(project_slug)
         if d.get("confluence_page_id")
     ]
-    if not docs:
+
+    deps_by_type = await store.list_dependencies(project_slug)
+    dep_targets = [
+        (dep_type, dep)
+        for dep_type, deps in deps_by_type.items()
+        for dep in deps
+        if dep.get("enrichment_status") == "enriched" and dep.get("source_page_id")
+    ]
+
+    if not docs and not dep_targets:
         return SpecUpdatesResponse(checked=0, outdated=0, documents=[])
 
-    async def _check(doc: dict) -> SpecUpdateCheck:
+    # One probe per distinct page: many deps routinely share one source page
+    page_ids = {str(d["confluence_page_id"]) for d in docs}
+    page_ids |= {str(dep["source_page_id"]) for _, dep in dep_targets}
+
+    async def _probe(page_id: str):
+        try:
+            return await fetch_page_meta(page_id)
+        except ConfluenceError as exc:
+            return exc
+
+    probed = dict(zip(page_ids, await asyncio.gather(*(_probe(pid) for pid in page_ids))))
+    now_iso = datetime.now(UTC).isoformat()
+
+    doc_results: list[SpecUpdateCheck] = []
+    for doc in docs:
         slug = doc["slug"]
         current = doc.get("confluence_version")
-        try:
-            meta = await fetch_page_meta(str(doc["confluence_page_id"]))
-        except ConfluenceError as exc:
-            return SpecUpdateCheck(
+        meta = probed.get(str(doc["confluence_page_id"]))
+        if isinstance(meta, ConfluenceError) or meta is None:
+            doc_results.append(SpecUpdateCheck(
                 slug=slug, filename=doc.get("filename", slug),
                 confluence_url=doc.get("confluence_url"),
                 current_version=current, latest_version=None,
-                outdated=bool(doc.get("spec_outdated")), error=str(exc),
-            )
+                outdated=bool(doc.get("spec_outdated")), error=str(meta) if meta else "not probed",
+            ))
+            continue
         latest = meta["version"]
         outdated = bool(current) and latest > current
         await store.update_document(project_slug, slug, {
             "latest_confluence_version": latest,
-            "spec_checked_at": datetime.now(UTC).isoformat(),
+            "spec_checked_at": now_iso,
             "spec_outdated": outdated,
         })
-        return SpecUpdateCheck(
+        doc_results.append(SpecUpdateCheck(
             slug=slug, filename=doc.get("filename", slug),
             confluence_url=doc.get("confluence_url"),
             current_version=current, latest_version=latest,
             outdated=outdated, error=None,
-        )
+        ))
 
-    results = await asyncio.gather(*(_check(d) for d in docs))
+    dep_results: list[DepSourceCheck] = []
+    for dep_type, dep in dep_targets:
+        current = dep.get("source_page_version")
+        meta = probed.get(str(dep["source_page_id"]))
+        if isinstance(meta, ConfluenceError) or meta is None:
+            dep_results.append(DepSourceCheck(
+                dep_type=dep_type, name=dep["name"],
+                source_page_url=dep.get("source_page_url"),
+                current_version=current, latest_version=None,
+                outdated=bool(dep.get("source_outdated")), error=str(meta) if meta else "not probed",
+            ))
+            continue
+        latest = meta["version"]
+        outdated = bool(current) and latest > current
+        await store.update_dependency(project_slug, dep_type, dep["name"], {
+            "latest_source_version": latest,
+            "source_checked_at": now_iso,
+            "source_outdated": outdated,
+        })
+        dep_results.append(DepSourceCheck(
+            dep_type=dep_type, name=dep["name"],
+            source_page_url=dep.get("source_page_url"),
+            current_version=current, latest_version=latest,
+            outdated=outdated, error=None,
+        ))
+
     return SpecUpdatesResponse(
-        checked=len(results),
-        outdated=sum(1 for r in results if r.outdated),
-        documents=list(results),
+        checked=len(doc_results),
+        outdated=sum(1 for r in doc_results if r.outdated),
+        documents=doc_results,
+        dependencies_checked=len(dep_results),
+        dependencies_outdated=sum(1 for r in dep_results if r.outdated),
+        dependencies=dep_results,
     )

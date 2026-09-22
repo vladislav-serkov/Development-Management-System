@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.routers.projects import store
 from app.schemas.enrichment import CreateDependencyRequest, DependencyResponse
 from app.schemas.extraction import ConfluenceImportRequest
-from app.services.confluence import ConfluenceError, fetch_page
+from app.services.confluence import ConfluenceError, fetch_page, page_provenance
 from app.services.enrichment import EXTERNAL_DOC_TARGETED_ONLY_MSG, run_enrichment_pipeline
 from app.services.task_manager import task_manager
 from app.storage import DEP_TYPE_FILE, ActiveTaskExistsError
@@ -42,6 +42,13 @@ def _dep_to_response(dep: dict, project_slug: str) -> DependencyResponse:
         method=dep.get("method"),
         service_name=dep.get("service_name"),
         path=dep.get("path"),
+        source_page_id=dep.get("source_page_id"),
+        source_page_version=dep.get("source_page_version"),
+        source_page_url=dep.get("source_page_url"),
+        latest_source_version=dep.get("latest_source_version"),
+        source_checked_at=dep.get("source_checked_at"),
+        source_outdated=bool(dep.get("source_outdated")),
+        last_source_diff=dep.get("last_source_diff"),
     )
 
 
@@ -163,6 +170,7 @@ async def _run_enrichment_background(
     source_name: str,
     *,
     task_id: str | None = None,
+    source_page: dict | None = None,
 ) -> None:
     """Background wrapper: run enrichment pipeline and handle status transitions."""
     try:
@@ -173,6 +181,7 @@ async def _run_enrichment_background(
             source_name=source_name,
             store=store,
             target_dep_name=dep_name,
+            source_page=source_page,
         )
         # enrichment_status is set to "enriched" inside run_enrichment_pipeline
     except Exception as exc:
@@ -280,7 +289,7 @@ async def enrich_dependency(
         task_key,
         _run_enrichment_background(
             project_slug, dep_type, dep_name, page["markdown"],
-            page["title"], task_id=task["id"],
+            page["title"], task_id=task["id"], source_page=page_provenance(page),
         ),
     )
 
