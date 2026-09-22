@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   fetchProjects, fetchProject, createProject, patchProject,
-  fetchProjectFeatures,
+  fetchProjectFeatures, fetchDocuments, checkSpecUpdates,
   importConfluencePage,
   patchFeature, deleteFeature, implementFeature, importProjectZip,
   importContext, deleteProject,
@@ -67,6 +67,38 @@ export function useProjectFeatures(projectSlug: string | null, projectStatus?: P
 }
 
 // Documents
+export function useProjectDocuments(projectSlug: string | null, projectStatus?: ProjectResponse["status"]) {
+  return useQuery({
+    queryKey: ["documents", projectSlug],
+    queryFn: () => fetchDocuments(projectSlug!),
+    enabled: projectSlug !== null,
+    refetchInterval: (query) => {
+      const docs = query.state.data
+      const extracting = docs?.some(d => d.status === "processing" || d.status === "extracting")
+      return (extracting || projectStatus === "processing") ? 3000 : false
+    },
+  })
+}
+
+// Version probe against Confluence: cheap (numbers only), auto-runs on project
+// open and re-runs at most every 5 minutes while the page stays open.
+export function useSpecUpdates(projectSlug: string | null) {
+  const qc = useQueryClient()
+  return useQuery({
+    queryKey: ["spec-updates", projectSlug],
+    queryFn: async () => {
+      const result = await checkSpecUpdates(projectSlug!)
+      // The check persists latest versions on the documents — refresh them
+      qc.invalidateQueries({ queryKey: ["documents", projectSlug] })
+      return result
+    },
+    enabled: projectSlug !== null,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    retry: false,
+  })
+}
+
 export function useImportConfluence(projectSlug: string) {
   const qc = useQueryClient()
   return useMutation({

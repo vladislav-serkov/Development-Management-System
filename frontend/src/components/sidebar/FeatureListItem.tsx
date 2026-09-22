@@ -43,11 +43,26 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
               )}
               <div className="mt-1 flex items-center gap-2">
                 <MethodBadge method={feature.method} featureType={feature.type} />
-                <span className="truncate text-sm font-medium">{featureMeta.primary}</span>
+                <span className={cn("truncate text-sm font-medium", feature.orphaned && "text-muted-foreground line-through decoration-red-400/60")}>
+                  {featureMeta.primary}
+                </span>
               </div>
               <div className="mt-1 flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
                 <span>{feature.test_case_count ?? 0} тестов</span>
                 <span>{feature.bug_count ?? 0} багов</span>
+                {feature.orphaned && (
+                  <span className="font-medium text-red-600 dark:text-red-400" title="Фичи больше нет в текущей версии спеки">
+                    нет в спеке
+                  </span>
+                )}
+                {!feature.orphaned && (feature.gaps_stale || feature.test_cases_stale) && (
+                  <span
+                    className="font-medium text-amber-600 dark:text-amber-400"
+                    title={`Анализ посчитан по старой версии спеки${feature.stale_spec_note ? ` (${feature.stale_spec_note})` : ""}`}
+                  >
+                    устарело
+                  </span>
+                )}
               </div>
             </div>
           </div>

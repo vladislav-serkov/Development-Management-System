@@ -8,7 +8,10 @@ from app.schemas.extraction import (
     ConfluenceImportRequest,
     DocumentResponse,
 )
-from app.services.confluence import ConfluenceError, fetch_page
+import asyncio
+
+from app.schemas.extraction import SpecUpdateCheck, SpecUpdatesResponse
+from app.services.confluence import ConfluenceError, fetch_page, fetch_page_meta
 from app.services.extraction import run_extraction_pipeline
 from app.services.task_manager import task_manager
 
@@ -37,6 +40,12 @@ def _doc_to_response(
         features=[_feature_to_response(f, active_tasks=active_tasks) for f in features],
         uploaded_at=uploaded_at,
         error_message=doc.get("error_message"),
+        confluence_url=doc.get("confluence_url"),
+        confluence_version=doc.get("confluence_version"),
+        latest_confluence_version=doc.get("latest_confluence_version"),
+        spec_checked_at=doc.get("spec_checked_at"),
+        spec_outdated=bool(doc.get("spec_outdated")),
+        last_diff=doc.get("last_diff"),
     )
 
 
@@ -101,6 +110,8 @@ async def import_confluence_page(
         },
     )
 
+    prev_version = existing.get("confluence_version") if existing else None
+
     async def _import_chain():
         await run_extraction_pipeline(
             filename=filename,
@@ -109,6 +120,7 @@ async def import_confluence_page(
             project_slug=project_slug,
             doc_slug=doc_slug,
             tables=page["tables"],
+            prev_confluence_version=prev_version,
         )
         # Auto-enrich stub deps linked from the imported page (non-fatal)
         try:
@@ -121,3 +133,65 @@ async def import_confluence_page(
     task_manager.launch(task_key, _import_chain())
 
     return _doc_to_response(doc_data, [], active_tasks=[])
+
+
+@router.get("/", response_model=list[DocumentResponse])
+async def list_documents(project_slug: str = Query(...)):
+    """List the project's documents (without per-document feature payloads)."""
+    proj = await store.get_project(project_slug)
+    if proj is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
+    docs = await store.list_documents(project_slug)
+    return [_doc_to_response(d, []) for d in docs]
+
+
+@router.post("/check-spec-updates", response_model=SpecUpdatesResponse)
+async def check_spec_updates(project_slug: str = Query(...)):
+    """Probe Confluence for new versions of every imported page.
+
+    Lightweight (version numbers only, no page bodies); results are persisted on
+    the documents so the outdated badge survives reloads.
+    """
+    proj = await store.get_project(project_slug)
+    if proj is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
+
+    docs = [
+        d for d in await store.list_documents(project_slug)
+        if d.get("confluence_page_id")
+    ]
+    if not docs:
+        return SpecUpdatesResponse(checked=0, outdated=0, documents=[])
+
+    async def _check(doc: dict) -> SpecUpdateCheck:
+        slug = doc["slug"]
+        current = doc.get("confluence_version")
+        try:
+            meta = await fetch_page_meta(str(doc["confluence_page_id"]))
+        except ConfluenceError as exc:
+            return SpecUpdateCheck(
+                slug=slug, filename=doc.get("filename", slug),
+                confluence_url=doc.get("confluence_url"),
+                current_version=current, latest_version=None,
+                outdated=bool(doc.get("spec_outdated")), error=str(exc),
+            )
+        latest = meta["version"]
+        outdated = bool(current) and latest > current
+        await store.update_document(project_slug, slug, {
+            "latest_confluence_version": latest,
+            "spec_checked_at": datetime.now(UTC).isoformat(),
+            "spec_outdated": outdated,
+        })
+        return SpecUpdateCheck(
+            slug=slug, filename=doc.get("filename", slug),
+            confluence_url=doc.get("confluence_url"),
+            current_version=current, latest_version=latest,
+            outdated=outdated, error=None,
+        )
+
+    results = await asyncio.gather(*(_check(d) for d in docs))
+    return SpecUpdatesResponse(
+        checked=len(results),
+        outdated=sum(1 for r in results if r.outdated),
+        documents=list(results),
+    )

@@ -4,7 +4,7 @@ import { AlertCircle, CheckCircle2, FileText, GitBranch, Loader2, Network, Spark
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { useProjectTasks } from "@/hooks/useTasks"
-import { useProject, useProjectFeatures, useImportConfluence } from "@/hooks/useDocuments"
+import { useProject, useProjectFeatures, useProjectDocuments, useSpecUpdates, useImportConfluence } from "@/hooks/useDocuments"
 import { useProjectDependencies } from "@/hooks/useDependencies"
 import { useUIStore } from "@/stores/uiStore"
 import { ProjectSidebar } from "@/components/sidebar"
@@ -145,6 +145,8 @@ export default function BackgroundTasksPage() {
   const features = allFeatures?.filter((f) => f.status === "done")
   const { data: dependencies } = useProjectDependencies(projectSlug)
   const confluenceMutation = useImportConfluence(projectSlug ?? "")
+  const { data: documents } = useProjectDocuments(projectSlug, project?.status)
+  const specUpdates = useSpecUpdates(projectSlug)
 
   const [kindFilter, setKindFilter] = useState<KindFilter>("all")
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
@@ -177,12 +179,14 @@ export default function BackgroundTasksPage() {
         project={project}
         projectSlug={projectSlug}
         features={features}
+        documents={documents}
         dependencies={dependencies}
         selectedFeatureName={null}
         selectedDep={null}
         onImportConfluence={(url) => confluenceMutation.mutate(url)}
         isImporting={confluenceMutation.isPending}
         importError={confluenceMutation.error?.message ?? null}
+        isCheckingUpdates={specUpdates.isFetching}
         sidebarWidth={sidebarWidth}
         onStartDrag={() => {
           isDragging.current = true

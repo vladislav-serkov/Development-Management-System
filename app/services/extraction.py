@@ -16,6 +16,7 @@ from app.schemas.extraction import (
 )
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services.rules import build_system_prompt
+from app.services.spec_diff import compute_spec_diff, merge_reextracted_feature
 
 logger = logging.getLogger(__name__)
 
@@ -315,8 +316,13 @@ async def _process_single_feature(
     store,
     now_iso: str,
     tables_by_id: dict[str, dict],
+    prior_feature: dict | None = None,
 ) -> None:
     """Fill mappings from document tables, save the feature, upsert dependency stubs.
+
+    ``prior_feature`` — the stored record from before re-extraction; its
+    analysis state (counts, impl/autotest status, stale flags) is carried over
+    so a re-import doesn't erase it.
 
     Raises on fatal errors; caller decides per-feature rollback.
     """
@@ -349,7 +355,7 @@ async def _process_single_feature(
         "status": "done",
         "extracted_at": datetime.now(UTC).isoformat(),
     }
-    await store.save_feature(project_slug, feature_data)
+    await store.save_feature(project_slug, merge_reextracted_feature(prior_feature, feature_data))
 
     # Upsert dependency stubs (non-fatal)
     try:
@@ -389,6 +395,7 @@ async def run_extraction_pipeline(
     project_slug: str,
     doc_slug: str = "",
     tables: list[dict] | None = None,
+    prev_confluence_version: int | None = None,
 ) -> None:
     """Extraction pipeline for one document (markdown text) = one or more features.
 
@@ -421,6 +428,14 @@ async def run_extraction_pipeline(
     if doc_data is None:
         logger.error("Document record not found for %s/%s", project_slug, doc_slug)
         return
+
+    # Snapshot this document's features before re-extraction: the source of the
+    # spec diff and of the analysis state carried over per feature.
+    prior_features = {
+        f["name"]: f
+        for f in await store.list_features(project_slug)
+        if f.get("source_document") == doc_slug
+    }
 
     task = await store.create_task(
         project_slug,
@@ -462,6 +477,27 @@ async def run_extraction_pipeline(
         if warning:
             logger.warning("Feature identity corrected for '%s': %s", filename, warning)
 
+    # Single-feature pages (kafka/rest: the page IS the feature): a different
+    # detected name is a rename, not remove+add — e.g. the LLM picked the
+    # gateway path this run and the controller path last run. Rename the prior
+    # row so its gaps/test-cases/bugs follow the feature instead of orphaning.
+    active_prior = {n: f for n, f in prior_features.items() if not f.get("orphaned")}
+    if len(active_prior) == 1 and len(detected_features) == 1:
+        (prior_name, prior_feat), = active_prior.items()
+        detected = detected_features[0]
+        if prior_name != detected.name and prior_feat.get("type") == detected.type.value:
+            try:
+                renamed = await store.rename_feature(project_slug, prior_name, detected.name)
+                if renamed is not None:
+                    prior_features.pop(prior_name, None)
+                    prior_features[detected.name] = renamed
+                    logger.info(
+                        "Single-feature re-extraction: '%s' renamed to '%s' (analysis carried over)",
+                        prior_name, detected.name,
+                    )
+            except ValueError:
+                pass  # target name already exists — keep name-based matching
+
     succeeded: list[str] = []
     failures: list[tuple[str, str]] = []
 
@@ -475,28 +511,74 @@ async def run_extraction_pipeline(
                 store=store,
                 now_iso=now_iso,
                 tables_by_id=tables_by_id,
+                prior_feature=prior_features.get(detected.name),
             )
             succeeded.append(detected.name)
         except Exception as exc:
             logger.error("Feature '%s' failed: %s", detected.name, exc)
             failures.append((detected.name, str(exc)))
-            try:
-                await store.delete_feature(project_slug, detected.name)
-            except Exception as del_exc:
-                logger.warning("Rollback of feature '%s' failed: %s", detected.name, del_exc)
+            # Roll back only brand-new features; a pre-existing record was not
+            # overwritten (save is the last step) and must survive the failure.
+            if prior_features.get(detected.name) is None:
+                try:
+                    await store.delete_feature(project_slug, detected.name)
+                except Exception as del_exc:
+                    logger.warning("Rollback of feature '%s' failed: %s", detected.name, del_exc)
 
-    # Re-extraction replaces this document's features: drop ones that are no
-    # longer detected (renamed/removed in the spec), keep same-named intact so
-    # their gaps/test-cases survive (non-fatal).
+    # Features no longer detected (renamed/removed in the spec) are marked
+    # orphaned, not deleted: their gaps/test-cases/bugs may hold exported Jira
+    # issues and MRs, so dropping them is the user's call, made in the UI.
     if succeeded:
         try:
             detected_names = {d.name for d in detected_features}
-            for feat in await store.list_features(project_slug):
-                if feat.get("source_document") == doc_slug and feat.get("name") not in detected_names:
-                    await store.delete_feature(project_slug, feat["name"])
-                    logger.info("Dropped stale feature '%s' of document '%s'", feat["name"], doc_slug)
+            for name in prior_features.keys() - detected_names:
+                await store.update_feature(project_slug, name, {
+                    "orphaned": True,
+                    "orphaned_at": datetime.now(UTC).isoformat(),
+                })
+                logger.info("Feature '%s' is gone from document '%s' — marked orphaned", name, doc_slug)
         except Exception as exc:
-            logger.warning("Stale-feature cleanup failed (non-fatal): %s", exc)
+            logger.warning("Orphan marking failed (non-fatal): %s", exc)
+
+    # Deterministic spec diff (re-import only) + stale cascade: gaps/test-cases
+    # of materially changed features were computed against the old spec version.
+    if succeeded and prior_features:
+        try:
+            current_features = {
+                f["name"]: f
+                for f in await store.list_features(project_slug)
+                if f.get("source_document") == doc_slug and not f.get("orphaned")
+            }
+            # A previously orphaned feature that reappears counts as added
+            prior_for_diff = {n: f for n, f in prior_features.items() if not f.get("orphaned")}
+            diff = compute_spec_diff(
+                prior_for_diff,
+                current_features,
+                old_version=prev_confluence_version,
+                new_version=doc_data.get("confluence_version"),
+            )
+            doc_data["last_diff"] = diff
+            stale_note = None
+            if prev_confluence_version and doc_data.get("confluence_version"):
+                stale_note = f"v{prev_confluence_version} → v{doc_data['confluence_version']}"
+            for detail in diff["changed"]:
+                if not detail["material"]:
+                    continue
+                prior = prior_features.get(detail["name"]) or {}
+                stale_updates = {}
+                if prior.get("gap_count"):
+                    stale_updates["gaps_stale"] = True
+                if prior.get("test_case_count"):
+                    stale_updates["test_cases_stale"] = True
+                if stale_updates:
+                    stale_updates["stale_spec_note"] = stale_note
+                    await store.update_feature(project_slug, detail["name"], stale_updates)
+            logger.info(
+                "Spec diff for '%s': material=%s (+%d / -%d / ~%d)",
+                doc_slug, diff["material"], len(diff["added"]), len(diff["removed"]), len(diff["changed"]),
+            )
+        except Exception as exc:
+            logger.warning("Spec diff failed (non-fatal): %s", exc)
 
     doc_data["feature_count"] = len(succeeded)
     if not succeeded:
@@ -511,6 +593,11 @@ async def run_extraction_pipeline(
         doc_data["status"] = "done"
         doc_data["error_message"] = None
         task_status, task_error = "done", None
+
+    # A finished (re-)import means the stored extraction matches the fetched page
+    if succeeded and doc_data.get("confluence_version"):
+        doc_data["latest_confluence_version"] = doc_data["confluence_version"]
+        doc_data["spec_outdated"] = False
 
     await store.save_document(project_slug, doc_data)
     await store.finish_task(project_slug, task["id"], status=task_status, error_message=task_error)

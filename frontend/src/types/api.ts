@@ -115,6 +115,14 @@ export interface FeatureResponse {
   impl_mr_url?: string | null
   impl_summary?: string | null
   impl_error?: string | null
+  /** No longer present in the latest version of the source spec page */
+  orphaned?: boolean
+  /** Gaps were computed against an older spec version */
+  gaps_stale?: boolean
+  /** Test cases were computed against an older spec version */
+  test_cases_stale?: boolean
+  /** e.g. "v12 → v15" — which spec versions the stale flags refer to */
+  stale_spec_note?: string | null
 }
 
 // Background tasks (per-project log)
@@ -166,6 +174,67 @@ export interface PatchDependencyRequest {
   path?: string
 }
 
+// Spec diff (deterministic; computed by the backend on re-extraction)
+export interface SpecCellChange {
+  column: string
+  old: string
+  new: string
+}
+
+export interface SpecFieldChange {
+  name: string
+  changes: SpecCellChange[]
+}
+
+export interface SpecTableDiff {
+  section: string
+  caption: string | null
+  /** Present when a whole table appeared/disappeared */
+  table?: "added" | "removed"
+  added_fields?: string[]
+  removed_fields?: string[]
+  changed_fields?: SpecFieldChange[]
+}
+
+export interface SpecStepChange {
+  number: string
+  old_text: string
+  new_text: string
+}
+
+export interface SpecStepsDiff {
+  added: { number: string; text: string }[]
+  removed: { number: string; text: string }[]
+  changed: SpecStepChange[]
+}
+
+export interface SpecDepsDiff {
+  added: { type: string; name: string }[]
+  removed: { type: string; name: string }[]
+}
+
+export interface FeatureDiff {
+  name: string
+  display_name: string | null
+  material: boolean
+  identity: { field: string; old: string; new: string }[]
+  summary_changed: boolean
+  tables: SpecTableDiff[]
+  steps: SpecStepsDiff | null
+  dependencies: SpecDepsDiff | null
+}
+
+export interface SpecDiff {
+  computed_at: string
+  old_version: number | null
+  new_version: number | null
+  material: boolean
+  added: string[]
+  removed: string[]
+  changed: FeatureDiff[]
+  unchanged: string[]
+}
+
 // Document response — keyed by slug
 export interface DocumentResponse {
   slug: string
@@ -178,6 +247,28 @@ export interface DocumentResponse {
   features: FeatureResponse[]
   uploaded_at: string
   error_message: string | null
+  confluence_url?: string | null
+  confluence_version?: number | null
+  latest_confluence_version?: number | null
+  spec_checked_at?: string | null
+  spec_outdated?: boolean
+  last_diff?: SpecDiff | null
+}
+
+export interface SpecUpdateCheck {
+  slug: string
+  filename: string
+  confluence_url: string | null
+  current_version: number | null
+  latest_version: number | null
+  outdated: boolean
+  error: string | null
+}
+
+export interface SpecUpdatesResponse {
+  checked: number
+  outdated: number
+  documents: SpecUpdateCheck[]
 }
 
 // Project — keyed by slug

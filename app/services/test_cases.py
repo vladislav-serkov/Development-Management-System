@@ -767,6 +767,8 @@ async def _run_test_cases_pipeline_inner(
     await store.save_test_cases(project_slug, feature_name, merged_test_cases)
     await store.update_feature(project_slug, feature_name, {
         "test_cases_run_at": datetime.now(UTC).isoformat(),
+        # A fresh run is against the current spec version by definition
+        "test_cases_stale": False,
     })
 
     return merged_test_cases
