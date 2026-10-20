@@ -251,6 +251,10 @@ class FeatureResponse(BaseModel):
     impl_mr_url: str | None = None
     impl_summary: str | None = None
     impl_error: str | None = None
+    orphaned: bool = False
+    gaps_stale: bool = False
+    test_cases_stale: bool = False
+    stale_spec_note: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -268,8 +272,52 @@ class DocumentResponse(BaseModel):
     features: list[FeatureResponse]
     uploaded_at: datetime
     error_message: str | None = None
+    confluence_url: str | None = None
+    confluence_version: int | None = None
+    latest_confluence_version: int | None = None
+    spec_checked_at: str | None = None
+    spec_outdated: bool = False
+    # Deterministic diff of the last re-extraction (see app/services/spec_diff.py)
+    last_diff: dict | None = None
+    # Dependencies used by this document's features whose source page moved
+    # ahead — re-importing the document refreshes them (see dep_impact)
+    deps_outdated: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SpecUpdateCheck(BaseModel):
+    """Version probe result for one imported Confluence page."""
+
+    slug: str
+    filename: str
+    confluence_url: str | None = None
+    current_version: int | None = None
+    latest_version: int | None = None
+    outdated: bool = False
+    deps_outdated: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class DepSourceCheck(BaseModel):
+    """Version probe result for one enriched dependency's source page."""
+
+    dep_type: str
+    name: str
+    source_page_url: str | None = None
+    current_version: int | None = None
+    latest_version: int | None = None
+    outdated: bool = False
+    error: str | None = None
+
+
+class SpecUpdatesResponse(BaseModel):
+    checked: int
+    outdated: int
+    documents: list[SpecUpdateCheck]
+    dependencies_checked: int = 0
+    dependencies_outdated: int = 0
+    dependencies: list[DepSourceCheck] = []
 
 
 class ProjectResponse(BaseModel):

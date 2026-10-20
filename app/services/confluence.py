@@ -165,6 +165,54 @@ async def fetch_page(url: str) -> dict:
     return _page_result(await _fetch_page_data(parse_page_ref(url)))
 
 
+def page_provenance(page: dict) -> dict:
+    """Provenance of a fetched page for storing on enriched dependencies:
+    the stable identity (page_id) + version needed to detect that the source
+    moved ahead, and a canonical URL for one-click re-enrichment."""
+    base = settings.confluence_base_url.rstrip("/")
+    page_id = str(page.get("id") or "")
+    return {
+        "source_page_id": page_id or None,
+        "source_page_version": page.get("version") or None,
+        "source_page_url": f"{base}/pages/viewpage.action?pageId={page_id}" if page_id and base else None,
+    }
+
+
+async def fetch_page_meta(page_id: str) -> dict:
+    """Lightweight version probe: title + current version number, no page body.
+
+    Used to detect that an imported spec page moved ahead of the stored
+    ``confluence_version`` without paying for body.storage on every check.
+    """
+    base, pat = _require_config()
+    headers = {"Authorization": f"Bearer {pat}", "Accept": "application/json"}
+    ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    async with httpx.AsyncClient(
+        headers=headers, timeout=30.0, follow_redirects=True, trust_env=False, verify=ssl_context
+    ) as client:
+        try:
+            resp = await client.get(f"{base}/rest/api/content/{page_id}", params={"expand": "version"})
+        except httpx.HTTPError as exc:
+            detail = str(exc) or type(exc).__name__
+            raise ConfluenceError(f"Ошибка соединения с Confluence: {detail}") from exc
+
+    if resp.status_code == 401:
+        raise ConfluenceError("Confluence отклонил токен (401): проверьте CONFLUENCE_PAT")
+    if resp.status_code == 403:
+        raise ConfluenceError("Нет доступа к странице (403): у токена не хватает прав")
+    if resp.status_code == 404:
+        raise ConfluenceError("Страница не найдена в Confluence (404)")
+    if resp.status_code != 200:
+        raise ConfluenceError(f"Confluence вернул {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    return {
+        "id": str(data.get("id", "")),
+        "title": data.get("title", ""),
+        "version": ((data.get("version") or {}).get("number")) or 0,
+    }
+
+
 async def fetch_page_by_ref(ref: dict) -> dict:
     """Fetch a Confluence page by parsed ref: {'page_id': ...} or {'space': ..., 'title': ...}."""
     return _page_result(await _fetch_page_data(ref))

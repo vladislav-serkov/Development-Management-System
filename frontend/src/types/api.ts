@@ -115,6 +115,14 @@ export interface FeatureResponse {
   impl_mr_url?: string | null
   impl_summary?: string | null
   impl_error?: string | null
+  /** No longer present in the latest version of the source spec page */
+  orphaned?: boolean
+  /** Gaps were computed against an older spec version */
+  gaps_stale?: boolean
+  /** Test cases were computed against an older spec version */
+  test_cases_stale?: boolean
+  /** e.g. "v12 → v15" — which spec versions the stale flags refer to */
+  stale_spec_note?: string | null
 }
 
 // Background tasks (per-project log)
@@ -166,6 +174,73 @@ export interface PatchDependencyRequest {
   path?: string
 }
 
+// Spec diff (deterministic; computed by the backend on re-extraction)
+export interface SpecCellChange {
+  column: string
+  old: string
+  new: string
+}
+
+export interface SpecFieldChange {
+  name: string
+  changes: SpecCellChange[]
+}
+
+export interface SpecTableDiff {
+  section: string
+  caption: string | null
+  /** Present when a whole table appeared/disappeared */
+  table?: "added" | "removed"
+  added_fields?: string[]
+  removed_fields?: string[]
+  changed_fields?: SpecFieldChange[]
+}
+
+export interface SpecStepChange {
+  number: string
+  old_text: string
+  new_text: string
+}
+
+export interface SpecStepsDiff {
+  added: { number: string; text: string }[]
+  removed: { number: string; text: string }[]
+  changed: SpecStepChange[]
+  /** Same verbatim text under a new number (e.g. after an inserted step) — non-material */
+  renumbered?: { old_number: string; new_number: string; text: string }[]
+  /** Step split into sub-steps (or merged back) with identical verbatim text — non-material */
+  resliced?: { number: string }[]
+}
+
+export interface SpecDepsDiff {
+  added: { type: string; name: string }[]
+  removed: { type: string; name: string }[]
+  /** Same link target / containing name — a rename, non-material */
+  renamed?: { type: string; old_name: string; new_name: string }[]
+}
+
+export interface FeatureDiff {
+  name: string
+  display_name: string | null
+  material: boolean
+  identity: { field: string; old: string; new: string }[]
+  summary_changed: boolean
+  tables: SpecTableDiff[]
+  steps: SpecStepsDiff | null
+  dependencies: SpecDepsDiff | null
+}
+
+export interface SpecDiff {
+  computed_at: string
+  old_version: number | null
+  new_version: number | null
+  material: boolean
+  added: string[]
+  removed: string[]
+  changed: FeatureDiff[]
+  unchanged: string[]
+}
+
 // Document response — keyed by slug
 export interface DocumentResponse {
   slug: string
@@ -178,6 +253,43 @@ export interface DocumentResponse {
   features: FeatureResponse[]
   uploaded_at: string
   error_message: string | null
+  confluence_url?: string | null
+  confluence_version?: number | null
+  latest_confluence_version?: number | null
+  spec_checked_at?: string | null
+  spec_outdated?: boolean
+  last_diff?: SpecDiff | null
+  /** Dependencies of this doc's features whose source page moved ahead */
+  deps_outdated?: string[]
+}
+
+export interface SpecUpdateCheck {
+  slug: string
+  filename: string
+  confluence_url: string | null
+  current_version: number | null
+  latest_version: number | null
+  outdated: boolean
+  error: string | null
+}
+
+export interface DepSourceCheck {
+  dep_type: string
+  name: string
+  source_page_url: string | null
+  current_version: number | null
+  latest_version: number | null
+  outdated: boolean
+  error: string | null
+}
+
+export interface SpecUpdatesResponse {
+  checked: number
+  outdated: number
+  documents: SpecUpdateCheck[]
+  dependencies_checked?: number
+  dependencies_outdated?: number
+  dependencies?: DepSourceCheck[]
 }
 
 // Project — keyed by slug
@@ -215,6 +327,24 @@ export interface PatchProjectRequest {
 export type DependencyType = "db_table" | "external_api" | "cache" | "kafka_topic" | "external_doc"
 export type DependencyStatus = "stub" | "enriched" | "error" | "running"
 
+// Deterministic diff of a dependency's enrichment vs the previous one
+export interface DepItemsDiff {
+  added: string[]
+  removed: string[]
+  changed: { name: string; changes: { field: string; old: string; new: string }[] }[]
+}
+
+export interface DepSourceDiff {
+  computed_at: string
+  old_version: number | null
+  new_version: number | null
+  columns?: DepItemsDiff
+  endpoints?: DepItemsDiff
+  message_fields?: DepItemsDiff
+  key_patterns?: DepItemsDiff
+  content_changed?: boolean
+}
+
 export interface ProjectDependency {
   project_slug: string
   dep_type: DependencyType
@@ -228,6 +358,14 @@ export interface ProjectDependency {
   method: string | null
   service_name: string | null
   path: string | null
+  /** Source-page provenance + version tracking (Confluence-enriched deps) */
+  source_page_id?: string | null
+  source_page_version?: number | null
+  source_page_url?: string | null
+  latest_source_version?: number | null
+  source_checked_at?: string | null
+  source_outdated?: boolean
+  last_source_diff?: DepSourceDiff | null
 }
 
 // DB enrichment types

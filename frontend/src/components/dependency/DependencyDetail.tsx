@@ -9,11 +9,55 @@ import { KafkaTopicView } from "./KafkaTopicView"
 import { ExternalDocView } from "./ExternalDocView"
 import { EnrichUploadZone } from "./EnrichUploadZone"
 import { AnimatedDots } from "./AnimatedDots"
-import { usePatchDependency, useDeleteDependency, useProjectDependencies } from "@/hooks/useDependencies"
-import { Pencil, Trash2 } from "lucide-react"
+import { usePatchDependency, useDeleteDependency, useProjectDependencies, useEnrichDependency } from "@/hooks/useDependencies"
+import { Loader2, Pencil, RefreshCw, Trash2 } from "lucide-react"
 import { dependencyPath, projectPath } from "@/lib/routes"
 import { useConfirm } from "@/components/ConfirmDialog"
-import type { ProjectDependency, DbTableEnrichment, ExternalApiEnrichment, CacheEnrichment, KafkaTopicEnrichment, ExternalDocEnrichment } from "@/types/api"
+import type { ProjectDependency, DbTableEnrichment, ExternalApiEnrichment, CacheEnrichment, KafkaTopicEnrichment, ExternalDocEnrichment, DepItemsDiff, DepSourceDiff } from "@/types/api"
+
+const diffSectionLabels: Record<string, string> = {
+  columns: "Колонки",
+  endpoints: "Эндпоинты",
+  message_fields: "Поля сообщения",
+  key_patterns: "Ключи",
+}
+
+/** "Что изменилось в источнике" — deterministic diff of the last re-enrichment. */
+function SourceDiffBlock({ diff }: { diff: DepSourceDiff }) {
+  const sections = (Object.keys(diffSectionLabels) as (keyof typeof diffSectionLabels)[])
+    .map((key) => ({ key, items: diff[key as keyof DepSourceDiff] as DepItemsDiff | undefined }))
+    .filter((s) => s.items)
+  if (sections.length === 0 && !diff.content_changed) return null
+
+  return (
+    <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/[0.15] px-4 py-3 text-[0.8125rem]">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Что изменилось в источнике
+        {diff.old_version && diff.new_version ? ` (v${diff.old_version} → v${diff.new_version})` : ""}
+      </p>
+      {diff.content_changed && <p>Содержимое документа изменилось — просмотрите его заново.</p>}
+      {sections.map(({ key, items }) => (
+        <div key={key} className="space-y-0.5">
+          <p className="text-xs font-medium text-muted-foreground">{diffSectionLabels[key]}</p>
+          {items!.added.map((n) => (
+            <p key={`a${n}`} className="font-mono text-emerald-700 dark:text-emerald-400">+ {n}</p>
+          ))}
+          {items!.removed.map((n) => (
+            <p key={`r${n}`} className="font-mono text-red-700 line-through dark:text-red-400">{n}</p>
+          ))}
+          {items!.changed.map((c) => (
+            <p key={`c${c.name}`} className="font-mono">
+              ~ {c.name}{" "}
+              <span className="font-sans text-muted-foreground">
+                ({c.changes.map((ch) => `${ch.field}: ${ch.old || "∅"} → ${ch.new || "∅"}`).join(", ")})
+              </span>
+            </p>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
 
 const typeLabels: Record<string, string> = {
   db_table: "Таблица БД",
@@ -31,6 +75,7 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
 
   const patchDep = usePatchDependency(projectSlug)
   const deleteDep = useDeleteDependency(projectSlug)
+  const enrichDep = useEnrichDependency(projectSlug)
 
   // An FK names its target table ("product_schedule.id"); a table the project actually
   // has becomes a link. Case-insensitive: the FK text and the dependency name are both
@@ -148,9 +193,42 @@ export function DependencyDetail({ dep, projectSlug }: { dep: ProjectDependency;
         )}
 
         {dep.source_pdf_name && (
-          <p className="text-xs text-muted-foreground">Источник: {dep.source_pdf_name}</p>
+          <p className="text-xs text-muted-foreground">
+            Источник:{" "}
+            {dep.source_page_url ? (
+              <a href={dep.source_page_url} target="_blank" rel="noreferrer" className="hover:underline">
+                {dep.source_pdf_name}
+              </a>
+            ) : (
+              dep.source_pdf_name
+            )}
+            {dep.source_page_version ? ` · v${dep.source_page_version}` : ""}
+          </p>
         )}
       </div>
+
+      {dep.source_outdated && dep.source_page_url && !isEnriching && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200/70 bg-amber-50/40 px-4 py-2.5 text-[0.8125rem] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-300">
+          <span className="min-w-0 flex-1">
+            Страница-источник обновилась: v{dep.source_page_version} → v{dep.latest_source_version}.
+            Данные зависимости могли устареть.
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/30"
+            disabled={enrichDep.isPending}
+            onClick={() =>
+              enrichDep.mutate({ depType: dep.dep_type, url: dep.source_page_url!, depName: dep.name })
+            }
+          >
+            {enrichDep.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Переобогатить
+          </Button>
+        </div>
+      )}
+
+      {dep.last_source_diff && !isEnriching && <SourceDiffBlock diff={dep.last_source_diff} />}
 
       {isEnriched ? (
         <div>

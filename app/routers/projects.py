@@ -366,4 +366,8 @@ def _feature_to_response(
         impl_mr_url=f.get("impl_mr_url"),
         impl_summary=f.get("impl_summary"),
         impl_error=f.get("impl_error"),
+        orphaned=bool(f.get("orphaned")),
+        gaps_stale=bool(f.get("gaps_stale")),
+        test_cases_stale=bool(f.get("test_cases_stale")),
+        stale_spec_note=f.get("stale_spec_note"),
     )

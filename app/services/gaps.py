@@ -235,6 +235,8 @@ async def _run_gaps_pipeline_inner(
     await store.save_gaps(project_slug, feature_name, merged_gaps)
     await store.update_feature(project_slug, feature_name, {
         "gaps_run_at": datetime.now(UTC).isoformat(),
+        # A fresh run is against the current spec version by definition
+        "gaps_stale": False,
     })
 
     return merged_gaps

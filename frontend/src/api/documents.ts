@@ -1,4 +1,4 @@
-import type { DocumentResponse, FeatureResponse, FeaturePatchRequest, ProjectResponse, CreateProjectRequest, PatchProjectRequest, LinkProjectRequest, ImportContextResponse, ProjectDependency, CreateDependencyRequest, PatchDependencyRequest } from "@/types/api"
+import type { DocumentResponse, FeatureResponse, FeaturePatchRequest, ProjectResponse, CreateProjectRequest, PatchProjectRequest, LinkProjectRequest, ImportContextResponse, ProjectDependency, CreateDependencyRequest, PatchDependencyRequest, SpecUpdatesResponse } from "@/types/api"
 import { apiFetch } from "./client"
 
 // Projects
@@ -77,6 +77,21 @@ export async function importConfluencePage(projectSlug: string, url: string): Pr
       if (body?.detail) detail = body.detail
     } catch { /* ignore */ }
     throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function fetchDocuments(projectSlug: string): Promise<DocumentResponse[]> {
+  const res = await apiFetch(`/documents/?project_slug=${projectSlug}`)
+  if (!res.ok) throw new Error(`Failed to fetch documents: ${res.status}`)
+  return res.json()
+}
+
+export async function checkSpecUpdates(projectSlug: string): Promise<SpecUpdatesResponse> {
+  const res = await apiFetch(`/documents/check-spec-updates?project_slug=${projectSlug}`, { method: "POST" })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Spec update check failed: ${res.status}`)
   }
   return res.json()
 }

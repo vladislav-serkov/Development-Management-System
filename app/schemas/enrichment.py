@@ -126,5 +126,14 @@ class DependencyResponse(BaseModel):
     method: str | None = None
     service_name: str | None = None
     path: str | None = None
+    # Source-page provenance and version tracking (Confluence-enriched deps)
+    source_page_id: str | None = None
+    source_page_version: int | None = None
+    source_page_url: str | None = None
+    latest_source_version: int | None = None
+    source_checked_at: str | None = None
+    source_outdated: bool = False
+    # Deterministic diff vs the previous enrichment (see spec_diff.diff_enriched_data)
+    last_source_diff: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -54,6 +54,30 @@ def test_rest_path_corrected():
     assert f.name == "GET /v1/credit-line"
 
 
+def test_rest_single_feature_title_path_wins():
+    # Seen live: the page links the controller path in swagger; the LLM picked it
+    # on one run and the gateway path from the title on another
+    text = "[swagger](https://host/swagger-ui/index.html#/payment-controller/getClientDebt)"
+    f = DetectedFeature(
+        name="GET /payment-controller/getClientDebt", type=FeatureType.rest_endpoint, confidence=1.0,
+        summary="s", method="GET", endpoint="/payment-controller/getClientDebt",
+    )
+    warning = _enforce_spec_identity(
+        f, title="GET /v1/client/debt", text=text, tables=None, single_feature=True,
+    )
+    assert warning is not None
+    assert f.name == "GET /v1/client/debt" and f.endpoint == "/v1/client/debt"
+
+    # Already the title path → no warning; multi-feature pages keep the LLM's pick
+    assert _enforce_spec_identity(f, title="GET /v1/client/debt", text=text, tables=None, single_feature=True) is None
+    g = DetectedFeature(
+        name="GET /payment-controller/getClientDebt", type=FeatureType.rest_endpoint, confidence=1.0,
+        summary="s", method="GET", endpoint="/payment-controller/getClientDebt",
+    )
+    _enforce_spec_identity(g, title="GET /v1/client/debt", text=text, tables=None)
+    assert g.endpoint == "/payment-controller/getClientDebt"
+
+
 def test_scheduled_task_untouched():
     f = DetectedFeature(
         name="send_limit_check_request", type=FeatureType.scheduled_task, confidence=1.0,

@@ -15,7 +15,9 @@ from app.schemas.extraction import (
     GenericTable,
 )
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services.dep_impact import merge_stale_note
 from app.services.rules import build_system_prompt
+from app.services.spec_diff import compute_spec_diff, merge_reextracted_feature
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ def _normalize_dep_name(name: str) -> str:
 # Dotted identifiers like Kafka topics: at least three dot-separated segments
 _DOTTED_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}\b")
 # URL-ish paths like /v1/credit-line or /api/orders/{id}
+_TITLE_METHOD_RE = re.compile(r"\s*(GET|POST|PUT|PATCH|DELETE)\b", re.IGNORECASE)
 _PATH_TOKEN_RE = re.compile(r"(?<![\w.])/(?:[\w.-]+|\{[\w.-]+\})(?:/(?:[\w.-]+|\{[\w.-]+\}))+")
 
 
@@ -37,11 +40,17 @@ def _enforce_spec_identity(
     title: str,
     text: str,
     tables: list[dict] | None,
+    single_feature: bool = False,
 ) -> str | None:
     """Feature identity must be verbatim from the spec, never invented by the LLM:
     the Kafka topic / REST path the model claims has to literally occur in the
     document (title, body or tables). If it doesn't, replace it with the closest
     real token from the spec. Returns a warning string when a correction happened.
+
+    For a single-feature REST page whose title carries a path ("GET /v1/client/debt"),
+    the title IS the identity: pages also mention other real paths (a swagger link
+    to the controller path, a gateway route), and letting the LLM pick among them
+    renamed the feature from run to run.
 
     scheduled_task names are semantic slugs by design and are not touched
     (their verbatim identity lives in display_name).
@@ -72,6 +81,15 @@ def _enforce_spec_identity(
 
     if ftype == "rest_endpoint":
         claimed = (detected.endpoint or "").strip()
+        title_paths = list(dict.fromkeys(_PATH_TOKEN_RE.findall(title or "")))
+        if single_feature and len(title_paths) == 1:
+            path = title_paths[0]
+            title_method = _TITLE_METHOD_RE.match(title or "")
+            method = title_method.group(1).upper() if title_method else detected.method
+            canonical = f"{method} {path}".strip() if method else path
+            changed = path != claimed
+            detected.endpoint, detected.method, detected.name = path, method, canonical
+            return f"REST path '{claimed}' заменён на путь из заголовка ТЗ '{path}'" if changed else None
         candidates = list(dict.fromkeys(_PATH_TOKEN_RE.findall(corpus)))
         path = claimed if claimed and claimed in candidates else None
         if path is None and claimed and candidates:
@@ -143,6 +161,37 @@ def _dedupe_external_docs(structured_logic) -> list[str]:
         ]
         _strip_doc_refs(structured_logic.logic_steps, removed_set)
     return removed
+
+
+def _link_stable_key(link: dict) -> str | None:
+    """Version-independent identity of a link target.
+
+    [LINK:Ln] ids are numbered per parse and shift when links are added to the
+    page; the target page they point at does not. The spec diff matches
+    dependencies across versions by these keys."""
+    page_id = str(link.get("page_id") or "").strip()
+    if page_id:
+        return f"page:{page_id}"
+    title = " ".join(str(link.get("title") or "").split()).lower()
+    if not title:
+        return None
+    space = str(link.get("space_key") or "").upper()
+    anchor = str(link.get("anchor") or "").strip()
+    return f"title:{space}/{title}#{anchor}"
+
+
+def _annotate_dep_link_keys(structured_logic: dict, links_by_id: dict[str, dict]) -> None:
+    """Resolve each dependency's [LINK:Ln] ids to stable target keys, stored
+    as ``link_keys`` next to ``link_ids`` inside structured_logic_json."""
+    for dep in structured_logic.get("used_dependencies") or []:
+        keys = []
+        for link_id in dep.get("link_ids") or []:
+            link = links_by_id.get(str(link_id).strip())
+            key = _link_stable_key(link) if link else None
+            if key:
+                keys.append(key)
+        if keys:
+            dep["link_keys"] = list(dict.fromkeys(keys))
 
 
 def _build_link_resolver(used_dependencies) -> Callable[[str], tuple[str, str] | None]:
@@ -250,6 +299,10 @@ async def _detect_features(
         max_tokens=settings.extraction_max_tokens,
         tools=[tool],
         tool_choice={"type": "tool", "name": "detect_features"},
+        # NOTE: current Claude models (Sonnet 5 / Opus 5+) removed the sampling
+        # params (temperature/top_p/top_k return 400), so run-to-run extraction
+        # variance cannot be pinned at the API level. The spec diff neutralizes
+        # it structurally instead (see app/services/spec_diff.py).
     )
     if system_prompt:
         create_kwargs["system"] = system_prompt
@@ -315,8 +368,14 @@ async def _process_single_feature(
     store,
     now_iso: str,
     tables_by_id: dict[str, dict],
+    prior_feature: dict | None = None,
+    links_by_id: dict[str, dict] | None = None,
 ) -> None:
     """Fill mappings from document tables, save the feature, upsert dependency stubs.
+
+    ``prior_feature`` — the stored record from before re-extraction; its
+    analysis state (counts, impl/autotest status, stale flags) is carried over
+    so a re-import doesn't erase it.
 
     Raises on fatal errors; caller decides per-feature rollback.
     """
@@ -349,7 +408,9 @@ async def _process_single_feature(
         "status": "done",
         "extracted_at": datetime.now(UTC).isoformat(),
     }
-    await store.save_feature(project_slug, feature_data)
+    if links_by_id:
+        _annotate_dep_link_keys(feature_data["structured_logic_json"], links_by_id)
+    await store.save_feature(project_slug, merge_reextracted_feature(prior_feature, feature_data))
 
     # Upsert dependency stubs (non-fatal)
     try:
@@ -389,6 +450,7 @@ async def run_extraction_pipeline(
     project_slug: str,
     doc_slug: str = "",
     tables: list[dict] | None = None,
+    prev_confluence_version: int | None = None,
 ) -> None:
     """Extraction pipeline for one document (markdown text) = one or more features.
 
@@ -421,6 +483,23 @@ async def run_extraction_pipeline(
     if doc_data is None:
         logger.error("Document record not found for %s/%s", project_slug, doc_slug)
         return
+
+    # Stable link targets for dependency identity across spec versions
+    links_by_id: dict[str, dict] = {}
+    try:
+        source = await store.get_document_source(project_slug, doc_slug)
+        if source:
+            links_by_id = {str(l.get("id")): l for l in source.get("links") or [] if l.get("id")}
+    except Exception as exc:
+        logger.warning("Loading document source links failed (non-fatal): %s", exc)
+
+    # Snapshot this document's features before re-extraction: the source of the
+    # spec diff and of the analysis state carried over per feature.
+    prior_features = {
+        f["name"]: f
+        for f in await store.list_features(project_slug)
+        if f.get("source_document") == doc_slug
+    }
 
     task = await store.create_task(
         project_slug,
@@ -458,9 +537,31 @@ async def run_extraction_pipeline(
     for detected in detected_features:
         warning = _enforce_spec_identity(
             detected, title=filename, text=text_content, tables=tables,
+            single_feature=len(detected_features) == 1,
         )
         if warning:
             logger.warning("Feature identity corrected for '%s': %s", filename, warning)
+
+    # Single-feature pages (kafka/rest: the page IS the feature): a different
+    # detected name is a rename, not remove+add — e.g. the LLM picked the
+    # gateway path this run and the controller path last run. Rename the prior
+    # row so its gaps/test-cases/bugs follow the feature instead of orphaning.
+    active_prior = {n: f for n, f in prior_features.items() if not f.get("orphaned")}
+    if len(active_prior) == 1 and len(detected_features) == 1:
+        (prior_name, prior_feat), = active_prior.items()
+        detected = detected_features[0]
+        if prior_name != detected.name and prior_feat.get("type") == detected.type.value:
+            try:
+                renamed = await store.rename_feature(project_slug, prior_name, detected.name)
+                if renamed is not None:
+                    prior_features.pop(prior_name, None)
+                    prior_features[detected.name] = renamed
+                    logger.info(
+                        "Single-feature re-extraction: '%s' renamed to '%s' (analysis carried over)",
+                        prior_name, detected.name,
+                    )
+            except ValueError:
+                pass  # target name already exists — keep name-based matching
 
     succeeded: list[str] = []
     failures: list[tuple[str, str]] = []
@@ -475,28 +576,78 @@ async def run_extraction_pipeline(
                 store=store,
                 now_iso=now_iso,
                 tables_by_id=tables_by_id,
+                prior_feature=prior_features.get(detected.name),
+                links_by_id=links_by_id,
             )
             succeeded.append(detected.name)
         except Exception as exc:
             logger.error("Feature '%s' failed: %s", detected.name, exc)
             failures.append((detected.name, str(exc)))
-            try:
-                await store.delete_feature(project_slug, detected.name)
-            except Exception as del_exc:
-                logger.warning("Rollback of feature '%s' failed: %s", detected.name, del_exc)
+            # Roll back only brand-new features; a pre-existing record was not
+            # overwritten (save is the last step) and must survive the failure.
+            if prior_features.get(detected.name) is None:
+                try:
+                    await store.delete_feature(project_slug, detected.name)
+                except Exception as del_exc:
+                    logger.warning("Rollback of feature '%s' failed: %s", detected.name, del_exc)
 
-    # Re-extraction replaces this document's features: drop ones that are no
-    # longer detected (renamed/removed in the spec), keep same-named intact so
-    # their gaps/test-cases survive (non-fatal).
+    # Features no longer detected (renamed/removed in the spec) are marked
+    # orphaned, not deleted: their gaps/test-cases/bugs may hold exported Jira
+    # issues and MRs, so dropping them is the user's call, made in the UI.
     if succeeded:
         try:
             detected_names = {d.name for d in detected_features}
-            for feat in await store.list_features(project_slug):
-                if feat.get("source_document") == doc_slug and feat.get("name") not in detected_names:
-                    await store.delete_feature(project_slug, feat["name"])
-                    logger.info("Dropped stale feature '%s' of document '%s'", feat["name"], doc_slug)
+            for name in prior_features.keys() - detected_names:
+                await store.update_feature(project_slug, name, {
+                    "orphaned": True,
+                    "orphaned_at": datetime.now(UTC).isoformat(),
+                })
+                logger.info("Feature '%s' is gone from document '%s' — marked orphaned", name, doc_slug)
         except Exception as exc:
-            logger.warning("Stale-feature cleanup failed (non-fatal): %s", exc)
+            logger.warning("Orphan marking failed (non-fatal): %s", exc)
+
+    # Deterministic spec diff (re-import only) + stale cascade: gaps/test-cases
+    # of materially changed features were computed against the old spec version.
+    if succeeded and prior_features:
+        try:
+            current_features = {
+                f["name"]: f
+                for f in await store.list_features(project_slug)
+                if f.get("source_document") == doc_slug and not f.get("orphaned")
+            }
+            # A previously orphaned feature that reappears counts as added
+            prior_for_diff = {n: f for n, f in prior_features.items() if not f.get("orphaned")}
+            diff = compute_spec_diff(
+                prior_for_diff,
+                current_features,
+                old_version=prev_confluence_version,
+                new_version=doc_data.get("confluence_version"),
+            )
+            doc_data["last_diff"] = diff
+            stale_note = None
+            if prev_confluence_version and doc_data.get("confluence_version"):
+                stale_note = f"спека v{prev_confluence_version} → v{doc_data['confluence_version']}"
+            for detail in diff["changed"]:
+                if not detail["material"]:
+                    continue
+                prior = prior_features.get(detail["name"]) or {}
+                stale_updates = {}
+                if prior.get("gap_count"):
+                    stale_updates["gaps_stale"] = True
+                if prior.get("test_case_count"):
+                    stale_updates["test_cases_stale"] = True
+                if stale_updates:
+                    current = await store.get_feature(project_slug, detail["name"]) or prior
+                    stale_updates["stale_spec_note"] = (
+                        merge_stale_note(current, stale_note) if stale_note else current.get("stale_spec_note")
+                    )
+                    await store.update_feature(project_slug, detail["name"], stale_updates)
+            logger.info(
+                "Spec diff for '%s': material=%s (+%d / -%d / ~%d)",
+                doc_slug, diff["material"], len(diff["added"]), len(diff["removed"]), len(diff["changed"]),
+            )
+        except Exception as exc:
+            logger.warning("Spec diff failed (non-fatal): %s", exc)
 
     doc_data["feature_count"] = len(succeeded)
     if not succeeded:
@@ -511,6 +662,11 @@ async def run_extraction_pipeline(
         doc_data["status"] = "done"
         doc_data["error_message"] = None
         task_status, task_error = "done", None
+
+    # A finished (re-)import means the stored extraction matches the fetched page
+    if succeeded and doc_data.get("confluence_version"):
+        doc_data["latest_confluence_version"] = doc_data["confluence_version"]
+        doc_data["spec_outdated"] = False
 
     await store.save_document(project_slug, doc_data)
     await store.finish_task(project_slug, task["id"], status=task_status, error_message=task_error)

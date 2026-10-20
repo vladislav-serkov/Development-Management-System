@@ -8,13 +8,79 @@ from app.config import settings
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
 from app.schemas.enrichment import DependencyResponse
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services.dep_impact import mark_dependents_stale
 from app.services.extraction import (
     _build_document_block,
     _normalize_dep_name,
 )
 from app.services.rules import build_system_prompt
+from app.services.spec_diff import diff_enriched_data
 
 logger = logging.getLogger(__name__)
+
+
+async def _enrichment_payload(
+    project_slug: str,
+    dep_type: str,
+    dep_name: str,
+    enriched_data: dict,
+    source_name: str,
+    now_iso: str,
+    store,
+    source_page: dict | None = None,
+) -> dict:
+    """Common fields of every enrichment write.
+
+    Adds source-page provenance (``page_provenance``: page id + version + URL)
+    so the source can be re-checked for new versions later, and a deterministic
+    diff of the enrichment against the prior one (``last_source_diff``). The
+    diff is the materiality gate of the source cascade: when the structure
+    changed (columns, endpoints, message fields…), the gaps/test cases of every
+    feature using this dependency are flagged stale.
+    """
+    payload: dict = {
+        "enriched_data": enriched_data,
+        "enrichment_status": "enriched",
+        "source_pdf_name": source_name,
+        "enriched_at": now_iso,
+    }
+    old_version = None
+    try:
+        prior = await store.get_dependency(project_slug, dep_type, dep_name)
+        if prior is not None:
+            old_version = prior.get("source_page_version")
+            if prior.get("enriched_data"):
+                diff = diff_enriched_data(dep_type, prior["enriched_data"], enriched_data)
+                new_version = (source_page or {}).get("source_page_version")
+                payload["last_source_diff"] = (
+                    {
+                        "computed_at": now_iso,
+                        "old_version": old_version,
+                        "new_version": new_version,
+                        **diff,
+                    }
+                    if diff is not None
+                    else None
+                )
+                if diff is not None:
+                    versions = (
+                        f" v{old_version} → v{new_version}"
+                        if old_version and new_version and old_version != new_version else ""
+                    )
+                    await mark_dependents_stale(
+                        store, project_slug, dep_type, dep_name,
+                        note=f"источник «{dep_name}»{versions}",
+                    )
+    except Exception as exc:
+        logger.warning("Enrichment diff/stale cascade failed for %s/%s (non-fatal): %s", dep_type, dep_name, exc)
+
+    if source_page:
+        payload.update(source_page)
+        # A fresh enrichment matches the fetched page by definition
+        payload["latest_source_version"] = source_page.get("source_page_version")
+        payload["source_outdated"] = False
+        payload["source_checked_at"] = now_iso
+    return payload
 
 # Single source of truth for the "external_doc needs a specific dep_name" error —
 # used by both the HTTP guard in the router and the runtime guard in this service.
@@ -50,6 +116,13 @@ def _dep_to_response(dep: dict, project_slug: str) -> DependencyResponse:
         method=dep.get("method"),
         service_name=dep.get("service_name"),
         path=dep.get("path"),
+        source_page_id=dep.get("source_page_id"),
+        source_page_version=dep.get("source_page_version"),
+        source_page_url=dep.get("source_page_url"),
+        latest_source_version=dep.get("latest_source_version"),
+        source_checked_at=dep.get("source_checked_at"),
+        source_outdated=bool(dep.get("source_outdated")),
+        last_source_diff=dep.get("last_source_diff"),
     )
 
 
@@ -191,6 +264,7 @@ async def enrich_group_from_page(
     text_content: str,
     source_name: str,
     store,
+    source_page: dict | None = None,
 ) -> tuple[dict[str, DependencyResponse | None], list[str]]:
     """One Claude call over a page → enrich EVERY dependency of ``dep_type`` pointing at it.
 
@@ -205,17 +279,10 @@ async def enrich_group_from_page(
     now_iso = datetime.now(UTC).isoformat()
 
     async def _write(dep_name: str, enriched_data: dict) -> DependencyResponse | None:
-        updated = await store.update_dependency(
-            project_slug,
-            dep_type,
-            dep_name,
-            {
-                "enriched_data": enriched_data,
-                "enrichment_status": "enriched",
-                "source_pdf_name": source_name,
-                "enriched_at": now_iso,
-            },
+        payload = await _enrichment_payload(
+            project_slug, dep_type, dep_name, enriched_data, source_name, now_iso, store, source_page,
         )
+        updated = await store.update_dependency(project_slug, dep_type, dep_name, payload)
         return _dep_to_response(updated, project_slug) if updated else None
 
     spec = _GROUPABLE_ITEMS.get(dep_type)
@@ -257,18 +324,15 @@ async def enrich_group_from_page(
             if id(item) in matched:
                 continue
             normalized_name = _normalize_dep_name(getattr(item, name_attr))
+            payload = await _enrichment_payload(
+                project_slug, dep_type, normalized_name, item.model_dump(),
+                source_name, now_iso, store, source_page,
+            )
             await store.upsert_dependency(
                 project_slug=project_slug,
                 dep_type=dep_type,
                 name=normalized_name,
-                data={
-                    "dep_type": dep_type,
-                    "name": normalized_name,
-                    "enriched_data": item.model_dump(),
-                    "enrichment_status": "enriched",
-                    "source_pdf_name": source_name,
-                    "enriched_at": now_iso,
-                },
+                data={"dep_type": dep_type, "name": normalized_name, **payload},
             )
 
     logger.info(
@@ -287,6 +351,7 @@ async def run_enrichment_pipeline(
     source_name: str,
     store,
     target_dep_name: str | None = None,
+    source_page: dict | None = None,
 ) -> list[DependencyResponse]:
     """Run Claude tool_use enrichment for a dependency document (markdown text)."""
     result = await _extract_enrichment(project_slug, dep_type, text_content, source_name, store)
@@ -318,17 +383,11 @@ async def run_enrichment_pipeline(
         else:
             enriched_data = {}
 
-        updated_dep = await store.update_dependency(
-            project_slug,
-            dep_type,
-            target_dep_name,
-            {
-                "enriched_data": enriched_data,
-                "enrichment_status": "enriched",
-                "source_pdf_name": source_name,
-                "enriched_at": now_iso,
-            },
+        payload = await _enrichment_payload(
+            project_slug, dep_type, target_dep_name, enriched_data,
+            source_name, now_iso, store, source_page,
         )
+        updated_dep = await store.update_dependency(project_slug, dep_type, target_dep_name, payload)
         if updated_dep is None:
             raise ValueError(
                 f"Dependency '{target_dep_name}' of type '{dep_type}' not found in project '{project_slug}'"
@@ -346,18 +405,15 @@ async def run_enrichment_pipeline(
     if dep_type == "db_table":
         for table in result.tables:
             normalized_name = _normalize_dep_name(table.table_name)
+            payload = await _enrichment_payload(
+                project_slug, dep_type, normalized_name, table.model_dump(),
+                source_name, now_iso, store, source_page,
+            )
             dep = await store.upsert_dependency(
                 project_slug=project_slug,
                 dep_type=dep_type,
                 name=normalized_name,
-                data={
-                    "dep_type": dep_type,
-                    "name": normalized_name,
-                    "enriched_data": table.model_dump(),
-                    "enrichment_status": "enriched",
-                    "source_pdf_name": source_name,
-                    "enriched_at": now_iso,
-                },
+                data={"dep_type": dep_type, "name": normalized_name, **payload},
             )
             upserted_deps.append(dep)
 
@@ -373,6 +429,10 @@ async def run_enrichment_pipeline(
         if matching_stubs:
             # Update each stub that belongs to this service
             for stub in matching_stubs:
+                payload = await _enrichment_payload(
+                    project_slug, dep_type, stub["name"], enriched_data,
+                    source_name, now_iso, store, source_page,
+                )
                 dep = await store.upsert_dependency(
                     project_slug=project_slug,
                     dep_type=dep_type,
@@ -380,10 +440,7 @@ async def run_enrichment_pipeline(
                     data={
                         "dep_type": dep_type,
                         "name": stub["name"],
-                        "enriched_data": enriched_data,
-                        "enrichment_status": "enriched",
-                        "source_pdf_name": source_name,
-                        "enriched_at": now_iso,
+                        **payload,
                         "method": stub.get("method"),
                         "service_name": stub.get("service_name"),
                         "path": stub.get("path"),
@@ -392,6 +449,10 @@ async def run_enrichment_pipeline(
                 upserted_deps.append(dep)
         else:
             # No stubs found — create entry keyed by api_name
+            payload = await _enrichment_payload(
+                project_slug, dep_type, api_name, enriched_data,
+                source_name, now_iso, store, source_page,
+            )
             dep = await store.upsert_dependency(
                 project_slug=project_slug,
                 dep_type=dep_type,
@@ -399,10 +460,7 @@ async def run_enrichment_pipeline(
                 data={
                     "dep_type": dep_type,
                     "name": api_name,
-                    "enriched_data": enriched_data,
-                    "enrichment_status": "enriched",
-                    "source_pdf_name": source_name,
-                    "enriched_at": now_iso,
+                    **payload,
                     "method": None,
                     "service_name": api_name,
                     "path": None,
@@ -413,36 +471,30 @@ async def run_enrichment_pipeline(
     elif dep_type == "cache":
         for cache in result.caches:
             normalized_name = _normalize_dep_name(cache.cache_name)
+            payload = await _enrichment_payload(
+                project_slug, dep_type, normalized_name, cache.model_dump(),
+                source_name, now_iso, store, source_page,
+            )
             dep = await store.upsert_dependency(
                 project_slug=project_slug,
                 dep_type=dep_type,
                 name=normalized_name,
-                data={
-                    "dep_type": dep_type,
-                    "name": normalized_name,
-                    "enriched_data": cache.model_dump(),
-                    "enrichment_status": "enriched",
-                    "source_pdf_name": source_name,
-                    "enriched_at": now_iso,
-                },
+                data={"dep_type": dep_type, "name": normalized_name, **payload},
             )
             upserted_deps.append(dep)
 
     elif dep_type == "kafka_topic":
         for topic in result.topics:
             normalized_name = _normalize_dep_name(topic.topic_name)
+            payload = await _enrichment_payload(
+                project_slug, dep_type, normalized_name, topic.model_dump(),
+                source_name, now_iso, store, source_page,
+            )
             dep = await store.upsert_dependency(
                 project_slug=project_slug,
                 dep_type=dep_type,
                 name=normalized_name,
-                data={
-                    "dep_type": dep_type,
-                    "name": normalized_name,
-                    "enriched_data": topic.model_dump(),
-                    "enrichment_status": "enriched",
-                    "source_pdf_name": source_name,
-                    "enriched_at": now_iso,
-                },
+                data={"dep_type": dep_type, "name": normalized_name, **payload},
             )
             upserted_deps.append(dep)
 

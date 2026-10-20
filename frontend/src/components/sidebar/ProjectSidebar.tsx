@@ -3,6 +3,7 @@ import { Activity, Database, Globe, HardDrive, MessageSquare } from "lucide-reac
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ExportDialog } from "@/components/project/ExportDialog"
+import { SourcesPanel } from "@/components/project/SourcesPanel"
 import { UploadZone } from "@/components/project/UploadZone"
 import { useDeleteFeature } from "@/hooks/useDocuments"
 import { useRenameProject } from "@/hooks/useDocuments"
@@ -11,18 +12,20 @@ import { featurePath, projectPath, tasksPath } from "@/lib/routes"
 import { SidebarHeader } from "./SidebarHeader"
 import { FeatureList } from "./FeatureList"
 import { DependencySection } from "./DependencySection"
-import type { FeatureResponse, ProjectDependency, ProjectResponse } from "@/types/api"
+import type { DocumentResponse, FeatureResponse, ProjectDependency, ProjectResponse } from "@/types/api"
 
 interface ProjectSidebarProps {
   project: ProjectResponse
   projectSlug: string
   features: FeatureResponse[] | undefined
+  documents: DocumentResponse[] | undefined
   dependencies: ProjectDependency[] | undefined
   selectedFeatureName: string | null
   selectedDep: ProjectDependency | null
   onImportConfluence: (url: string) => void
   isImporting: boolean
   importError?: string | null
+  isCheckingUpdates: boolean
   sidebarWidth: number
   onStartDrag: () => void
 }
@@ -31,12 +34,14 @@ export function ProjectSidebar({
   project,
   projectSlug,
   features,
+  documents,
   dependencies,
   selectedFeatureName,
   selectedDep,
   onImportConfluence,
   isImporting,
   importError,
+  isCheckingUpdates,
   sidebarWidth,
   onStartDrag,
 }: ProjectSidebarProps) {
@@ -100,6 +105,14 @@ export function ProjectSidebar({
           isImporting={isImporting}
           importError={importError}
         />
+        <div className="mt-2">
+          <SourcesPanel
+            documents={documents}
+            onReimport={onImportConfluence}
+            isImporting={isImporting}
+            isCheckingUpdates={isCheckingUpdates}
+          />
+        </div>
       </div>
 
       <ScrollArea className="flex-1 min-h-0 p-4">

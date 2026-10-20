@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useUIStore } from "@/stores/uiStore"
-import { useProject, useImportConfluence, useProjectFeatures, useDeleteFeature, useImplementFeature } from "@/hooks/useDocuments"
+import { useProject, useImportConfluence, useProjectFeatures, useProjectDocuments, useSpecUpdates, useDeleteFeature, useImplementFeature } from "@/hooks/useDocuments"
 import { useProjectDependencies } from "@/hooks/useDependencies"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -78,6 +78,8 @@ export default function ProjectPage() {
   const { data: project, isLoading: projectLoading } = useProject(projectSlug)
   const { data: allFeatures } = useProjectFeatures(projectSlug, project?.status)
   const features = allFeatures?.filter(f => f.status === "done")
+  const { data: documents } = useProjectDocuments(projectSlug, project?.status)
+  const specUpdates = useSpecUpdates(projectSlug)
   const { data: dependencies } = useProjectDependencies(projectSlug)
   const confluenceMutation = useImportConfluence(projectSlug!)
 
@@ -116,12 +118,14 @@ export default function ProjectPage() {
         project={project}
         projectSlug={projectSlug!}
         features={features}
+        documents={documents}
         dependencies={dependencies}
         selectedFeatureName={selectedFeature?.name ?? null}
         selectedDep={selectedDep}
         onImportConfluence={(url) => confluenceMutation.mutate(url)}
         isImporting={confluenceMutation.isPending}
         importError={confluenceMutation.error?.message ?? null}
+        isCheckingUpdates={specUpdates.isFetching}
         sidebarWidth={sidebarWidth}
         onStartDrag={() => { isDragging.current = true }}
       />
@@ -214,6 +218,11 @@ function ProjectContentArea({
                   {selectedFeature.source_document && (
                     <Badge variant="secondary" className="max-w-full text-xs text-muted-foreground">
                       <span className="truncate">Источник: {selectedFeature.source_document}</span>
+                    </Badge>
+                  )}
+                  {selectedFeature.orphaned && (
+                    <Badge variant="outline" className="border-red-300 text-xs text-red-700 dark:border-red-800 dark:text-red-400">
+                      нет в текущей спеке
                     </Badge>
                   )}
                 </div>
@@ -317,6 +326,24 @@ function ProjectContentArea({
                   </Button>
                 </div>
               </form>
+            )}
+
+            {selectedFeature.orphaned && (
+              <div className="mb-4 rounded-2xl border border-red-200/70 bg-red-50/40 px-4 py-2.5 text-[0.8125rem] text-red-800 dark:border-red-900/40 dark:bg-red-950/10 dark:text-red-300">
+                Этой фичи больше нет в текущей версии страницы Confluence. Она сохранена вместе со своими
+                тест-кейсами и багами — удалите её вручную, когда артефакты больше не нужны.
+              </div>
+            )}
+
+            {(selectedFeature.gaps_stale || selectedFeature.test_cases_stale) && (
+              <div className="mb-4 rounded-2xl border border-amber-200/70 bg-amber-50/40 px-4 py-2.5 text-[0.8125rem] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-300">
+                {[
+                  selectedFeature.gaps_stale ? "Gaps-анализ" : null,
+                  selectedFeature.test_cases_stale ? "тест-кейсы" : null,
+                ].filter(Boolean).join(" и ")}{" "}
+                посчитаны до изменений{selectedFeature.stale_spec_note ? ` (${selectedFeature.stale_spec_note})` : ""} —
+                спека или страницы её зависимостей с тех пор изменились по существу. Перегенерируйте их, чтобы учесть изменения.
+              </div>
             )}
 
             {selectedFeature.impl_status && (
