@@ -4,6 +4,7 @@ its storage-format XHTML to markdown for the extraction pipeline.
 Auth: Personal Access Token (Bearer), configured via CONFLUENCE_BASE_URL / CONFLUENCE_PAT.
 """
 
+import hashlib
 import logging
 import re
 import ssl
@@ -171,10 +172,14 @@ def page_provenance(page: dict) -> dict:
     moved ahead, and a canonical URL for one-click re-enrichment."""
     base = settings.confluence_base_url.rstrip("/")
     page_id = str(page.get("id") or "")
+    text = " ".join((page.get("markdown") or "").split())
     return {
         "source_page_id": page_id or None,
         "source_page_version": page.get("version") or None,
         "source_page_url": f"{base}/pages/viewpage.action?pageId={page_id}" if page_id and base else None,
+        # Whitespace-insensitive page text fingerprint: "did the source change at
+        # all" is decided on the page itself, never on LLM-enriched output
+        "source_text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest() if text else None,
     }
 
 

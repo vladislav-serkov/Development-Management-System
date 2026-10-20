@@ -6,7 +6,7 @@ import {
   patchFeature, deleteFeature, implementFeature, importProjectZip,
   importContext, deleteProject,
 } from "@/api/documents"
-import type { ProjectResponse } from "@/types/api"
+import type { ProjectDependency, ProjectResponse } from "@/types/api"
 import type { FeaturePatchRequest } from "@/types/api"
 
 // Projects
@@ -68,6 +68,7 @@ export function useProjectFeatures(projectSlug: string | null, projectStatus?: P
 
 // Documents
 export function useProjectDocuments(projectSlug: string | null, projectStatus?: ProjectResponse["status"]) {
+  const qc = useQueryClient()
   return useQuery({
     queryKey: ["documents", projectSlug],
     queryFn: () => fetchDocuments(projectSlug!),
@@ -75,7 +76,11 @@ export function useProjectDocuments(projectSlug: string | null, projectStatus?: 
     refetchInterval: (query) => {
       const docs = query.state.data
       const extracting = docs?.some(d => d.status === "processing" || d.status === "extracting")
-      return (extracting || projectStatus === "processing") ? 3000 : false
+      // A re-import keeps refreshing dependencies after the document is done;
+      // deps_outdated is recomputed only once they finish
+      const deps = qc.getQueryData<ProjectDependency[]>(["projects", projectSlug, "dependencies"])
+      const enriching = deps?.some(d => d.enrichment_status === "running")
+      return (extracting || enriching || projectStatus === "processing") ? 3000 : false
     },
   })
 }

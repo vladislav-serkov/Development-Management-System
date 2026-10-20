@@ -17,6 +17,7 @@ The diff dict is stored on the document (``last_diff``) and rendered by the UI.
 """
 
 import json
+import re
 from datetime import UTC, datetime
 
 # Keys the extraction pipeline owns: on re-extraction these come from the new
@@ -328,7 +329,8 @@ def _dep_link_keys(dep: dict) -> set[str]:
 def _names_contain(a: str, b: str) -> bool:
     """One name contains the other — the usual shape of LLM rename noise
     ('Коэффициент minutesToSubtractToGetDebt' vs 'minutesToSubtractToGetDebt')."""
-    a, b = a.lower(), b.lower()
+    # Brackets/punctuation are transcription noise too: "[PL-Авито] Коды" vs "PL-Авито Коды"
+    a, b = (" ".join(re.sub(r"[^\w.\-/ ]+", " ", x).split()).lower() for x in (a, b))
     shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
     return len(shorter) >= 6 and shorter in longer
 
@@ -446,7 +448,7 @@ def _diff_named_items(old_items: list[dict], new_items: list[dict], key, fields:
     for name in sorted(old_map.keys() & new_map.keys()):
         field_changes = []
         for field in fields:
-            o, n = _norm(old_map[name].get(field)), _norm(new_map[name].get(field))
+            o, n = _norm(old_map[name].get(field)).lower(), _norm(new_map[name].get(field)).lower()
             if o != n:
                 field_changes.append({"field": field, "old": o, "new": n})
         if field_changes:
@@ -529,10 +531,18 @@ def compute_spec_diff(
     *,
     old_version: int | None = None,
     new_version: int | None = None,
+    source_unchanged: bool = False,
 ) -> dict:
     """Diff a document's features before vs after re-extraction.
 
     ``prior_features`` / ``current_features``: {name: stored feature dict}.
+
+    ``source_unchanged`` — the page text is identical to the one the prior
+    features came from. Then nothing in the spec changed by definition and
+    every difference is LLM run-to-run noise: the diff is still reported for
+    transparency, but nothing is material. This is the primary materiality
+    gate; the structural matching below only has to be precise for pages that
+    did change.
     """
     added = sorted(current_features.keys() - prior_features.keys())
     removed = sorted(prior_features.keys() - current_features.keys())
@@ -546,9 +556,15 @@ def compute_spec_diff(
         else:
             changed.append(detail)
 
-    material = bool(added or removed or any(c["material"] for c in changed))
+    if source_unchanged:
+        for detail in changed:
+            detail["material"] = False
+        material = False
+    else:
+        material = bool(added or removed or any(c["material"] for c in changed))
     return {
         "computed_at": datetime.now(UTC).isoformat(),
+        "source_unchanged": source_unchanged,
         "old_version": old_version,
         "new_version": new_version,
         "material": material,

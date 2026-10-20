@@ -80,40 +80,56 @@ async def import_confluence_page(
         None,
     )
     doc_slug = existing["slug"] if existing else await store.make_doc_slug(project_slug, filename)
+    task_key = f"extraction:{project_slug}/{doc_slug}"
+    if task_manager.is_running(task_key):
+        # A second import would overwrite the document under the running pipeline
+        raise HTTPException(status_code=409, detail="Эта страница уже извлекается — дождитесь окончания")
     now_iso = datetime.now(UTC).isoformat()
-    doc_data = {
-        "slug": doc_slug,
-        "project_slug": project_slug,
-        "filename": filename,
-        "source_type": "confluence",
+    new_source = {
         "confluence_page_id": page["id"],
         "confluence_url": request.url,
         "confluence_version": page["version"],
-        "service_name": page.get("service_name"),
-        "pdf_size_bytes": len(page["markdown"].encode("utf-8")),
-        "uploaded_at": now_iso,
-        "status": "processing",
-        "error_message": None,
-        "feature_count": 0,
+        "title": page["title"],
+        "space_key": page["space_key"],
+        "fetched_at": now_iso,
+        "markdown": page["markdown"],
+        "links": page["links"],
+        "tables": page["tables"],
     }
-    await store.save_document(project_slug, doc_data)
-    await store.save_document_source(
-        project_slug,
-        doc_slug,
-        {
+
+    prev_version = prev_text = None
+    if existing:
+        # Re-import: version + source are committed by the pipeline only when
+        # every feature succeeded — a failed re-import must leave the document
+        # pointing at the version its features actually came from.
+        prev_version = existing.get("confluence_version")
+        prev_source = await store.get_document_source(project_slug, doc_slug)
+        prev_text = (prev_source or {}).get("markdown")
+        doc_data = await store.update_document(project_slug, doc_slug, {
+            "filename": filename,
+            "confluence_url": request.url,
+            "service_name": page.get("service_name"),
+            "status": "processing",
+            "error_message": None,
+        })
+    else:
+        doc_data = {
+            "slug": doc_slug,
+            "project_slug": project_slug,
+            "filename": filename,
+            "source_type": "confluence",
             "confluence_page_id": page["id"],
             "confluence_url": request.url,
             "confluence_version": page["version"],
-            "title": page["title"],
-            "space_key": page["space_key"],
-            "fetched_at": now_iso,
-            "markdown": page["markdown"],
-            "links": page["links"],
-            "tables": page["tables"],
-        },
-    )
-
-    prev_version = existing.get("confluence_version") if existing else None
+            "service_name": page.get("service_name"),
+            "pdf_size_bytes": len(page["markdown"].encode("utf-8")),
+            "uploaded_at": now_iso,
+            "status": "processing",
+            "error_message": None,
+            "feature_count": 0,
+        }
+        await store.save_document(project_slug, doc_data)
+        await store.save_document_source(project_slug, doc_slug, new_source)
 
     async def _import_chain():
         await run_extraction_pipeline(
@@ -124,12 +140,15 @@ async def import_confluence_page(
             doc_slug=doc_slug,
             tables=page["tables"],
             prev_confluence_version=prev_version,
+            prev_text=prev_text,
+            new_version=page["version"],
+            new_source=new_source,
         )
         # Enrich stub deps / refresh deps whose source page moved ahead —
         # the spec is re-imported together with its dependencies (non-fatal)
         try:
             from app.services.auto_enrich import auto_enrich_from_links
-            await auto_enrich_from_links(project_slug, page["links"], page["space_key"], store)
+            await auto_enrich_from_links(project_slug, doc_slug, page["links"], page["space_key"], store)
         except Exception as exc:
             logger.warning("Auto-enrich after import failed (non-fatal): %s", exc)
         try:
@@ -139,7 +158,6 @@ async def import_confluence_page(
         except Exception as exc:
             logger.warning("deps_outdated refresh failed (non-fatal): %s", exc)
 
-    task_key = f"extraction:{project_slug}/{doc_slug}"
     task_manager.launch(task_key, _import_chain())
 
     return _doc_to_response(doc_data, [], active_tasks=[])

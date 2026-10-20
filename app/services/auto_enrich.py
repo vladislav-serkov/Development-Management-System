@@ -7,20 +7,21 @@ markdown. Depth is 1: pages linked from the spec only, no transitive crawling.
 Stub/errored dependencies are enriched; already enriched ones are *refreshed* —
 re-imported together with the spec — but only when their source page moved to a
 new version (one cheap fetch, no LLM call otherwise). Dependencies enriched before
-provenance existed are refreshed once from the page they were built from, which
-backfills their provenance.
+provenance existed are refreshed once, which backfills their provenance.
 
-Work is batched per (page, dep_type): one spec routinely links many dependencies to
-the same page — eight tables on one "[flp-order] DB" page, four config parameters
-anchored on one service-configuration page — and each such page is fetched once and
-sent to Claude once, no matter how many dependencies it feeds.
+Candidates are the dependencies used by the imported document's features, matched
+through those features' own [LINK:Ln] ids: link ids are local to a page, so a
+dependency row's ids (written by whichever document created it) cannot be trusted
+against another page's links.
 """
 
 import asyncio
 import logging
 
 from app.services.confluence import fetch_page_by_ref, page_provenance
+from app.services.dep_impact import dep_key
 from app.services.enrichment import enrich_group_from_page
+from app.storage import ActiveTaskExistsError
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +43,13 @@ def _link_ref(link: dict, page_space_key: str) -> dict:
 
 async def auto_enrich_from_links(
     project_slug: str,
+    doc_slug: str,
     links: list[dict],
     page_space_key: str,
     store,
 ) -> None:
-    """Enrich stub deps / refresh enriched deps of the project that point at a
-    link of the imported page.
+    """Enrich stub deps / refresh enriched deps used by the document's features
+    that point at a link of the imported page.
 
     A dependency points at a link either by id (``link_ids``, from the [LINK:Ln]
     markers — the reliable path) or, for documents extracted before markers existed,
@@ -66,6 +68,21 @@ async def auto_enrich_from_links(
     if not by_id and not by_title:
         return
 
+    # dep_key → the link this document uses for it
+    wanted: dict[tuple[str, str], dict] = {}
+    for feature in await store.list_features(project_slug):
+        if feature.get("source_document") != doc_slug or feature.get("orphaned"):
+            continue
+        for used in (feature.get("structured_logic_json") or {}).get("used_dependencies") or []:
+            # Several link_ids mean the dependency is documented on several pages
+            # (e.g. a table of the same name in two service DBs); the first mention
+            # in the spec is the primary one.
+            link = next((by_id[lid] for lid in used.get("link_ids") or [] if lid in by_id), None)
+            if link is None and used.get("source_doc_title"):
+                link = by_title.get(_norm(used["source_doc_title"]))
+            if link is not None:
+                wanted.setdefault(dep_key(used.get("type") or "", used.get("name") or ""), link)
+
     by_type = await store.list_dependencies(project_slug)
     # (dep_type, dep, ref_key, ref)
     candidates: list[tuple[str, dict, tuple, dict]] = []
@@ -73,19 +90,13 @@ async def auto_enrich_from_links(
         for dep in deps:
             if dep.get("enrichment_status") not in ("stub", "error", "enriched"):
                 continue
-            # Several link_ids mean the dependency is documented on several pages
-            # (e.g. a table of the same name in two service DBs); the first mention
-            # in the spec is the primary one.
-            link = next((by_id[lid] for lid in dep.get("link_ids") or [] if lid in by_id), None)
-            if link is None:
-                title = dep.get("source_doc_title") or ""
-                link = by_title.get(_norm(title)) if title else None
+            link = wanted.get(dep_key(dep_type, dep["name"]))
             if link is not None:
                 ref = _link_ref(link, page_space_key)
                 candidates.append((dep_type, dep, tuple(sorted(ref.items())), ref))
 
     if not candidates:
-        logger.info("Auto-enrich: no linked dependencies for project=%s", project_slug)
+        logger.info("Auto-enrich: no linked dependencies for %s/%s", project_slug, doc_slug)
         return
 
     # One fetch per distinct page — also how a refresh learns the page's version.
@@ -118,8 +129,13 @@ async def auto_enrich_from_links(
         *(
             _enrich_group(project_slug, dep_type, dep_names, pages[ref_key], store)
             for (ref_key, dep_type), dep_names in groups.items()
-        )
+        ),
+        return_exceptions=True,
     )
+    for group, outcome in zip(groups, results):
+        if isinstance(outcome, BaseException):
+            logger.error("Auto-enrich group %s crashed: %s", group, outcome)
+    results = [r for r in results if not isinstance(r, BaseException)]
 
     # Finalize failures only now: a table missing from its own page may have been
     # enriched by another page's extraction (db pages adopt every table they describe),
@@ -154,9 +170,8 @@ def _needs_refresh(dep: dict, page: dict | BaseException) -> bool:
         if str(dep["source_page_id"]) != page_id:
             return False
         return page.get("version") != dep.get("source_page_version")
-    # Enriched before provenance existed: refresh once if it was built from this
-    # very page (auto-enrich stores the page title as the source name).
-    return bool(dep.get("source_pdf_name")) and dep["source_pdf_name"] == page.get("title")
+    # Enriched before provenance existed: refresh once to start tracking it
+    return True
 
 
 async def _enrich_group(
@@ -172,13 +187,21 @@ async def _enrich_group(
     finalizes them after ALL groups finish, so another page can still rescue a dep.
     """
     tasks: dict[str, dict] = {}
-    for dep_name in dep_names:
-        tasks[dep_name] = await store.create_task(
-            project_slug, kind="enrichment", target_type="dependency", target_id=dep_name,
-        )
+    for dep_name in list(dep_names):
+        try:
+            tasks[dep_name] = await store.create_task(
+                project_slug, kind="enrichment", target_type="dependency", target_id=dep_name,
+            )
+        except ActiveTaskExistsError:
+            # Another import/enrichment is on it right now — leave it to that one
+            logger.info("Auto-enrich: %s/%s is already being enriched — skipped", dep_type, dep_name)
+            dep_names = [n for n in dep_names if n != dep_name]
+            continue
         await store.update_dependency(
             project_slug, dep_type, dep_name, {"enrichment_status": "running"}
         )
+    if not dep_names:
+        return []
 
     if isinstance(page, BaseException):
         logger.error("Auto-enrich: page fetch failed for %s/%s: %s", dep_type, dep_names, page)

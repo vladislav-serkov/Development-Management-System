@@ -32,8 +32,10 @@ export function SpecDiffDialog({ doc, onClose }: SpecDiffDialogProps) {
 
         {diff && !diff.material && (
           <p className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
-            Содержательных изменений нет: структуры фич идентичны
-            {diff.changed.some((c) => c.summary_changed) ? " (изменились только формулировки описаний)" : ""}.
+            {diff.source_unchanged
+              ? "Текст страницы не изменился — изменений в спеке нет. Отличия ниже — разночтения повторного извлечения, на анализ они не влияют."
+              : <>Содержательных изменений нет: структуры фич идентичны
+                {diff.changed.some((c) => c.summary_changed) ? " (изменились только формулировки описаний)" : ""}.</>}
           </p>
         )}
 
