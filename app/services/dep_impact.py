@@ -31,6 +31,16 @@ def feature_dep_keys(feature: dict) -> set[tuple[str, str]]:
     }
 
 
+def merge_stale_note(feature: dict, note: str) -> str:
+    """Append ``note`` to the reasons the feature's analysis is stale; a fresh
+    analysis run clears the flags, so old notes only count while still stale."""
+    still_stale = feature.get("gaps_stale") or feature.get("test_cases_stale")
+    notes = [n for n in ((feature.get("stale_spec_note") or "") if still_stale else "").split("; ") if n]
+    if note not in notes:
+        notes.append(note)
+    return "; ".join(notes)
+
+
 async def mark_dependents_stale(store, project_slug: str, dep_type: str, dep_name: str, note: str) -> list[str]:
     """Flag gaps/test cases of every live feature using the dependency as stale.
 
@@ -50,13 +60,7 @@ async def mark_dependents_stale(store, project_slug: str, dep_type: str, dep_nam
             updates["test_cases_stale"] = True
         if not updates:
             continue
-        prev_note = feature.get("stale_spec_note") if (
-            feature.get("gaps_stale") or feature.get("test_cases_stale")
-        ) else None
-        notes = [n for n in (prev_note or "").split("; ") if n]
-        if note not in notes:
-            notes.append(note)
-        updates["stale_spec_note"] = "; ".join(notes)
+        updates["stale_spec_note"] = merge_stale_note(feature, note)
         await store.update_feature(project_slug, feature["name"], updates)
         flagged.append(feature["name"])
     if flagged:

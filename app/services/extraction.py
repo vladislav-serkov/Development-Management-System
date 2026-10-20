@@ -15,6 +15,7 @@ from app.schemas.extraction import (
     GenericTable,
 )
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services.dep_impact import merge_stale_note
 from app.services.rules import build_system_prompt
 from app.services.spec_diff import compute_spec_diff, merge_reextracted_feature
 
@@ -29,6 +30,7 @@ def _normalize_dep_name(name: str) -> str:
 # Dotted identifiers like Kafka topics: at least three dot-separated segments
 _DOTTED_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}\b")
 # URL-ish paths like /v1/credit-line or /api/orders/{id}
+_TITLE_METHOD_RE = re.compile(r"\s*(GET|POST|PUT|PATCH|DELETE)\b", re.IGNORECASE)
 _PATH_TOKEN_RE = re.compile(r"(?<![\w.])/(?:[\w.-]+|\{[\w.-]+\})(?:/(?:[\w.-]+|\{[\w.-]+\}))+")
 
 
@@ -38,11 +40,17 @@ def _enforce_spec_identity(
     title: str,
     text: str,
     tables: list[dict] | None,
+    single_feature: bool = False,
 ) -> str | None:
     """Feature identity must be verbatim from the spec, never invented by the LLM:
     the Kafka topic / REST path the model claims has to literally occur in the
     document (title, body or tables). If it doesn't, replace it with the closest
     real token from the spec. Returns a warning string when a correction happened.
+
+    For a single-feature REST page whose title carries a path ("GET /v1/client/debt"),
+    the title IS the identity: pages also mention other real paths (a swagger link
+    to the controller path, a gateway route), and letting the LLM pick among them
+    renamed the feature from run to run.
 
     scheduled_task names are semantic slugs by design and are not touched
     (their verbatim identity lives in display_name).
@@ -73,6 +81,15 @@ def _enforce_spec_identity(
 
     if ftype == "rest_endpoint":
         claimed = (detected.endpoint or "").strip()
+        title_paths = list(dict.fromkeys(_PATH_TOKEN_RE.findall(title or "")))
+        if single_feature and len(title_paths) == 1:
+            path = title_paths[0]
+            title_method = _TITLE_METHOD_RE.match(title or "")
+            method = title_method.group(1).upper() if title_method else detected.method
+            canonical = f"{method} {path}".strip() if method else path
+            changed = path != claimed
+            detected.endpoint, detected.method, detected.name = path, method, canonical
+            return f"REST path '{claimed}' заменён на путь из заголовка ТЗ '{path}'" if changed else None
         candidates = list(dict.fromkeys(_PATH_TOKEN_RE.findall(corpus)))
         path = claimed if claimed and claimed in candidates else None
         if path is None and claimed and candidates:
@@ -520,6 +537,7 @@ async def run_extraction_pipeline(
     for detected in detected_features:
         warning = _enforce_spec_identity(
             detected, title=filename, text=text_content, tables=tables,
+            single_feature=len(detected_features) == 1,
         )
         if warning:
             logger.warning("Feature identity corrected for '%s': %s", filename, warning)
@@ -619,7 +637,10 @@ async def run_extraction_pipeline(
                 if prior.get("test_case_count"):
                     stale_updates["test_cases_stale"] = True
                 if stale_updates:
-                    stale_updates["stale_spec_note"] = stale_note
+                    current = await store.get_feature(project_slug, detail["name"]) or prior
+                    stale_updates["stale_spec_note"] = (
+                        merge_stale_note(current, stale_note) if stale_note else current.get("stale_spec_note")
+                    )
                     await store.update_feature(project_slug, detail["name"], stale_updates)
             logger.info(
                 "Spec diff for '%s': material=%s (+%d / -%d / ~%d)",

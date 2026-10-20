@@ -167,6 +167,24 @@ class TestNoiseSuppression:
         new["structured_logic_json"]["logic_steps"][1]["mapping_tables"] = [dict(table)]
         assert diff_feature(old, new) is None
 
+    def test_same_table_attached_to_several_steps_is_not_a_change(self):
+        # Seen live: one response table attached to steps 8–11 at once this run
+        import copy
+
+        table = {
+            "caption": "HTTP 200 | Тело ответа",
+            "columns": [{"header": "Поле"}, {"header": "Тип"}],
+            "fields": [{"name": "amount", "cells": ["amount", "number"], "children": []}],
+        }
+        old = _feature()
+        old["structured_logic_json"]["response_tables"] = [copy.deepcopy(table)]
+        new = _feature()
+        new["structured_logic_json"]["response_tables"] = [copy.deepcopy(table)]
+        for step in new["structured_logic_json"]["logic_steps"]:
+            step["mapping_tables"] = [copy.deepcopy(table)]
+        assert diff_feature(old, new) is None
+        assert diff_feature(new, old) is None
+
     def test_table_attached_this_run_but_changed_is_still_a_change(self):
         import copy
 

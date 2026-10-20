@@ -155,7 +155,9 @@ def _cancel_identical_tables(
 
     A table the LLM attached to step 12 this run but left unattached (or on
     another step) last run cancels out here instead of surfacing as
-    added/removed noise.
+    added/removed noise. Extra copies cancel too: the LLM attaching one
+    response table to steps 8–11 at once this run (once last run) repeats
+    content the spec already had — the set of tables is unchanged.
     """
     new_by_fp: dict[str, list[int]] = {}
     for i, (_, table) in enumerate(new_tabs):
@@ -171,6 +173,11 @@ def _cancel_identical_tables(
         else:
             consumed.add(match)
     new_rest = [pair for i, pair in enumerate(new_tabs) if i not in consumed]
+
+    old_fps = {_table_fingerprint(t) for _, t in old_tabs}
+    new_fps = set(new_by_fp)
+    old_rest = [(sec, t) for sec, t in old_rest if _table_fingerprint(t) not in new_fps]
+    new_rest = [(sec, t) for sec, t in new_rest if _table_fingerprint(t) not in old_fps]
     return old_rest, new_rest
 
 
