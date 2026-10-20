@@ -15,9 +15,9 @@ from app.schemas.extraction import (
     GenericTable,
 )
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
-from app.services.dep_impact import merge_stale_note
+from app.services.dep_impact import mark_feature_stale
 from app.services.rules import build_system_prompt
-from app.services.spec_diff import compute_spec_diff, merge_reextracted_feature
+from app.services.spec_diff import _names_contain, compute_spec_diff, merge_reextracted_feature
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def _enforce_spec_identity(
     document (title, body or tables). If it doesn't, replace it with the closest
     real token from the spec. Returns a warning string when a correction happened.
 
-    For a single-feature REST page whose title carries a path ("GET /v1/client/debt"),
+    For a single-feature REST/Kafka page whose title carries a path/topic ("GET /v1/client/debt"),
     the title IS the identity: pages also mention other real paths (a swagger link
     to the controller path, a gateway route), and letting the LLM pick among them
     renamed the feature from run to run.
@@ -60,6 +60,13 @@ def _enforce_spec_identity(
 
     if ftype == "kafka_consumer":
         claimed = (detected.endpoint or detected.name or "").strip()
+        title_topics = list(dict.fromkeys(_DOTTED_TOKEN_RE.findall(title or "")))
+        if single_feature and len(title_topics) == 1:
+            # Kafka spec pages are titled with the topic; the body also names the
+            # topics the consumer writes to, and the LLM alternated between them
+            topic = title_topics[0]
+            detected.name = detected.endpoint = topic
+            return f"kafka topic '{claimed}' заменён на топик из заголовка ТЗ '{topic}'" if claimed != topic else None
         candidates = list(dict.fromkeys(_DOTTED_TOKEN_RE.findall(corpus)))
         if claimed and claimed in candidates:
             detected.name = claimed
@@ -368,14 +375,13 @@ async def _process_single_feature(
     store,
     now_iso: str,
     tables_by_id: dict[str, dict],
-    prior_feature: dict | None = None,
     links_by_id: dict[str, dict] | None = None,
 ) -> None:
     """Fill mappings from document tables, save the feature, upsert dependency stubs.
 
-    ``prior_feature`` — the stored record from before re-extraction; its
-    analysis state (counts, impl/autotest status, stale flags) is carried over
-    so a re-import doesn't erase it.
+    The saved record is merged with the live row (``store.merge_feature``), so
+    analysis state (counts, impl/autotest status, stale flags) survives even if it
+    was written while the LLM call ran.
 
     Raises on fatal errors; caller decides per-feature rollback.
     """
@@ -410,7 +416,11 @@ async def _process_single_feature(
     }
     if links_by_id:
         _annotate_dep_link_keys(feature_data["structured_logic_json"], links_by_id)
-    await store.save_feature(project_slug, merge_reextracted_feature(prior_feature, feature_data))
+    # Merge with the live row, not the pre-LLM snapshot: a gaps/test-case run or
+    # a stale cascade may have written analysis state during the 1–2 min call.
+    await store.merge_feature(
+        project_slug, feature_data["name"], lambda current: merge_reextracted_feature(current, feature_data),
+    )
 
     # Upsert dependency stubs (non-fatal)
     try:
@@ -443,6 +453,177 @@ async def _process_single_feature(
         logger.warning("Stub upsert failed for '%s' (non-fatal): %s", detected.name, exc)
 
 
+def _canonicalize_dep_names(structured_logic, links_by_id: dict[str, dict]) -> list[tuple[str, str, str]]:
+    """Dependency names come from the spec, not from LLM transcription.
+
+    Run-to-run variance in a name spawned duplicate dependency rows:
+    - external_doc: "[PL-Авито] Коды ошибок ответа" vs "PL-Авито Коды ошибок ответа" —
+      with a [LINK:Ln] id, the name is the linked page's title (or link text), verbatim;
+    - external_api: "GET /v1/working-day" vs "/v1/working-day" — the method lives in
+      ``method``, the name is the path; without a path, the linked page title.
+    Step refs are remapped so the UI link "ref → dep" keeps working. Returns the
+    renames as (type, old, new) so existing dependency rows can follow.
+    """
+    renames: list[tuple[str, str, str]] = []
+    doc_renames: dict[str, str] = {}
+    for dep in structured_logic.used_dependencies:
+        canonical = dep.name
+        if dep.type == "external_doc":
+            link = next((links_by_id[lid] for lid in dep.link_ids or [] if lid in links_by_id), None)
+            if link is not None:
+                canonical = " ".join(str(link.get("title") or link.get("text") or "").split()) or dep.name
+        elif dep.type == "external_api":
+            m = _TITLE_METHOD_RE.match(dep.name or "")
+            if m and (dep.name or "")[m.end():].strip().startswith("/"):
+                dep.method = dep.method or m.group(1).upper()
+                canonical = dep.name[m.end():].strip()
+            elif not (dep.name or "").startswith("/"):
+                # No path to anchor on ("GetCardBalanceList" vs "Получение остатка…
+                # (GetCardBalanceList)"): the linked page title is the stable name
+                link = next((links_by_id[lid] for lid in dep.link_ids or [] if lid in links_by_id), None)
+                if link is not None:
+                    canonical = " ".join(str(link.get("title") or link.get("text") or "").split()) or dep.name
+        if canonical != dep.name:
+            renames.append((dep.type, dep.name, canonical))
+            if dep.type == "external_doc":
+                doc_renames[dep.name] = canonical
+            dep.name = canonical
+
+    def _remap(steps) -> None:
+        for step in steps:
+            if step.external_doc_refs:
+                step.external_doc_refs = list(dict.fromkeys(doc_renames.get(r, r) for r in step.external_doc_refs))
+            _remap(step.children)
+
+    if doc_renames:
+        _remap(structured_logic.logic_steps)
+    return renames
+
+
+def _renames_from_prior(
+    prior_features: dict, structured_logic, links_by_id: dict[str, dict], source_unchanged: bool,
+) -> list[tuple[str, str, str]]:
+    """Renames the LLM's output alone can't reveal: this run already used the
+    canonical name, but the prior extraction stored the same dependency under
+    another name — its row must follow, not linger as an unreferenced duplicate.
+
+    Same dependency = same stable link target (``link_keys``); features extracted
+    before link keys existed fall back to their [LINK:Ln] ids when the page text
+    is unchanged (ids are then the same links), then to a punctuation-insensitive
+    name containment that is unambiguous within the type.
+    """
+    prior_deps = [
+        used
+        for feature in prior_features.values()
+        for used in (feature.get("structured_logic_json") or {}).get("used_dependencies") or []
+        if used.get("type") and used.get("name")
+    ]
+    by_key: dict[tuple[str, str], str] = {}
+    by_link_id: dict[tuple[str, str], str] = {}
+    for used in prior_deps:
+        for key in used.get("link_keys") or []:
+            by_key.setdefault((used["type"], key), used["name"])
+        if source_unchanged:
+            for lid in used.get("link_ids") or []:
+                by_link_id.setdefault((used["type"], lid), used["name"])
+
+    new_names = {(d.type, d.name) for d in structured_logic.used_dependencies}
+    renames = []
+    for dep in structured_logic.used_dependencies:
+        old = None
+        for lid in dep.link_ids or []:
+            link = links_by_id.get(lid)
+            key = _link_stable_key(link) if link else None
+            old = by_key.get((dep.type, key)) or by_link_id.get((dep.type, lid))
+            if old:
+                break
+        if old is None:
+            matches = {
+                u["name"] for u in prior_deps
+                if u["type"] == dep.type and (u["type"], u["name"]) not in new_names
+                and _names_contain(u["name"], dep.name)
+            }
+            old = matches.pop() if len(matches) == 1 else None
+        if old and old != dep.name and (dep.type, old) not in new_names:
+            renames.append((dep.type, old, dep.name))
+    return renames
+
+
+async def _rename_dep_rows(store, project_slug: str, renames: list[tuple[str, str, str]]) -> None:
+    """Move an existing dependency row to its canonical name (with its enrichment
+    and the features' references) instead of letting a duplicate stub appear."""
+    for dep_type, old, new in renames:
+        if dep_type != "external_doc":
+            old, new = _normalize_dep_name(old), _normalize_dep_name(new)
+        if old.lower() == new.lower():
+            continue
+        try:
+            if await store.get_dependency(project_slug, dep_type, new) is None and \
+                    await store.get_dependency(project_slug, dep_type, old) is not None:
+                await store.rename_dependency(project_slug, dep_type, old, new)
+                logger.info("Dependency %s '%s' renamed to canonical '%s'", dep_type, old, new)
+        except Exception as exc:
+            logger.warning("Dependency rename %s '%s' → '%s' failed (non-fatal): %s", dep_type, old, new, exc)
+
+
+async def _carry_renames(store, project_slug: str, prior_features: dict, detected_features, foreign: dict) -> None:
+    """A detected feature that is a prior feature under a new name is a rename,
+    not remove+add: the prior row is renamed so its gaps/test-cases/bugs follow.
+
+    Single-feature pages (kafka/rest: the page IS the feature) pair 1↔1. Pages
+    with several features (scheduled tasks — LLM-slugged names) pair by the
+    verbatim parts of identity: display_name, then endpoint.
+    """
+    detected_names = {d.name for d in detected_features}
+    left_prior = {
+        n: f for n, f in prior_features.items()
+        if not f.get("orphaned") and n not in detected_names
+    }
+    left_detected = [d for d in detected_features if d.name not in prior_features and d.name not in foreign]
+    if not left_prior or not left_detected:
+        return
+
+    def _key(value) -> str:
+        return " ".join(str(value or "").split()).lower()
+
+    pairs: list[tuple[str, object]] = []
+    active_prior = [n for n, f in prior_features.items() if not f.get("orphaned")]
+    if len(active_prior) == 1 and len(detected_features) == 1 and len(left_detected) == 1:
+        (prior_name, prior_feat), = left_prior.items()
+        if prior_feat.get("type") == left_detected[0].type.value:
+            pairs.append((prior_name, left_detected[0]))
+    else:
+        for attr in ("display_name", "endpoint"):
+            for detected in list(left_detected):
+                want = _key(getattr(detected, attr, None))
+                if not want:
+                    continue
+                match = [
+                    n for n, f in left_prior.items()
+                    if f.get("type") == detected.type.value and _key(f.get(attr)) == want
+                ]
+                if len(match) == 1:
+                    pairs.append((match[0], detected))
+                    left_prior.pop(match[0])
+                    left_detected.remove(detected)
+
+    for prior_name, detected in pairs:
+        try:
+            renamed = await store.rename_feature(project_slug, prior_name, detected.name)
+        except ValueError:
+            continue  # target name already exists — keep name-based matching
+        if renamed is not None:
+            prior_features.pop(prior_name, None)
+            prior_features[detected.name] = renamed
+            logger.info("Re-extraction: '%s' renamed to '%s' (analysis carried over)", prior_name, detected.name)
+
+
+def normalize_source_text(text: str | None) -> str:
+    """Page text for the "did the spec change at all" gate: whitespace-insensitive,
+    so a re-render with different line breaks is not a change."""
+    return " ".join((text or "").split())
+
+
 async def run_extraction_pipeline(
     filename: str,
     text_content: str,
@@ -451,6 +632,9 @@ async def run_extraction_pipeline(
     doc_slug: str = "",
     tables: list[dict] | None = None,
     prev_confluence_version: int | None = None,
+    prev_text: str | None = None,
+    new_version: int | None = None,
+    new_source: dict | None = None,
 ) -> None:
     """Extraction pipeline for one document (markdown text) = one or more features.
 
@@ -459,6 +643,13 @@ async def run_extraction_pipeline(
 
     Designed to run as a background task (asyncio.create_task).
     The document record must already exist in storage before calling this.
+
+    Re-import (``prev_text`` = the page text the current features were extracted
+    from): when the page text is unchanged, nothing about the spec changed — any
+    difference in the new extraction is LLM run-to-run noise, so no feature is
+    marked stale or orphaned. ``new_version``/``new_source`` are committed to the
+    document only when every feature succeeded: a failed or partial re-import
+    keeps the old version, so the "spec updated" badge stays until it is redone.
 
     Contract:
       - Claude detects N features (1 for kafka/rest, N for scheduled_task docs).
@@ -483,18 +674,23 @@ async def run_extraction_pipeline(
     if doc_data is None:
         logger.error("Document record not found for %s/%s", project_slug, doc_slug)
         return
+    if new_version is None:
+        new_version = doc_data.get("confluence_version")
+    source_unchanged = prev_text is not None and (
+        normalize_source_text(prev_text) == normalize_source_text(text_content)
+    )
 
     # Stable link targets for dependency identity across spec versions
     links_by_id: dict[str, dict] = {}
     try:
-        source = await store.get_document_source(project_slug, doc_slug)
+        source = new_source or await store.get_document_source(project_slug, doc_slug)
         if source:
             links_by_id = {str(l.get("id")): l for l in source.get("links") or [] if l.get("id")}
     except Exception as exc:
         logger.warning("Loading document source links failed (non-fatal): %s", exc)
 
     # Snapshot this document's features before re-extraction: the source of the
-    # spec diff and of the analysis state carried over per feature.
+    # spec diff. Analysis state is merged from the live row at save time.
     prior_features = {
         f["name"]: f
         for f in await store.list_features(project_slug)
@@ -517,21 +713,27 @@ async def run_extraction_pipeline(
         project_rules=project_rules.get("extraction", ""),
     )
 
+    async def _fail_document(message: str, feature_count: int = 0) -> None:
+        await store.update_document(project_slug, doc_slug, {
+            "status": "error",
+            "error_message": message,
+            "feature_count": feature_count,
+            **_version_not_committed(doc_data, new_version),
+        })
+        await store.finish_task(project_slug, task["id"], status="error", error_message=message)
+
     try:
         detected_features = await _detect_features(text_content, model, extraction_system_prompt)
     except Exception as exc:
         logger.error("Feature detection failed for %s: %s", filename, exc)
-        doc_data["status"] = "error"
-        doc_data["error_message"] = str(exc)
-        doc_data["feature_count"] = 0
-        await store.save_document(project_slug, doc_data)
-        await store.finish_task(project_slug, task["id"], status="error", error_message=str(exc))
+        await _fail_document(str(exc))
         return
 
-    doc_data["feature_count"] = len(detected_features)
-    doc_data["status"] = "extracting"
-    doc_data["error_message"] = None
-    await store.save_document(project_slug, doc_data)
+    await store.update_document(project_slug, doc_slug, {
+        "feature_count": len(detected_features),
+        "status": "extracting",
+        "error_message": None,
+    })
 
     # Identity must come from the spec, not the LLM: same page → same feature name
     for detected in detected_features:
@@ -541,32 +743,28 @@ async def run_extraction_pipeline(
         )
         if warning:
             logger.warning("Feature identity corrected for '%s': %s", filename, warning)
+        renames = _canonicalize_dep_names(detected.structured_logic, links_by_id)
+        renames += _renames_from_prior(prior_features, detected.structured_logic, links_by_id, source_unchanged)
+        await _rename_dep_rows(store, project_slug, renames)
 
-    # Single-feature pages (kafka/rest: the page IS the feature): a different
-    # detected name is a rename, not remove+add — e.g. the LLM picked the
-    # gateway path this run and the controller path last run. Rename the prior
-    # row so its gaps/test-cases/bugs follow the feature instead of orphaning.
-    active_prior = {n: f for n, f in prior_features.items() if not f.get("orphaned")}
-    if len(active_prior) == 1 and len(detected_features) == 1:
-        (prior_name, prior_feat), = active_prior.items()
-        detected = detected_features[0]
-        if prior_name != detected.name and prior_feat.get("type") == detected.type.value:
-            try:
-                renamed = await store.rename_feature(project_slug, prior_name, detected.name)
-                if renamed is not None:
-                    prior_features.pop(prior_name, None)
-                    prior_features[detected.name] = renamed
-                    logger.info(
-                        "Single-feature re-extraction: '%s' renamed to '%s' (analysis carried over)",
-                        prior_name, detected.name,
-                    )
-            except ValueError:
-                pass  # target name already exists — keep name-based matching
+    # A detected name owned by another document's feature must not overwrite
+    # (or, on failure, delete) that feature: names are unique per project.
+    foreign: dict[str, str] = {}
+    for f in await store.list_features(project_slug):
+        if f.get("source_document") and f.get("source_document") != doc_slug:
+            foreign[f["name"]] = f["source_document"]
+
+    await _carry_renames(store, project_slug, prior_features, detected_features, foreign)
 
     succeeded: list[str] = []
     failures: list[tuple[str, str]] = []
 
     for detected in detected_features:
+        if detected.name in foreign:
+            msg = f"имя совпадает с фичей документа '{foreign[detected.name]}' — пропущена"
+            logger.error("Feature '%s' skipped: %s", detected.name, msg)
+            failures.append((detected.name, msg))
+            continue
         try:
             await _process_single_feature(
                 detected=detected,
@@ -576,7 +774,6 @@ async def run_extraction_pipeline(
                 store=store,
                 now_iso=now_iso,
                 tables_by_id=tables_by_id,
-                prior_feature=prior_features.get(detected.name),
                 links_by_id=links_by_id,
             )
             succeeded.append(detected.name)
@@ -594,10 +791,13 @@ async def run_extraction_pipeline(
     # Features no longer detected (renamed/removed in the spec) are marked
     # orphaned, not deleted: their gaps/test-cases/bugs may hold exported Jira
     # issues and MRs, so dropping them is the user's call, made in the UI.
-    if succeeded:
+    # An unchanged page cannot have lost a feature — that is the LLM missing it.
+    if succeeded and not source_unchanged and not failures:
         try:
             detected_names = {d.name for d in detected_features}
             for name in prior_features.keys() - detected_names:
+                if prior_features[name].get("orphaned"):
+                    continue
                 await store.update_feature(project_slug, name, {
                     "orphaned": True,
                     "orphaned_at": datetime.now(UTC).isoformat(),
@@ -605,6 +805,8 @@ async def run_extraction_pipeline(
                 logger.info("Feature '%s' is gone from document '%s' — marked orphaned", name, doc_slug)
         except Exception as exc:
             logger.warning("Orphan marking failed (non-fatal): %s", exc)
+
+    doc_updates: dict = {"feature_count": len(succeeded)}
 
     # Deterministic spec diff (re-import only) + stale cascade: gaps/test-cases
     # of materially changed features were computed against the old spec version.
@@ -621,56 +823,57 @@ async def run_extraction_pipeline(
                 prior_for_diff,
                 current_features,
                 old_version=prev_confluence_version,
-                new_version=doc_data.get("confluence_version"),
+                new_version=new_version,
+                source_unchanged=source_unchanged,
             )
-            doc_data["last_diff"] = diff
-            stale_note = None
-            if prev_confluence_version and doc_data.get("confluence_version"):
-                stale_note = f"спека v{prev_confluence_version} → v{doc_data['confluence_version']}"
-            for detail in diff["changed"]:
-                if not detail["material"]:
-                    continue
-                prior = prior_features.get(detail["name"]) or {}
-                stale_updates = {}
-                if prior.get("gap_count"):
-                    stale_updates["gaps_stale"] = True
-                if prior.get("test_case_count"):
-                    stale_updates["test_cases_stale"] = True
-                if stale_updates:
-                    current = await store.get_feature(project_slug, detail["name"]) or prior
-                    stale_updates["stale_spec_note"] = (
-                        merge_stale_note(current, stale_note) if stale_note else current.get("stale_spec_note")
-                    )
-                    await store.update_feature(project_slug, detail["name"], stale_updates)
+            doc_updates["last_diff"] = diff
+            stale_note = f"спека v{prev_confluence_version} → v{new_version}" if prev_confluence_version and new_version else "спека изменилась"
+            stale_targets = [d["name"] for d in diff["changed"] if d["material"]]
+            # A feature back from orphaned carries analysis made before it vanished
+            stale_targets += [n for n in diff["added"] if (prior_features.get(n) or {}).get("orphaned")]
+            for name in stale_targets:
+                await mark_feature_stale(store, project_slug, name, stale_note)
             logger.info(
-                "Spec diff for '%s': material=%s (+%d / -%d / ~%d)",
-                doc_slug, diff["material"], len(diff["added"]), len(diff["removed"]), len(diff["changed"]),
+                "Spec diff for '%s': material=%s, source_unchanged=%s (+%d / -%d / ~%d)",
+                doc_slug, diff["material"], source_unchanged,
+                len(diff["added"]), len(diff["removed"]), len(diff["changed"]),
             )
         except Exception as exc:
             logger.warning("Spec diff failed (non-fatal): %s", exc)
 
-    doc_data["feature_count"] = len(succeeded)
     if not succeeded:
-        doc_data["status"] = "error"
-        doc_data["error_message"] = "; ".join(f"{n}: {e}" for n, e in failures) or "no features succeeded"
-        task_status, task_error = "error", doc_data["error_message"]
-    elif failures:
-        doc_data["status"] = "partial"
-        doc_data["error_message"] = "; ".join(f"{n}: {e}" for n, e in failures)
-        task_status, task_error = "done", None
+        message = "; ".join(f"{n}: {e}" for n, e in failures) or "no features succeeded"
+        await _fail_document(message)
+        logger.info("=== Pipeline finished: '%s' → error ===", filename)
+        return
+
+    if failures:
+        doc_updates["status"] = "partial"
+        doc_updates["error_message"] = "; ".join(f"{n}: {e}" for n, e in failures)
+        doc_updates.update(_version_not_committed(doc_data, new_version))
     else:
-        doc_data["status"] = "done"
-        doc_data["error_message"] = None
-        task_status, task_error = "done", None
+        doc_updates["status"] = "done"
+        doc_updates["error_message"] = None
+        # The stored extraction now matches the fetched page
+        if new_version:
+            doc_updates["confluence_version"] = new_version
+            doc_updates["latest_confluence_version"] = new_version
+            doc_updates["spec_outdated"] = False
+        if new_source is not None:
+            await store.save_document_source(project_slug, doc_slug, new_source)
 
-    # A finished (re-)import means the stored extraction matches the fetched page
-    if succeeded and doc_data.get("confluence_version"):
-        doc_data["latest_confluence_version"] = doc_data["confluence_version"]
-        doc_data["spec_outdated"] = False
-
-    await store.save_document(project_slug, doc_data)
-    await store.finish_task(project_slug, task["id"], status=task_status, error_message=task_error)
+    await store.update_document(project_slug, doc_slug, doc_updates)
+    await store.finish_task(project_slug, task["id"], status="done")
     logger.info(
         "=== Pipeline finished: '%s' → %s (succeeded=%d, failed=%d) ===",
-        filename, doc_data["status"], len(succeeded), len(failures),
+        filename, doc_updates["status"], len(succeeded), len(failures),
     )
+
+
+def _version_not_committed(doc_data: dict, new_version: int | None) -> dict:
+    """A failed/partial re-import keeps the old version; if the page moved ahead
+    the document stays flagged outdated so the user can retry."""
+    current = doc_data.get("confluence_version")
+    if new_version and current and new_version > current:
+        return {"latest_confluence_version": new_version, "spec_outdated": True}
+    return {}

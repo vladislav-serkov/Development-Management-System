@@ -235,6 +235,8 @@ export interface SpecDiff {
   old_version: number | null
   new_version: number | null
   material: boolean
+  /** Page text identical to the previous import — every difference is LLM noise */
+  source_unchanged?: boolean
   added: string[]
   removed: string[]
   changed: FeatureDiff[]

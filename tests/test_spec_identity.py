@@ -78,6 +78,14 @@ def test_rest_single_feature_title_path_wins():
     assert g.endpoint == "/payment-controller/getClientDebt"
 
 
+def test_kafka_single_feature_title_topic_wins():
+    # Seen live: the body names the out-queue the consumer writes to; the LLM picked it
+    f = _kafka("pay-later.rbo.flp.schedule.out.queue")
+    warning = _enforce_spec_identity(f, title=TITLE, text=TEXT, tables=None, single_feature=True)
+    assert warning is not None
+    assert f.name == TITLE and f.endpoint == TITLE
+
+
 def test_scheduled_task_untouched():
     f = DetectedFeature(
         name="send_limit_check_request", type=FeatureType.scheduled_task, confidence=1.0,

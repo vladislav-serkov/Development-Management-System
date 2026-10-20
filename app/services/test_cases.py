@@ -16,8 +16,8 @@ from app.prompts.test_cases import (
     get_few_shot,
 )
 from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
-from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services import sql_runner
+from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
@@ -727,6 +727,7 @@ async def _run_test_cases_pipeline_inner(
     store,
 ) -> list[dict]:
     """Core pipeline without task handling (caller wraps for task lifecycle)."""
+    run_started_at = datetime.now(UTC).isoformat()
     _, feature_type, shared_ctx = await _prepare_feature_context(project_slug, feature_name, store)
 
     model = settings.test_cases_model
@@ -765,11 +766,9 @@ async def _run_test_cases_pipeline_inner(
 
     # Save test cases; timestamp stays on feature.json as a last-run marker
     await store.save_test_cases(project_slug, feature_name, merged_test_cases)
-    await store.update_feature(project_slug, feature_name, {
-        "test_cases_run_at": datetime.now(UTC).isoformat(),
-        # A fresh run is against the current spec version by definition
-        "test_cases_stale": False,
-    })
+    # Clears the stale flag only if no spec/source change landed while the run
+    # was in flight (that change is not reflected in this run's output)
+    await store.clear_stale(project_slug, feature_name, "test_cases", run_started_at, "test_cases_run_at")
 
     return merged_test_cases
 

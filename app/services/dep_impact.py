@@ -13,13 +13,19 @@ Two consumers:
 """
 
 import logging
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
 
 def dep_key(dep_type: str, name: str) -> tuple[str, str]:
-    """Dependency lookups are case-insensitive (see ProjectStore)."""
-    return dep_type, " ".join(str(name or "").split()).lower()
+    """Dependency lookups are case-insensitive (see ProjectStore), and rows of
+    non-document types are stored under ``_normalize_dep_name`` (spaces → "_")
+    while features keep the raw LLM name."""
+    name = " ".join(str(name or "").split())
+    if dep_type != "external_doc":
+        name = name.replace(" ", "_")
+    return dep_type, name.lower()
 
 
 def feature_dep_keys(feature: dict) -> set[tuple[str, str]]:
@@ -41,28 +47,38 @@ def merge_stale_note(feature: dict, note: str) -> str:
     return "; ".join(notes)
 
 
+async def mark_feature_stale(store, project_slug: str, feature_name: str, note: str) -> bool:
+    """Flag the feature's existing gaps/test cases as computed before a change.
+
+    ``*_stale_at`` lets a run that was already in flight leave the flag alone
+    (``ProjectStore.clear_stale``). Returns whether anything was flagged.
+    """
+    feature = await store.get_feature(project_slug, feature_name)
+    if feature is None:
+        return False
+    now_iso = datetime.now(UTC).isoformat()
+    updates: dict = {}
+    if feature.get("gap_count"):
+        updates.update(gaps_stale=True, gaps_stale_at=now_iso)
+    if feature.get("test_case_count"):
+        updates.update(test_cases_stale=True, test_cases_stale_at=now_iso)
+    if not updates:
+        return False
+    updates["stale_spec_note"] = merge_stale_note(feature, note)
+    await store.update_feature(project_slug, feature_name, updates)
+    return True
+
+
 async def mark_dependents_stale(store, project_slug: str, dep_type: str, dep_name: str, note: str) -> list[str]:
     """Flag gaps/test cases of every live feature using the dependency as stale.
-
-    Only analysis that exists can go stale; notes accumulate so a feature hit
-    by several source changes before its next run lists all of them.
-    Returns the names of the features flagged.
-    """
+    Returns the names of the features flagged."""
     key = dep_key(dep_type, dep_name)
-    flagged = []
-    for feature in await store.list_features(project_slug):
-        if feature.get("orphaned") or key not in feature_dep_keys(feature):
-            continue
-        updates: dict = {}
-        if feature.get("gap_count"):
-            updates["gaps_stale"] = True
-        if feature.get("test_case_count"):
-            updates["test_cases_stale"] = True
-        if not updates:
-            continue
-        updates["stale_spec_note"] = merge_stale_note(feature, note)
-        await store.update_feature(project_slug, feature["name"], updates)
-        flagged.append(feature["name"])
+    flagged = [
+        feature["name"]
+        for feature in await store.list_features(project_slug)
+        if not feature.get("orphaned") and key in feature_dep_keys(feature)
+        and await mark_feature_stale(store, project_slug, feature["name"], note)
+    ]
     if flagged:
         logger.info("Source of %s/%s changed → stale analysis on %s", dep_type, dep_name, flagged)
     return flagged

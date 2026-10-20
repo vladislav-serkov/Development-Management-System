@@ -76,10 +76,11 @@ async def test_enrichment_payload_provenance_and_diff(store):
         "dep_type": "db_table", "name": "credit_line",
         "enrichment_status": "enriched",
         "enriched_data": {"columns": [{"name": "id", "col_type": "bigint"}]},
-        "source_page_version": 5,
+        "source_page_version": 5, "source_text_hash": "old",
     })
 
-    source_page = {"source_page_id": "777", "source_page_version": 8, "source_page_url": "https://conf/x"}
+    source_page = {"source_page_id": "777", "source_page_version": 8, "source_page_url": "https://conf/x",
+                   "source_text_hash": "new"}
     payload = await _enrichment_payload(
         slug, "db_table", "credit_line",
         {"columns": [{"name": "id", "col_type": "bigint"}, {"name": "mrp_day", "col_type": "int"}]},

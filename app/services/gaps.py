@@ -149,6 +149,7 @@ async def _run_gaps_pipeline_inner(
     store,
 ) -> list[dict]:
     """Core pipeline without task handling (caller wraps for task lifecycle)."""
+    run_started_at = datetime.now(UTC).isoformat()
     # Load feature
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
@@ -233,11 +234,9 @@ async def _run_gaps_pipeline_inner(
 
     # Save gaps; timestamp stays on feature.json as a last-run marker
     await store.save_gaps(project_slug, feature_name, merged_gaps)
-    await store.update_feature(project_slug, feature_name, {
-        "gaps_run_at": datetime.now(UTC).isoformat(),
-        # A fresh run is against the current spec version by definition
-        "gaps_stale": False,
-    })
+    # Clears the stale flag only if no spec/source change landed while the run
+    # was in flight (that change is not reflected in this run's output)
+    await store.clear_stale(project_slug, feature_name, "gaps", run_started_at, "gaps_run_at")
 
     return merged_gaps
 

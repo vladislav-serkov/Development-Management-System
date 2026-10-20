@@ -420,6 +420,39 @@ class ProjectStore:
                 await self._replace_items(session, row.id, "bug", bugs)
         return feature_data
 
+    async def merge_feature(self, project_slug: str, name: str, merge) -> dict:
+        """Read-modify-write a feature row atomically: ``merge(current_or_None)``
+        returns the new data, computed under ``SELECT ... FOR UPDATE`` so writes
+        made while the caller was busy (e.g. a long LLM call) are not lost."""
+        self._sanitize_feature_name(name)
+        async with self._sf().begin() as session:
+            project = await self._project_row(session, project_slug)
+            if project is None:
+                raise ValueError(f"Project '{project_slug}' not found")
+            row = await self._feature_row(session, project.id, name, for_update=True)
+            data = dict(merge(dict(row.data) if row is not None else None))
+            for key in ("gaps", "test_cases", "bugs"):
+                data.pop(key, None)
+            if row is None:
+                session.add(Feature(project_id=project.id, name=name, data=data))
+            else:
+                row.data = data
+            return data
+
+    async def clear_stale(self, project_slug: str, feature_name: str, kind: str, run_started_at: str, run_at_key: str) -> None:
+        """Finish an analysis run (``kind`` = gaps | test_cases): record its
+        timestamp and clear the stale flag — unless the flag was raised after
+        the run started, i.e. the run used the spec from before that change."""
+        async with self._sf().begin() as session:
+            row = await self._project_and_feature(session, project_slug, feature_name, for_update=True)
+            if row is None:
+                return
+            data = dict(row.data)
+            data[run_at_key] = datetime.now(UTC).isoformat()
+            if str(data.get(f"{kind}_stale_at") or "") <= run_started_at:
+                data[f"{kind}_stale"] = False
+            row.data = data
+
     async def update_feature(self, project_slug: str, feature_name: str, updates: dict) -> dict | None:
         """Update feature data. Redirects gaps/test_cases/bugs updates to analysis rows."""
         async with self._sf().begin() as session:
@@ -634,7 +667,10 @@ class ProjectStore:
                 session.add(Dependency(project_id=project.id, dep_type=dep_type, name=name, data=data))
                 return data
             prev = dict(row.data)
-            if prev.get("enrichment_status") == "enriched" and data.get("enrichment_status") == "stub":
+            # "running" counts too: a refresh in flight must not lose the data it refreshes
+            if prev.get("enriched_data") and data.get("enrichment_status") == "stub" or (
+                prev.get("enrichment_status") == "enriched" and data.get("enrichment_status") == "stub"
+            ):
                 data = {
                     k: v for k, v in data.items() if k not in ("enriched_data", "enrichment_status", "enriched_at")
                 }

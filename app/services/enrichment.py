@@ -31,12 +31,11 @@ async def _enrichment_payload(
 ) -> dict:
     """Common fields of every enrichment write.
 
-    Adds source-page provenance (``page_provenance``: page id + version + URL)
-    so the source can be re-checked for new versions later, and a deterministic
-    diff of the enrichment against the prior one (``last_source_diff``). The
-    diff is the materiality gate of the source cascade: when the structure
-    changed (columns, endpoints, message fields…), the gaps/test cases of every
-    feature using this dependency are flagged stale.
+    Adds source-page provenance (``page_provenance``: page id + version + URL +
+    text fingerprint) so the source can be re-checked for new versions later.
+    When the source changed materially (``_source_change``), the change is
+    stored as ``last_source_diff`` and the gaps/test cases of every feature
+    using this dependency are flagged stale.
     """
     payload: dict = {
         "enriched_data": enriched_data,
@@ -44,33 +43,24 @@ async def _enrichment_payload(
         "source_pdf_name": source_name,
         "enriched_at": now_iso,
     }
-    old_version = None
     try:
         prior = await store.get_dependency(project_slug, dep_type, dep_name)
-        if prior is not None:
-            old_version = prior.get("source_page_version")
-            if prior.get("enriched_data"):
-                diff = diff_enriched_data(dep_type, prior["enriched_data"], enriched_data)
-                new_version = (source_page or {}).get("source_page_version")
-                payload["last_source_diff"] = (
-                    {
-                        "computed_at": now_iso,
-                        "old_version": old_version,
-                        "new_version": new_version,
-                        **diff,
-                    }
-                    if diff is not None
-                    else None
-                )
-                if diff is not None:
-                    versions = (
-                        f" v{old_version} → v{new_version}"
-                        if old_version and new_version and old_version != new_version else ""
-                    )
-                    await mark_dependents_stale(
-                        store, project_slug, dep_type, dep_name,
-                        note=f"источник «{dep_name}»{versions}",
-                    )
+        diff = _source_change(dep_type, prior, enriched_data, source_page)
+        if diff is not None:
+            old_version = (prior or {}).get("source_page_version")
+            new_version = (source_page or {}).get("source_page_version")
+            payload["last_source_diff"] = {
+                "computed_at": now_iso, "old_version": old_version, "new_version": new_version, **diff,
+            }
+            versions = (
+                f" v{old_version} → v{new_version}"
+                if old_version and new_version and old_version != new_version else ""
+            )
+            await mark_dependents_stale(
+                store, project_slug, dep_type, dep_name, note=f"источник «{dep_name}»{versions}",
+            )
+        elif source_page and (prior or {}).get("source_text_hash") != source_page.get("source_text_hash"):
+            payload["last_source_diff"] = None
     except Exception as exc:
         logger.warning("Enrichment diff/stale cascade failed for %s/%s (non-fatal): %s", dep_type, dep_name, exc)
 
@@ -81,6 +71,26 @@ async def _enrichment_payload(
         payload["source_outdated"] = False
         payload["source_checked_at"] = now_iso
     return payload
+
+def _source_change(dep_type: str, prior: dict | None, enriched_data: dict, source_page: dict | None) -> dict | None:
+    """Material change of the dependency's source since its last enrichment, or None.
+
+    Gate 1 — the page text itself (deterministic): same text → nothing changed,
+    whatever the new LLM enrichment looks like; unknown prior text (enriched
+    before fingerprints existed) → can't tell, so nothing is claimed.
+    Gate 2 — for structured types, a text edit counts only if the structure
+    (columns, endpoints, message fields, cache keys) changed too; a document
+    dependency has no structure beyond its text, so any text edit counts.
+    """
+    if not prior or not prior.get("enriched_data") or not source_page:
+        return None
+    old_hash, new_hash = prior.get("source_text_hash"), source_page.get("source_text_hash")
+    if not old_hash or not new_hash or old_hash == new_hash:
+        return None
+    if dep_type == "external_doc":
+        return {"content_changed": True}
+    return diff_enriched_data(dep_type, prior["enriched_data"], enriched_data)
+
 
 # Single source of truth for the "external_doc needs a specific dep_name" error —
 # used by both the HTTP guard in the router and the runtime guard in this service.
