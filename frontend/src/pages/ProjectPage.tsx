@@ -341,8 +341,8 @@ function ProjectContentArea({
                   selectedFeature.gaps_stale ? "Gaps-анализ" : null,
                   selectedFeature.test_cases_stale ? "тест-кейсы" : null,
                 ].filter(Boolean).join(" и ")}{" "}
-                посчитаны по старой версии спеки{selectedFeature.stale_spec_note ? ` (${selectedFeature.stale_spec_note})` : ""} —
-                структура фичи с тех пор изменилась. Перегенерируйте их, чтобы учесть изменения.
+                посчитаны до изменений{selectedFeature.stale_spec_note ? ` (${selectedFeature.stale_spec_note})` : ""} —
+                спека или страницы её зависимостей с тех пор изменились по существу. Перегенерируйте их, чтобы учесть изменения.
               </div>
             )}
 

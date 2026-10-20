@@ -259,6 +259,8 @@ export interface DocumentResponse {
   spec_checked_at?: string | null
   spec_outdated?: boolean
   last_diff?: SpecDiff | null
+  /** Dependencies of this doc's features whose source page moved ahead */
+  deps_outdated?: string[]
 }
 
 export interface SpecUpdateCheck {

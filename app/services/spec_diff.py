@@ -461,9 +461,11 @@ def _flatten_message_fields(fields: list[dict], prefix: str = "") -> list[dict]:
 
 def diff_enriched_data(dep_type: str, old: dict | None, new: dict | None) -> dict | None:
     """Deterministic diff of a dependency's enrichment between source-page
-    versions. Groundwork for spec-vs-source mismatch detection: a feature whose
-    ``source_refs`` point at a column listed in ``columns.removed`` is a gap
-    that needs no LLM to find.
+    versions — the materiality gate of the source cascade: a non-None result
+    marks the features using this dependency stale (``dep_impact``), so a page
+    edit that leaves the structure alone does not invalidate reviewed analysis.
+    Only structural fields are compared; LLM-phrased prose (descriptions) is
+    run-to-run noise and deliberately ignored.
 
     Returns None when nothing changed. Shape by dep_type:
     db_table → {"columns": {...}}, external_api → {"endpoints": {...}},
@@ -485,7 +487,7 @@ def diff_enriched_data(dep_type: str, old: dict | None, new: dict | None) -> dic
         endpoints = _diff_named_items(
             old.get("endpoints") or [], new.get("endpoints") or [],
             key=lambda e: f"{_norm(e.get('method')).upper()} {_norm(e.get('path'))}".strip(),
-            fields=["description"],
+            fields=[],
         )
         return {"endpoints": endpoints} if endpoints else None
 

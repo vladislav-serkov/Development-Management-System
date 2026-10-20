@@ -105,7 +105,7 @@ async def test_reextraction_diff_orphan_and_stale(store, monkeypatch):
     assert feat["gap_count"] == 1
     assert feat["impl_status"] == "implemented"
     assert feat["gaps_stale"] is True
-    assert feat["stale_spec_note"] == "v12 → v15"
+    assert feat["stale_spec_note"] == "спека v12 → v15"
     assert not feat.get("test_cases_stale")  # had no test cases
     assert (await store.get_gaps(slug, "GET /v1/x")) != []
 

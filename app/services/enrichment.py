@@ -8,6 +8,7 @@ from app.config import settings
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
 from app.schemas.enrichment import DependencyResponse
 from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services.dep_impact import mark_dependents_stale
 from app.services.extraction import (
     _build_document_block,
     _normalize_dep_name,
@@ -31,10 +32,11 @@ async def _enrichment_payload(
     """Common fields of every enrichment write.
 
     Adds source-page provenance (``page_provenance``: page id + version + URL)
-    so the source can be re-checked for new versions later, and — groundwork
-    for spec-vs-source mismatch detection — a deterministic diff of the
-    enrichment against the prior one (``last_source_diff``), e.g. which DB
-    columns appeared/disappeared since the last enrichment.
+    so the source can be re-checked for new versions later, and a deterministic
+    diff of the enrichment against the prior one (``last_source_diff``). The
+    diff is the materiality gate of the source cascade: when the structure
+    changed (columns, endpoints, message fields…), the gaps/test cases of every
+    feature using this dependency are flagged stale.
     """
     payload: dict = {
         "enriched_data": enriched_data,
@@ -49,18 +51,28 @@ async def _enrichment_payload(
             old_version = prior.get("source_page_version")
             if prior.get("enriched_data"):
                 diff = diff_enriched_data(dep_type, prior["enriched_data"], enriched_data)
+                new_version = (source_page or {}).get("source_page_version")
                 payload["last_source_diff"] = (
                     {
                         "computed_at": now_iso,
                         "old_version": old_version,
-                        "new_version": (source_page or {}).get("source_page_version"),
+                        "new_version": new_version,
                         **diff,
                     }
                     if diff is not None
                     else None
                 )
+                if diff is not None:
+                    versions = (
+                        f" v{old_version} → v{new_version}"
+                        if old_version and new_version and old_version != new_version else ""
+                    )
+                    await mark_dependents_stale(
+                        store, project_slug, dep_type, dep_name,
+                        note=f"источник «{dep_name}»{versions}",
+                    )
     except Exception as exc:
-        logger.warning("Enrichment diff failed for %s/%s (non-fatal): %s", dep_type, dep_name, exc)
+        logger.warning("Enrichment diff/stale cascade failed for %s/%s (non-fatal): %s", dep_type, dep_name, exc)
 
     if source_page:
         payload.update(source_page)

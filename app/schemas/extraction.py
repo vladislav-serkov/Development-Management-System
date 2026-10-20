@@ -279,6 +279,9 @@ class DocumentResponse(BaseModel):
     spec_outdated: bool = False
     # Deterministic diff of the last re-extraction (see app/services/spec_diff.py)
     last_diff: dict | None = None
+    # Dependencies used by this document's features whose source page moved
+    # ahead — re-importing the document refreshes them (see dep_impact)
+    deps_outdated: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -292,6 +295,7 @@ class SpecUpdateCheck(BaseModel):
     current_version: int | None = None
     latest_version: int | None = None
     outdated: bool = False
+    deps_outdated: list[str] = Field(default_factory=list)
     error: str | None = None
 
 

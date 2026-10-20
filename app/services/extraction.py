@@ -608,7 +608,7 @@ async def run_extraction_pipeline(
             doc_data["last_diff"] = diff
             stale_note = None
             if prev_confluence_version and doc_data.get("confluence_version"):
-                stale_note = f"v{prev_confluence_version} → v{doc_data['confluence_version']}"
+                stale_note = f"спека v{prev_confluence_version} → v{doc_data['confluence_version']}"
             for detail in diff["changed"]:
                 if not detail["material"]:
                     continue

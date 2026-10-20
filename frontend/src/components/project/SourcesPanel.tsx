@@ -13,7 +13,9 @@ interface SourcesPanelProps {
 
 /** Imported Confluence pages with their spec-version state:
  * current version, "v12 → v15" badge when the page moved ahead,
- * one-click re-import and the diff of the last re-extraction. */
+ * "sources updated" when a dependency page of its features moved ahead,
+ * one-click re-import (spec + its outdated dependencies) and the diff of the
+ * last re-extraction. */
 export function SourcesPanel({ documents, onReimport, isImporting, isCheckingUpdates }: SourcesPanelProps) {
   const [diffDoc, setDiffDoc] = useState<DocumentResponse | null>(null)
 
@@ -24,7 +26,10 @@ export function SourcesPanel({ documents, onReimport, isImporting, isCheckingUpd
     <div className="space-y-1.5">
       {confluenceDocs.map((doc) => {
         const extracting = doc.status === "processing" || doc.status === "extracting"
-        const outdated = !!doc.spec_outdated
+        const specOutdated = !!doc.spec_outdated
+        const depsOutdated = doc.deps_outdated ?? []
+        // Re-import refreshes the spec together with its dependencies' sources
+        const outdated = specOutdated || depsOutdated.length > 0
         return (
           <div
             key={doc.slug}
@@ -49,9 +54,16 @@ export function SourcesPanel({ documents, onReimport, isImporting, isCheckingUpd
                   <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
                     <Loader2 className="h-3 w-3 animate-spin" /> извлечение…
                   </span>
-                ) : outdated ? (
+                ) : specOutdated ? (
                   <span className="font-medium text-amber-700 dark:text-amber-400">
                     спека обновилась: v{doc.confluence_version} → v{doc.latest_confluence_version}
+                  </span>
+                ) : outdated ? (
+                  <span
+                    className="truncate font-medium text-amber-700 dark:text-amber-400"
+                    title={`Обновились страницы зависимостей: ${depsOutdated.join(", ")}`}
+                  >
+                    обновились источники: {depsOutdated.length}
                   </span>
                 ) : (
                   <span>
@@ -79,7 +91,7 @@ export function SourcesPanel({ documents, onReimport, isImporting, isCheckingUpd
             {doc.confluence_url && !extracting && (
               <button
                 type="button"
-                title={outdated ? "Переизвлечь по новой версии спеки" : "Переизвлечь страницу"}
+                title={outdated ? "Обновить спеку вместе с изменившимися зависимостями" : "Переизвлечь страницу"}
                 disabled={isImporting}
                 onClick={() => onReimport(doc.confluence_url!)}
                 className={cn(

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -6,12 +7,13 @@ from fastapi import APIRouter, HTTPException, Query
 from app.routers.projects import _feature_to_response, store
 from app.schemas.extraction import (
     ConfluenceImportRequest,
+    DepSourceCheck,
     DocumentResponse,
+    SpecUpdateCheck,
+    SpecUpdatesResponse,
 )
-import asyncio
-
-from app.schemas.extraction import DepSourceCheck, SpecUpdateCheck, SpecUpdatesResponse
 from app.services.confluence import ConfluenceError, fetch_page, fetch_page_meta
+from app.services.dep_impact import outdated_deps_of_document
 from app.services.extraction import run_extraction_pipeline
 from app.services.task_manager import task_manager
 
@@ -46,6 +48,7 @@ def _doc_to_response(
         spec_checked_at=doc.get("spec_checked_at"),
         spec_outdated=bool(doc.get("spec_outdated")),
         last_diff=doc.get("last_diff"),
+        deps_outdated=doc.get("deps_outdated") or [],
     )
 
 
@@ -122,12 +125,19 @@ async def import_confluence_page(
             tables=page["tables"],
             prev_confluence_version=prev_version,
         )
-        # Auto-enrich stub deps linked from the imported page (non-fatal)
+        # Enrich stub deps / refresh deps whose source page moved ahead —
+        # the spec is re-imported together with its dependencies (non-fatal)
         try:
             from app.services.auto_enrich import auto_enrich_from_links
             await auto_enrich_from_links(project_slug, page["links"], page["space_key"], store)
         except Exception as exc:
             logger.warning("Auto-enrich after import failed (non-fatal): %s", exc)
+        try:
+            await store.update_document(project_slug, doc_slug, {
+                "deps_outdated": await outdated_deps_of_document(store, project_slug, doc_slug),
+            })
+        except Exception as exc:
+            logger.warning("deps_outdated refresh failed (non-fatal): %s", exc)
 
     task_key = f"extraction:{project_slug}/{doc_slug}"
     task_manager.launch(task_key, _import_chain())
@@ -238,6 +248,12 @@ async def check_spec_updates(project_slug: str = Query(...)):
             current_version=current, latest_version=latest,
             outdated=outdated, error=None,
         ))
+
+    # Second pass over documents now that dependency flags are fresh: a spec
+    # whose own page is unchanged still needs a re-import when its sources moved.
+    for result in doc_results:
+        result.deps_outdated = await outdated_deps_of_document(store, project_slug, result.slug)
+        await store.update_document(project_slug, result.slug, {"deps_outdated": result.deps_outdated})
 
     return SpecUpdatesResponse(
         checked=len(doc_results),

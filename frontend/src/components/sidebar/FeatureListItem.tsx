@@ -58,7 +58,7 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
                 {!feature.orphaned && (feature.gaps_stale || feature.test_cases_stale) && (
                   <span
                     className="font-medium text-amber-600 dark:text-amber-400"
-                    title={`Анализ посчитан по старой версии спеки${feature.stale_spec_note ? ` (${feature.stale_spec_note})` : ""}`}
+                    title={`Анализ посчитан до изменений в спеке или её источниках${feature.stale_spec_note ? ` (${feature.stale_spec_note})` : ""}`}
                   >
                     устарело
                   </span>
