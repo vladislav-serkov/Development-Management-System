@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { AlertCircle, CheckCircle2, FileText, GitBranch, Loader2, Network, Sparkles, TestTube, ArrowRight } from "lucide-react"
+import { AlertCircle, Bot, Bug, CheckCircle2, Code2, FileText, GitBranch, Loader2, Network, Sparkles, TestTube, ArrowRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { useProjectTasks } from "@/hooks/useTasks"
@@ -17,6 +17,9 @@ const KIND_LABELS: Record<TaskKind, string> = {
   apply_gaps: "Применение правок",
   test_cases: "Тест-кейсы",
   enrichment: "Обогащение",
+  implement: "Реализация",
+  bug_fix: "Исправление бага",
+  autotest_gen: "Автотест",
 }
 
 const KIND_ICONS: Record<TaskKind, typeof FileText> = {
@@ -25,6 +28,9 @@ const KIND_ICONS: Record<TaskKind, typeof FileText> = {
   apply_gaps: GitBranch,
   test_cases: TestTube,
   enrichment: Network,
+  implement: Code2,
+  bug_fix: Bug,
+  autotest_gen: Bot,
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -231,6 +237,8 @@ export default function BackgroundTasksPage() {
                   { value: "extraction", label: "Извлечение" },
                   { value: "test_cases", label: "Тест-кейсы" },
                   { value: "enrichment", label: "Обогащение" },
+                  { value: "bug_fix", label: "Исправление бага" },
+                  { value: "autotest_gen", label: "Автотест" },
                 ]}
                 onChange={(v) => setKindFilter(v as KindFilter)}
               />

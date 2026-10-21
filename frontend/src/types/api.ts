@@ -126,9 +126,17 @@ export interface FeatureResponse {
 }
 
 // Background tasks (per-project log)
-export type TaskKind = "extraction" | "gaps" | "apply_gaps" | "test_cases" | "enrichment"
+export type TaskKind =
+  | "extraction"
+  | "gaps"
+  | "apply_gaps"
+  | "test_cases"
+  | "enrichment"
+  | "implement"
+  | "bug_fix"
+  | "autotest_gen"
 export type TaskStatus = "running" | "done" | "error"
-export type TaskTargetType = "document" | "feature" | "dependency"
+export type TaskTargetType = "document" | "feature" | "dependency" | "service" | "repo"
 
 export interface TaskRecord {
   id: string
