@@ -12,7 +12,7 @@ export function ExportDialog({ projectSlug }: ExportDialogProps) {
     <Button
       variant="outline"
       size="sm"
-      className="w-full"
+      className="h-8 w-full rounded-lg text-xs"
       onClick={() => exportMutation.mutate()}
       disabled={exportMutation.isPending}
     >

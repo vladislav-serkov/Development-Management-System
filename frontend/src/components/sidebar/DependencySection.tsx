@@ -35,11 +35,11 @@ export function DependencySection({ label, icon, deps, depType, projectSlug, isD
   return (
     <>
       <Collapsible>
-        <div className="mb-1 flex items-center justify-between px-1">
-          <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground">
-            {icon}
+        <div className="flex items-center justify-between rounded-lg px-2 py-1 hover:bg-background/70">
+          <CollapsibleTrigger className="flex flex-1 items-center gap-2 text-[0.8125rem] text-foreground">
+            <span className="text-muted-foreground">{icon}</span>
             {label}
-            {deps.length > 0 && <span className="text-[0.625rem] font-normal">({deps.length})</span>}
+            <span className="ml-auto pr-1 text-[0.6875rem] text-muted-foreground tabular-nums">{deps.length}</span>
           </CollapsibleTrigger>
 
           <div className="flex items-center gap-1">
@@ -57,7 +57,7 @@ export function DependencySection({ label, icon, deps, depType, projectSlug, isD
         </div>
 
         <CollapsibleContent>
-          <div className="space-y-1">
+          <div className="mb-1 space-y-0.5 pl-3">
             {deps.map((dep) => (
               <DependencyListItem
                 key={dep.name}

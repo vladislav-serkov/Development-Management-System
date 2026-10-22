@@ -361,6 +361,7 @@ def _feature_to_response(
         test_case_count=f.get("test_case_count", 0),
         pending_test_case_count=f.get("pending_test_case_count", 0),
         test_cases_running="test_cases" in running_kinds,
+        bug_count=f.get("bug_count", 0),
         impl_status=f.get("impl_status"),
         impl_jira_key=f.get("impl_jira_key"),
         impl_mr_url=f.get("impl_mr_url"),

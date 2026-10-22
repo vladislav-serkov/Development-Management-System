@@ -1,10 +1,8 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card, CardContent } from "@/components/ui/card"
 import { LogicTree } from "@/components/feature/LogicTree"
 import { DependencyCards } from "@/components/feature/DependencyCards"
 import { SpecTablesSection } from "@/components/feature/SpecTableView"
 import { countSpecFields } from "@/lib/specTables"
-import { AlertTriangle, GitBranch, ListTree, Network } from "lucide-react"
 import type { StructuredBusinessLogic, ProjectDependency } from "@/types/api"
 
 interface StructuredLogicViewProps {
@@ -32,20 +30,13 @@ export function StructuredLogicView({
 
   return (
     <Tabs defaultValue="input" className="gap-4">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <LogicSummaryCard icon={<ListTree className="h-4 w-4" />} label="Входные параметры" value={String(inputCount)} helper={`${inputTables.length} табл. из ТЗ`} />
-        <LogicSummaryCard icon={<GitBranch className="h-4 w-4" />} label="Шаги логики" value={String(logicCount)} helper="Основная последовательность" />
-        <LogicSummaryCard icon={<Network className="h-4 w-4" />} label="Зависимости" value={String(dependencyCount)} helper="Связанные сущности" />
-        <LogicSummaryCard icon={<AlertTriangle className="h-4 w-4" />} label="Ответы" value={String(responseTableCount)} helper="Таблицы по HTTP-статусам" />
-      </div>
-
-      <TabsList className="h-auto flex-wrap gap-1">
-        <TabsTrigger value="input">Входные параметры{inputTables.length ? ` (${inputTables.length})` : ""}</TabsTrigger>
+      <TabsList variant="line" className="h-auto w-full flex-wrap justify-start gap-4 border-b pb-px">
+        <TabsTrigger value="input" className="flex-none px-0.5">Входные параметры<Count n={inputCount} /></TabsTrigger>
         {showResponses && (
-          <TabsTrigger value="responses">Выходные параметры{responseTableCount ? ` (${responseTableCount})` : ""}</TabsTrigger>
+          <TabsTrigger value="responses" className="flex-none px-0.5">Ответы<Count n={responseTableCount} /></TabsTrigger>
         )}
-        <TabsTrigger value="logic">Логика{logicCount ? ` (${logicCount})` : ""}</TabsTrigger>
-        <TabsTrigger value="dependencies">Зависимости{dependencyCount ? ` (${dependencyCount})` : ""}</TabsTrigger>
+        <TabsTrigger value="logic" className="flex-none px-0.5">Шаги логики<Count n={logicCount} /></TabsTrigger>
+        <TabsTrigger value="dependencies" className="flex-none px-0.5">Зависимости<Count n={dependencyCount} /></TabsTrigger>
       </TabsList>
 
       <TabsContent value="input" className="space-y-3">
@@ -109,38 +100,11 @@ export function StructuredLogicView({
   )
 }
 
-function LogicSummaryCard({
-  icon,
-  label,
-  value,
-  helper,
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string
-  helper: string
-}) {
-  return (
-    <Card className="border border-border/70 shadow-none">
-      <CardContent className="flex items-start justify-between gap-3 py-4">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-2 text-2xl font-semibold">{value}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{helper}</p>
-        </div>
-        <div className="rounded-lg bg-muted p-2 text-muted-foreground">
-          {icon}
-        </div>
-      </CardContent>
-    </Card>
-  )
+function SectionLead({ description }: { title: string; description: string }) {
+  return <p className="text-xs text-muted-foreground">{description}</p>
 }
 
-function SectionLead({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="space-y-1">
-      <h3 className="text-base font-medium">{title}</h3>
-      <p className="text-sm text-muted-foreground">{description}</p>
-    </div>
-  )
+function Count({ n }: { n: number }) {
+  if (!n) return null
+  return <span className="text-xs tabular-nums opacity-60">{n}</span>
 }

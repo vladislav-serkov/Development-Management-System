@@ -1,16 +1,30 @@
 import { useEffect, useRef, useState } from "react"
 import { useFeatureBugs, usePatchBug, useDeleteBug, useExportBugToJira, useFixBug, useSyncJiraStatuses } from "@/hooks/useBugs"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
-import { AlertTriangle, Bot, Bug, Check, Copy, ExternalLink, Loader2, Search, Send, ShieldCheck, Wrench } from "lucide-react"
+import { StatStrip } from "@/components/ui/stat-strip"
+import { FilterSelect, Segmented } from "@/components/ui/segmented"
+import { Bot, Check, Copy, ExternalLink, Loader2, Search, Send } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { BugItem, BugSeverity } from "@/types/api"
 
 const SEVERITY_STYLE: Record<BugSeverity, string> = {
-  critical: "bg-red-100 text-red-700 ring-1 ring-red-200 dark:bg-red-950/40 dark:text-red-400 dark:ring-red-900/40",
-  major: "bg-amber-100 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:ring-amber-900/40",
-  minor: "bg-slate-100 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700/60",
-  trivial: "bg-gray-100 text-gray-500 ring-1 ring-gray-200 dark:bg-gray-800/40 dark:text-gray-400 dark:ring-gray-700/60",
+  critical: "border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400",
+  major: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400",
+  minor: "border-border text-muted-foreground",
+  trivial: "border-border text-muted-foreground",
+}
+
+
+const STATUS_STYLE = {
+  open: "border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400",
+  fixed: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400",
+  verified: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-400",
+} as const
+
+/** "https://…/merge_requests/304" → " !304" */
+function mrNumber(url: string) {
+  const m = url.match(/merge_requests\/(\d+)/) ?? url.match(/pull\/(\d+)/)
+  return m ? ` !${m[1]}` : ""
 }
 
 const SEVERITY_LABEL: Record<BugSeverity, string> = {
@@ -188,25 +202,10 @@ function BugCard({
   }
 
   return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-lg border bg-card transition-all hover:shadow-sm",
-        isDone ? "border-border/60" : "border-border",
-      )}
-    >
+    <div className={cn("overflow-hidden rounded-xl border bg-card transition-all hover:border-foreground/15", isDone && "opacity-90")}>
       <div className="flex">
-        <div className={cn(
-          "w-1 shrink-0",
-          bug.status === "open" && "bg-transparent",
-          bug.status === "fixed" && "bg-amber-500",
-          bug.status === "verified" && "bg-emerald-500",
-        )} />
-
         <div className="flex-1 min-w-0">
-          <div
-            className="cursor-pointer p-4 md:p-5"
-            onClick={() => setOpen(!open)}
-          >
+          <div className="cursor-pointer px-4 py-3" onClick={() => setOpen(!open)}>
             <div className="flex items-start gap-3">
               <button
                 className={cn(
@@ -219,130 +218,113 @@ function BugCard({
                 )}
                 onClick={handleCheckbox}
                 disabled={isBusy}
+                title={isVerified ? "Вернуть в открытые" : isFixed ? "Отметить проверенным" : "Отметить исправленным"}
               >
                 {isDone && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
               </button>
 
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1">
-                    <p
-                      className={cn(
-                        "text-[0.875rem] font-semibold leading-[1.55] text-foreground",
-                        !open && "line-clamp-2",
-                        isDone && "text-foreground/80",
-                      )}
-                    >
+                    <p className={cn("text-[0.875rem] font-semibold leading-[1.5] text-foreground", !open && "line-clamp-2", isDone && "text-foreground/80")}>
                       <RichText text={bug.title} />
                     </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[0.6875rem]">
-                      <p className="font-medium text-muted-foreground">{bug.test_case_name}</p>
-                      <span className={cn(
-                        "rounded-full px-2.5 py-0.5 font-medium",
-                        statusTone === "verified" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400",
-                        statusTone === "fixed" && "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400",
-                        statusTone === "open" && "bg-muted text-muted-foreground",
-                      )}>
-                        {statusLabel}
-                      </span>
-                    </div>
-                    {exportMut.error && (
-                      <p className="mt-2 text-[0.75rem] text-destructive">{(exportMut.error as Error).message}</p>
-                    )}
-                    {fixMut.error && (
-                      <p className="mt-2 text-[0.75rem] text-destructive">{(fixMut.error as Error).message}</p>
-                    )}
-                    {bug.fix_status && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[0.75rem]">
-                        {bug.fix_status === "queued" && (
-                          <span className="flex items-center gap-1.5 text-muted-foreground">
-                            <Bot className="h-3.5 w-3.5" /> Claude Code: в очереди
-                          </span>
-                        )}
-                        {bug.fix_status === "running" && (
-                          <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code чинит…
-                          </span>
-                        )}
-                        {bug.fix_status === "fix_proposed" && (
-                          <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-                            <Bot className="h-3.5 w-3.5" />
-                            Фикс готов
-                            {bug.fix_mr_url && (
-                              <a
-                                href={bug.fix_mr_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="font-medium underline underline-offset-2 hover:text-emerald-700 dark:hover:text-emerald-300"
-                              >
-                                MR
-                              </a>
-                            )}
-                            {bug.fix_summary && <span className="text-foreground/60">— {bug.fix_summary}</span>}
-                          </span>
-                        )}
-                        {bug.fix_status === "failed" && (
-                          <>
-                            <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                              <Bot className="h-3.5 w-3.5" />
-                              Claude Code не смог{bug.fix_error ? `: ${bug.fix_error}` : ""}
-                            </span>
-                            <button
-                              className="rounded-md border border-border px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
-                              onClick={(e) => { e.stopPropagation(); fixMut.mutate(index) }}
-                              disabled={isBusy}
-                            >
-                              {fixMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Повторить"}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
+                    <p className="mt-0.5 text-[0.75rem] text-muted-foreground">из кейса «{bug.test_case_name}»</p>
                   </div>
+                  {bug.severity && (
+                    <span className={cn("shrink-0 rounded-full border px-2 py-px text-[0.6875rem] font-medium", SEVERITY_STYLE[bug.severity])}>
+                      {bug.severity}
+                    </span>
+                  )}
+                  <button
+                    className={cn("shrink-0 rounded-md p-1 transition-colors", copied ? "text-emerald-500" : "text-muted-foreground/60 hover:text-foreground")}
+                    onClick={handleCopy}
+                    title="Скопировать для Jira"
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
 
-                  <div className="shrink-0 flex items-start gap-2">
-                    {bug.jira_key ? (
+                <div className="flex flex-wrap items-center gap-1.5 text-[0.6875rem]">
+                  <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-px font-medium", STATUS_STYLE[statusTone])}>
+                    <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                    {statusLabel.toLowerCase()}
+                  </span>
+                  {bug.jira_key ? (
+                    <a
+                      href={bug.jira_url ?? undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-px font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-400"
+                      title={bug.jira_status ? `Статус в Jira: ${bug.jira_status}` : "Открыть в Jira"}
+                    >
+                      {bug.jira_key}
+                      {bug.jira_status && <span className="font-normal opacity-80">· {bug.jira_status}</span>}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ) : jiraConfigured && (
+                    <button
+                      className="inline-flex items-center gap-1 rounded-full border px-2 py-px font-medium text-muted-foreground transition-colors hover:border-blue-300 hover:text-blue-700 disabled:opacity-60 dark:hover:text-blue-400"
+                      onClick={(e) => { e.stopPropagation(); setJiraFormOpen(!jiraFormOpen) }}
+                      disabled={isBusy}
+                      title="Создать задачу в Jira"
+                    >
+                      {exportMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                      Создать в Jira
+                    </button>
+                  )}
+                  {bug.fix_status === "queued" && (
+                    <span className="inline-flex items-center gap-1 rounded-full border px-2 py-px text-muted-foreground">
+                      <Bot className="h-3 w-3" /> фикс в очереди
+                    </span>
+                  )}
+                  {bug.fix_status === "running" && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 px-2 py-px text-blue-700 dark:border-blue-900/50 dark:text-blue-400">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Claude Code чинит…
+                    </span>
+                  )}
+                  {bug.fix_status === "fix_proposed" && (
+                    bug.fix_mr_url ? (
                       <a
-                        href={bug.jira_url ?? undefined}
+                        href={bug.fix_mr_url}
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[0.6875rem] font-medium text-blue-700 ring-1 ring-blue-200 transition-colors hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-400 dark:ring-blue-900/40"
-                        title={bug.jira_status ? `Статус в Jira: ${bug.jira_status}` : "Открыть в Jira"}
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-px font-medium text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-400"
                       >
-                        {bug.jira_key}
-                        {bug.jira_status && <span className="font-normal text-blue-600/80 dark:text-blue-400/80">· {bug.jira_status}</span>}
-                        <ExternalLink className="h-3 w-3" />
+                        <Bot className="h-3 w-3" /> фикс предложен · MR{mrNumber(bug.fix_mr_url)} <ExternalLink className="h-3 w-3" />
                       </a>
-                    ) : jiraConfigured && (
-                      <button
-                        className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:border-blue-300 hover:text-blue-700 dark:hover:text-blue-400 disabled:opacity-60"
-                        onClick={(e) => { e.stopPropagation(); setJiraFormOpen(!jiraFormOpen) }}
-                        disabled={isBusy}
-                        title="Создать задачу в Jira"
-                      >
-                        {exportMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-                        Создать в Jira
-                      </button>
-                    )}
-                    {bug.severity && (
-                      <span className={cn("rounded-full px-2.5 py-1 text-[0.625rem] font-semibold uppercase tracking-wide", SEVERITY_STYLE[bug.severity])}>
-                        {bug.severity}
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-px font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-400">
+                        <Bot className="h-3 w-3" /> фикс предложен
                       </span>
-                    )}
-                    <button
-                      className={cn(
-                        "rounded-md p-1 transition-colors",
-                        copied ? "text-emerald-500" : "text-muted-foreground/50 hover:text-foreground",
-                      )}
-                      onClick={handleCopy}
-                      title="Скопировать для Jira"
-                    >
-                      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                    </button>
-                  </div>
+                    )
+                  )}
+                  {bug.fix_status === "failed" && (
+                    <>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-px font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400" title={bug.fix_error ?? undefined}>
+                        <Bot className="h-3 w-3" /> фикс не удался
+                      </span>
+                      <button
+                        className="rounded-full border px-2 py-px font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+                        onClick={(e) => { e.stopPropagation(); fixMut.mutate(index) }}
+                        disabled={isBusy}
+                      >
+                        {fixMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Повторить"}
+                      </button>
+                    </>
+                  )}
                 </div>
+
+                {bug.fix_status === "fix_proposed" && bug.fix_summary && (
+                  <p className={cn("max-w-4xl text-[0.75rem] leading-[1.55] text-muted-foreground", !open && "line-clamp-2")}>{bug.fix_summary}</p>
+                )}
+                {bug.fix_status === "failed" && bug.fix_error && (
+                  <p className={cn("max-w-4xl text-[0.75rem] leading-[1.55] text-red-700 dark:text-red-400", !open && "line-clamp-2")}>{bug.fix_error}</p>
+                )}
+                {exportMut.error && <p className="text-[0.75rem] text-destructive">{(exportMut.error as Error).message}</p>}
+                {fixMut.error && <p className="text-[0.75rem] text-destructive">{(fixMut.error as Error).message}</p>}
               </div>
             </div>
           </div>
@@ -694,64 +676,52 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
     .filter(g => g.items.length > 0)
 
   return (
-    <div className="space-y-5">
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-baseline gap-2.5">
-          <h2 className="text-base font-medium">Баг-репорты</h2>
-          {bugs.length > 0 && (
-            <span className="text-[0.8125rem] text-muted-foreground tabular-nums">
-              Открыто {openCount} / Закрыто {resolvedCount} / Всего {bugs.length}
-            </span>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Баги появляются после ревью тест-кейсов. Здесь важны приоритет, статус исправления и воспроизводимость.
-        </p>
-
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <BugMiniStat icon={<Bug className="h-4 w-4" />} label="Открыто" value={String(openCount)} />
-          <BugMiniStat icon={<Wrench className="h-4 w-4" />} label="Исправлено" value={String(fixedCount)} tone={fixedCount > 0 ? "warning" : "default"} />
-          <BugMiniStat icon={<ShieldCheck className="h-4 w-4" />} label="Проверено" value={String(verifiedCount)} tone={verifiedCount > 0 ? "success" : "default"} />
-          <BugMiniStat icon={<AlertTriangle className="h-4 w-4" />} label="Критично" value={String(criticalCount)} tone={criticalCount > 0 ? "danger" : "default"} />
-        </div>
-      </div>
-
-      {bugs.length > 0 && (
-        <div className="sticky top-0 z-10 -mx-4 rounded-2xl border border-border/70 bg-background/95 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <BugFilterChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>Все</BugFilterChip>
-              <BugFilterChip active={statusFilter === "open"} onClick={() => setStatusFilter("open")}>Открытые</BugFilterChip>
-              <BugFilterChip active={statusFilter === "fixed"} onClick={() => setStatusFilter("fixed")}>Исправленные</BugFilterChip>
-              <BugFilterChip active={statusFilter === "verified"} onClick={() => setStatusFilter("verified")}>Проверенные</BugFilterChip>
-            </div>
-
-            <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-wrap items-center gap-2">
-                <BugFilterChip active={severityFilter === "all"} onClick={() => setSeverityFilter("all")}>Все уровни</BugFilterChip>
-                {(["critical", "major", "minor", "trivial"] as BugSeverity[]).map((severity) => (
-                  <BugFilterChip key={severity} active={severityFilter === severity} onClick={() => setSeverityFilter(severity)}>
-                    {SEVERITY_LABEL[severity]}
-                  </BugFilterChip>
-                ))}
-              </div>
-
-              <div className="relative min-w-[15rem]">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск по названию, кейсу и результату" className="pl-8 text-sm" />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Progress */}
-      {bugs.length > 0 && (
-        <div className="h-1 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-            style={{ width: `${(resolvedCount / bugs.length) * 100}%` }}
+    <div className="space-y-4">
+      <section className="space-y-3 rounded-xl border bg-card p-4">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <h2 className="text-base font-semibold">Баг-репорты</h2>
+          <StatStrip
+            className="flex-1"
+            items={[
+              { value: openCount, label: "открыто", tone: openCount > 0 ? "danger" : "default" },
+              { value: fixedCount, label: "исправлено", tone: fixedCount > 0 ? "warning" : "default" },
+              { value: verifiedCount, label: "проверено", tone: verifiedCount > 0 ? "success" : "default" },
+              { value: criticalCount, label: "критичных", tone: criticalCount > 0 ? "danger" : "default" },
+            ]}
           />
+        </div>
+        {bugs.length > 0 && (
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${(resolvedCount / bugs.length) * 100}%` }} />
+          </div>
+        )}
+      </section>
+
+      {bugs.length > 0 && (
+        <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center gap-2 rounded-lg bg-background/95 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/85">
+          <Segmented<BugStatusFilter>
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={[
+              { value: "all", label: "Все", count: bugs.length },
+              { value: "open", label: "Открытые", count: openCount },
+              { value: "fixed", label: "Исправленные", count: fixedCount },
+              { value: "verified", label: "Проверенные", count: verifiedCount },
+            ]}
+          />
+          <FilterSelect<BugSeverity | "all">
+            ariaLabel="Уровень"
+            value={severityFilter}
+            onChange={setSeverityFilter}
+            options={[
+              { value: "all", label: "Все уровни" },
+              ...(["critical", "major", "minor", "trivial"] as BugSeverity[]).map((severity) => ({ value: severity, label: SEVERITY_LABEL[severity] })),
+            ]}
+          />
+          <div className="relative ml-auto min-w-[15rem]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Название, кейс или результат" className="h-7 pl-8 text-xs" />
+          </div>
         </div>
       )}
 
@@ -780,16 +750,16 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
       )}
 
       {/* Groups */}
-      <div className="space-y-6">
+      <div className="space-y-5">
         {grouped.map(({ severity, items }) => (
           <div key={severity}>
-            <div className="mb-2.5 flex items-center gap-2 px-1">
-              <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground/60">
+            <div className="mb-2 flex items-center gap-2 px-1">
+              <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 {SEVERITY_LABEL[severity]}
               </p>
-              <span className="text-[0.6875rem] text-muted-foreground/40">{items.length}</span>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[0.6875rem] text-muted-foreground">{items.length}</span>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {items.map(({ bug, idx }) => (
                 <BugCard
                   key={`${bug.severity}-${idx}`}
@@ -805,62 +775,5 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
         ))}
       </div>
     </div>
-  )
-}
-
-function BugFilterChip({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean
-  children: React.ReactNode
-  onClick: () => void
-}) {
-  return (
-    <button
-      className={cn(
-        "rounded-full border px-3 py-1 text-[0.6875rem] font-medium transition-colors",
-        active
-          ? "border-foreground/10 bg-foreground text-background"
-          : "border-border bg-background text-muted-foreground hover:border-foreground/15 hover:text-foreground"
-      )}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  )
-}
-
-function BugMiniStat({
-  icon,
-  label,
-  value,
-  tone = "default",
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string
-  tone?: "default" | "warning" | "success" | "danger"
-}) {
-  const toneClasses = {
-    default: "border-border bg-background",
-    warning: "border-amber-200/70 bg-amber-50/70 dark:border-amber-900/40 dark:bg-amber-950/10",
-    success: "border-emerald-200/70 bg-emerald-50/70 dark:border-emerald-900/40 dark:bg-emerald-950/10",
-    danger: "border-red-200/70 bg-red-50/70 dark:border-red-900/40 dark:bg-red-950/10",
-  }
-
-  return (
-    <Card className={cn("shadow-none", toneClasses[tone])}>
-      <CardContent className="flex items-start justify-between gap-3 py-3.5">
-        <div>
-          <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-          <p className="mt-2 text-xl font-semibold">{value}</p>
-        </div>
-        <div className="rounded-lg bg-muted p-2 text-muted-foreground">
-          {icon}
-        </div>
-      </CardContent>
-    </Card>
   )
 }

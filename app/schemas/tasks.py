@@ -12,6 +12,9 @@ class TaskKind(str, Enum):
     apply_gaps = "apply_gaps"
     test_cases = "test_cases"
     enrichment = "enrichment"
+    implement = "implement"
+    bug_fix = "bug_fix"
+    autotest_gen = "autotest_gen"
 
 
 class TaskStatus(str, Enum):
@@ -24,6 +27,8 @@ class TaskTargetType(str, Enum):
     document = "document"
     feature = "feature"
     dependency = "dependency"
+    service = "service"
+    repo = "repo"
 
 
 class TaskRecord(BaseModel):
