@@ -24,10 +24,8 @@ export function DependencyListItem({ dep, isActive, onClick, onDelete, isDeleteP
           onClick={onClick}
           title={dep.name}
           className={cn(
-            "flex-1 rounded-xl border px-3 py-2 text-left text-sm transition-colors",
-            isActive
-              ? "border-primary/20 bg-background shadow-sm"
-              : "border-transparent hover:border-border hover:bg-background/80"
+            "min-w-0 flex-1 rounded-lg px-2 py-1 text-left text-[0.8125rem] transition-colors",
+            isActive ? "bg-background shadow-[0_0_0_1px_var(--color-border)]" : "hover:bg-background/70"
           )}
         >
           <div className="flex items-center gap-2">

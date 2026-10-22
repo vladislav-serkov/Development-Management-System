@@ -1,7 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Layers } from "lucide-react"
 import { FeatureListItem } from "./FeatureListItem"
 import type { FeatureResponse } from "@/types/api"
 
@@ -51,16 +49,9 @@ export function FeatureList({
 
   return (
     <section>
-      <div className="mb-2 flex items-center justify-between px-1">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <Layers className="h-3.5 w-3.5" />
-          Навигация по фичам
-        </div>
-        {features && features.length > 0 && (
-          <Badge variant="outline" className="h-5 px-1.5 py-0 text-[0.625rem]">
-            {features.length}
-          </Badge>
-        )}
+      <div className="mb-1.5 flex items-center gap-1.5 px-2 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        Фичи
+        {features && features.length > 0 && <span className="font-normal tabular-nums">{features.length}</span>}
       </div>
 
       {showSearch && (
@@ -78,7 +69,7 @@ export function FeatureList({
         </div>
       )}
 
-      <div className="space-y-1" role="listbox" aria-label="Список фич" ref={listRef}>
+      <div className="space-y-0.5" role="listbox" aria-label="Список фич" ref={listRef}>
         {filtered.map((feature, index) => (
           <div key={feature.name} aria-selected={selectedFeatureName === feature.name} data-focused={focusIndex === index || undefined}>
             <FeatureListItem

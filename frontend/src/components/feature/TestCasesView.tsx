@@ -2,20 +2,26 @@ import { useState } from "react"
 import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useAskTestCase, useRequestAutotest } from "@/hooks/useTestCases"
 import { useGenerateBug } from "@/hooks/useBugs"
 import { useExecuteSql, useTestDbStatus } from "@/hooks/useTestDb"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { StatStrip } from "@/components/ui/stat-strip"
+import { FilterSelect, Segmented } from "@/components/ui/segmented"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
 import { CurlArtifact } from "@/components/feature/CurlArtifact"
-import { Bot, Check, ChevronDown, ChevronUp, Copy, Database, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
+import { ArtifactHead, CodeBlock, CopyButton, MetaChip, TypeBadge } from "@/components/feature/artifact-ui"
+import { ARTIFACT_BADGE } from "@/lib/artifacts"
+import { Bot, Check, ChevronDown, ChevronUp, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { countLabel } from "@/lib/plural"
 import type { TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
 
 const ARTIFACTS = [
-  { key: "curl_command", label: "cURL" },
-  { key: "kafka_message", label: "MESSAGE" },
+  { key: "curl_command", label: "Запрос" },
+  { key: "kafka_message", label: "Kafka" },
   { key: "sql_setup", label: "SQL" },
-  { key: "mock_config", label: "MOCKS" },
+  { key: "mock_config", label: "Мок" },
 ] as const
 
 const CATEGORY_LABEL: Record<TestCaseCategory, string> = {
@@ -89,54 +95,6 @@ function sortItems(items: Array<{ tc: TestCaseItem; idx: number }>, sortMode: So
   return sorted
 }
 
-function ReviewChip({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean
-  children: React.ReactNode
-  onClick: () => void
-}) {
-  return (
-    <button
-      className={cn(
-        "rounded-full border px-3 py-1 text-[0.6875rem] font-medium transition-colors",
-        active
-          ? "border-foreground/10 bg-foreground text-background"
-          : "border-border bg-background text-muted-foreground hover:border-foreground/15 hover:text-foreground"
-      )}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  )
-}
-
-function ReviewStat({
-  label,
-  value,
-  tone = "default",
-}: {
-  label: string
-  value: string
-  tone?: "default" | "accent" | "danger"
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-xl border px-3 py-2",
-        tone === "accent" && "border-emerald-200/80 bg-emerald-50/70 dark:border-emerald-900/40 dark:bg-emerald-950/10",
-        tone === "danger" && "border-red-200/80 bg-red-50/70 dark:border-red-900/40 dark:bg-red-950/10",
-        tone === "default" && "border-border bg-background"
-      )}
-    >
-      <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
-    </div>
-  )
-}
-
 function PriorityBadge({ priority }: { priority: TestCaseItem["priority"] }) {
   const Icon = priority === "high" ? ChevronUp : priority === "low" ? ChevronDown : Equal
   return (
@@ -196,8 +154,6 @@ function TestCaseCard({
   const autotestMut = useRequestAutotest(projectSlug, featureName)
   const [showBugForm, setShowBugForm] = useState(false)
   const [bugComment, setBugComment] = useState("")
-  const [activeArtifact, setActiveArtifact] = useState<string | null>(null)
-  const [copiedField, setCopiedField] = useState<string | null>(null)
 
   const isBusy = patchMut.isPending || deleteMut.isPending || generateBugMut.isPending
   const artifactCount = getArtifactCount(tc)
@@ -243,14 +199,14 @@ function TestCaseCard({
     <article
       id={`tc-card-${index}`}
       className={cn(
-        "overflow-hidden rounded-2xl border bg-card transition-all",
-        isOpen ? "border-foreground/15 shadow-sm ring-1 ring-foreground/6" : "border-border hover:border-foreground/12 hover:shadow-sm"
+        "overflow-hidden rounded-xl border bg-card transition-all",
+        isOpen ? "border-foreground/20 shadow-sm" : "hover:border-foreground/15"
       )}
     >
       <div
         className={cn(
-          "flex items-center gap-3 px-4 py-3.5 md:px-5",
-          isOpen && "border-b border-border/70 bg-muted/[0.18]"
+          "flex items-center gap-3 px-4 py-2.5",
+          isOpen && "border-b bg-muted/20"
         )}
       >
         <button
@@ -277,16 +233,16 @@ function TestCaseCard({
         <button className="min-w-0 flex-1 text-left" onClick={onToggle}>
           <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <p className={cn("text-[0.875rem] font-semibold leading-[1.5] text-foreground", !isOpen && "line-clamp-2")}>
+              <p className={cn("text-[0.875rem] font-medium leading-[1.5] text-foreground", isOpen ? "font-semibold" : "line-clamp-1")}>
                 <RichText text={tc.name} />
               </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
-                <span>{tc.steps.length} шагов</span>
-                <span>{artifactCount} артефактов</span>
-                <span>{CATEGORY_LABEL[tc.category]}</span>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
+                <span>{countLabel(tc.steps.length, ["шаг", "шага", "шагов"])}</span>
+                <span>{countLabel(artifactCount, ["артефакт", "артефакта", "артефактов"])}</span>
+                {tc.origin === "ask" && <span>{CATEGORY_LABEL[tc.category]}</span>}
                 {tc.covers && (
                   <span
-                    className="max-w-[340px] truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.625rem]"
+                    className="max-w-[340px] truncate font-mono text-[0.625rem]"
                     title={tc.covers}
                   >
                     {tc.covers}
@@ -310,10 +266,10 @@ function TestCaseCard({
         <div className="hidden items-center gap-2 lg:flex">
           {tc.status === "pending" ? (
             <>
-              <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800" onClick={handleAccept} disabled={isBusy}>
+              <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-900/60 dark:text-emerald-400 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300" onClick={handleAccept} disabled={isBusy}>
                 Принять
               </Button>
-              <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800" onClick={() => { setShowBugForm(true); if (!isOpen) onToggle() }} disabled={isBusy}>
+              <Button size="sm" variant="destructive" onClick={() => { setShowBugForm(true); if (!isOpen) onToggle() }} disabled={isBusy}>
                 Баг
               </Button>
             </>
@@ -381,227 +337,58 @@ function TestCaseCard({
       )}
 
       {!isOpen ? null : (
-        <div className="space-y-4 px-4 py-4 md:px-5">
+        <div className="space-y-3 px-4 py-4 md:pl-11">
           {tc.covers && (
-            <p className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-[0.75rem] text-muted-foreground">
+            <p className="text-[0.75rem] text-muted-foreground">
               <span className="font-semibold uppercase tracking-wide text-[0.625rem]">Покрывает в ТЗ:</span>{" "}
               <span className="font-mono">{tc.covers}</span>
             </p>
           )}
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.9fr)]">
+          <div className="grid gap-3 xl:grid-cols-2">
             <TestCaseSection title="Предусловия">
-              <p className="text-sm leading-[1.65] text-foreground/85">
+              <p className="text-sm leading-[1.65] text-foreground/85 [overflow-wrap:anywhere]">
                 <RichText text={tc.preconditions} />
               </p>
             </TestCaseSection>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               <TestCaseSection title="Ожидаемый результат" tone="expected">
-                <p className="text-sm leading-[1.65] text-foreground/85">
+                <p className="text-sm leading-[1.65] text-foreground/85 [overflow-wrap:anywhere]">
                   <RichText text={tc.expected_result} />
                 </p>
               </TestCaseSection>
 
               {tc.status === "edited" && tc.analyst_text && (
                 <TestCaseSection title="Комментарий аналитика" tone="comment">
-                  <p className="text-sm leading-[1.65] text-foreground/85">{tc.analyst_text}</p>
+                  <p className="text-sm leading-[1.65] text-foreground/85 [overflow-wrap:anywhere]">{tc.analyst_text}</p>
                 </TestCaseSection>
               )}
             </div>
           </div>
 
           <TestCaseSection title="Шаги проверки">
-            <div className="space-y-3">
+            <ol className="space-y-2.5">
               {tc.steps.map((step, si) => (
-                <div key={si} className="rounded-xl border border-border/70 bg-background px-4 py-3">
-                  <div className="grid grid-cols-[auto_1fr] gap-x-3">
-                    <span className="pt-0.5 text-[0.75rem] font-semibold tabular-nums text-muted-foreground">{si + 1}</span>
-                    <div className="space-y-3">
-                      <p className="text-sm leading-[1.65] text-foreground">
-                        <RichText text={step.action} />
-                      </p>
-                      <div className="rounded-xl bg-muted/50 px-3 py-2.5">
-                        <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Ожидаемый результат шага</p>
-                        <p className="mt-1.5 text-sm leading-[1.6] text-foreground/85">
-                          <RichText text={step.expected} />
-                        </p>
-                      </div>
-                    </div>
+                <li key={si} className="grid grid-cols-[1.25rem_1fr] gap-x-2">
+                  <span className="pt-0.5 text-[0.75rem] font-semibold tabular-nums text-muted-foreground">{si + 1}</span>
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm leading-[1.6] text-foreground [overflow-wrap:anywhere]">
+                      <RichText text={step.action} />
+                    </p>
+                    <p className="text-[0.8125rem] leading-[1.55] text-muted-foreground [overflow-wrap:anywhere]">
+                      <span className="font-medium text-emerald-700 dark:text-emerald-400">→ </span>
+                      <RichText text={step.expected} />
+                    </p>
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ol>
           </TestCaseSection>
 
-          {artifactCount > 0 && (
-            <TestCaseSection title="Технические артефакты">
-              <div className="flex flex-wrap items-center gap-1.5">
-                {ARTIFACTS.filter((artifact) => tc[artifact.key as keyof TestCaseItem]).map((artifact) => (
-                  <button
-                    key={artifact.key}
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-[0.6875rem] font-medium transition-colors",
-                      activeArtifact === artifact.key
-                        ? "border-foreground bg-foreground text-background"
-                        : "border-border bg-background text-muted-foreground hover:text-foreground"
-                    )}
-                    onClick={() => {
-                      setActiveArtifact(activeArtifact === artifact.key ? null : artifact.key)
-                      setCopiedField(null)
-                    }}
-                  >
-                    {artifact.label}
-                  </button>
-                ))}
-              </div>
-
-              {!activeArtifact && artifactCount === 1 && (
-                <div className="mt-3">
-                  {ARTIFACTS.filter((artifact) => tc[artifact.key as keyof TestCaseItem]).map((artifact) => {
-                    if (!tc[artifact.key as keyof TestCaseItem]) return null
-
-                    if (artifact.key === "kafka_message" && tc.kafka_message) {
-                      return (
-                        <div key={artifact.key} className="space-y-2.5">
-                          <TestCaseInlineArtifact
-                            label="Kafka key"
-                            value={tc.kafka_message.key}
-                            copied={copiedField === "key"}
-                            onCopy={() => {
-                              navigator.clipboard.writeText(tc.kafka_message!.key)
-                              setCopiedField("key")
-                              setTimeout(() => setCopiedField(null), 1500)
-                            }}
-                          />
-                          <TestCaseArtifact
-                            label="Kafka value"
-                            value={formatJsonOrRaw(tc.kafka_message.value)}
-                            copied={copiedField === "value"}
-                            onCopy={() => {
-                              navigator.clipboard.writeText(tc.kafka_message!.value)
-                              setCopiedField("value")
-                              setTimeout(() => setCopiedField(null), 1500)
-                            }}
-                          />
-                        </div>
-                      )
-                    }
-
-                    if (artifact.key === "curl_command" && tc.curl_command) {
-                      return (
-                        <CurlArtifact
-                          key={artifact.key}
-                          value={tc.curl_command}
-                          projectSlug={projectSlug}
-                          featureName={featureName}
-                          copied={copiedField === artifact.key}
-                          onCopy={() => {
-                            navigator.clipboard.writeText(tc.curl_command!)
-                            setCopiedField(artifact.key)
-                            setTimeout(() => setCopiedField(null), 1500)
-                          }}
-                        />
-                      )
-                    }
-
-                    if (artifact.key === "sql_setup" && tc.sql_setup) {
-                      return (
-                        <SqlSetupArtifact
-                          key={artifact.key}
-                          value={tc.sql_setup}
-                          copied={copiedField === artifact.key}
-                          onCopy={() => {
-                            navigator.clipboard.writeText(tc.sql_setup!)
-                            setCopiedField(artifact.key)
-                            setTimeout(() => setCopiedField(null), 1500)
-                          }}
-                        />
-                      )
-                    }
-
-                    return (
-                      <TestCaseArtifact
-                        key={artifact.key}
-                        label={artifact.label}
-                        value={tc[artifact.key as keyof TestCaseItem] as string}
-                        copied={copiedField === artifact.key}
-                        onCopy={() => {
-                          navigator.clipboard.writeText(tc[artifact.key as keyof TestCaseItem] as string)
-                          setCopiedField(artifact.key)
-                          setTimeout(() => setCopiedField(null), 1500)
-                        }}
-                      />
-                    )
-                  })}
-                </div>
-              )}
-
-              {activeArtifact && tc[activeArtifact as keyof TestCaseItem] && (
-                <div className="mt-3">
-                  {activeArtifact === "kafka_message" && tc.kafka_message ? (
-                    <div className="space-y-2.5">
-                      <TestCaseInlineArtifact
-                        label="Kafka key"
-                        value={tc.kafka_message.key}
-                        copied={copiedField === "key"}
-                        onCopy={() => {
-                          navigator.clipboard.writeText(tc.kafka_message!.key)
-                          setCopiedField("key")
-                          setTimeout(() => setCopiedField(null), 1500)
-                        }}
-                      />
-                      <TestCaseArtifact
-                        label="Kafka value"
-                        value={formatJsonOrRaw(tc.kafka_message.value)}
-                        copied={copiedField === "value"}
-                        onCopy={() => {
-                          navigator.clipboard.writeText(tc.kafka_message!.value)
-                          setCopiedField("value")
-                          setTimeout(() => setCopiedField(null), 1500)
-                        }}
-                      />
-                    </div>
-                  ) : activeArtifact === "curl_command" && tc.curl_command ? (
-                    <CurlArtifact
-                      value={tc.curl_command}
-                      projectSlug={projectSlug}
-                      featureName={featureName}
-                      copied={copiedField === "curl_command"}
-                      onCopy={() => {
-                        navigator.clipboard.writeText(tc.curl_command!)
-                        setCopiedField("curl_command")
-                        setTimeout(() => setCopiedField(null), 1500)
-                      }}
-                    />
-                  ) : activeArtifact === "sql_setup" && tc.sql_setup ? (
-                    <SqlSetupArtifact
-                      value={tc.sql_setup}
-                      copied={copiedField === "sql_setup"}
-                      onCopy={() => {
-                        navigator.clipboard.writeText(tc.sql_setup!)
-                        setCopiedField("sql_setup")
-                        setTimeout(() => setCopiedField(null), 1500)
-                      }}
-                    />
-                  ) : (
-                    <TestCaseArtifact
-                      label={ARTIFACTS.find((artifact) => artifact.key === activeArtifact)?.label ?? "Artifact"}
-                      value={tc[activeArtifact as keyof TestCaseItem] as string}
-                      copied={copiedField === activeArtifact}
-                      onCopy={() => {
-                        navigator.clipboard.writeText(tc[activeArtifact as keyof TestCaseItem] as string)
-                        setCopiedField(activeArtifact)
-                        setTimeout(() => setCopiedField(null), 1500)
-                      }}
-                    />
-                  )}
-                </div>
-              )}
-            </TestCaseSection>
-          )}
+          <ArtifactsSection tc={tc} projectSlug={projectSlug} featureName={featureName} />
 
           {tc.status === "pending" && showBugForm && (
-            <div className="rounded-2xl border border-red-200/70 bg-red-50/40 p-4 dark:border-red-900/40 dark:bg-red-950/10">
+            <div className="rounded-xl border border-red-200/70 bg-red-50/40 p-3 dark:border-red-900/40 dark:bg-red-950/10">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-foreground">Создать баг по этому кейсу</p>
@@ -639,13 +426,13 @@ function TestCaseCard({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-4">
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
             {tc.status === "pending" ? (
               <>
-                <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800" onClick={handleAccept} disabled={isBusy}>
+                <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-900/60 dark:text-emerald-400 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300" onClick={handleAccept} disabled={isBusy}>
                   Принять
                 </Button>
-                <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800" onClick={() => setShowBugForm(true)} disabled={isBusy}>
+                <Button size="sm" variant="destructive" onClick={() => setShowBugForm(true)} disabled={isBusy}>
                   Создать баг
                 </Button>
               </>
@@ -655,8 +442,8 @@ function TestCaseCard({
               </Button>
             )}
 
-            <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-red-600" onClick={() => deleteMut.mutate(index)} disabled={isBusy}>
-              Удалить
+            <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-red-600" onClick={() => deleteMut.mutate(index)} disabled={isBusy}>
+              Удалить кейс
             </Button>
           </div>
         </div>
@@ -669,16 +456,19 @@ function TestCaseSection({
   title,
   children,
   tone = "default",
+  surface = false,
 }: {
   title: string
   children: React.ReactNode
   tone?: "default" | "expected" | "comment"
+  /** white card instead of the muted tint — for blocks that hold code */
+  surface?: boolean
 }) {
   return (
     <section
       className={cn(
-        "rounded-2xl border p-4",
-        tone === "default" && "border-border/70 bg-muted/[0.12]",
+        "rounded-xl border p-3.5",
+        tone === "default" && (surface ? "bg-card" : "bg-muted/20"),
         tone === "expected" && "border-emerald-200/80 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/10",
         tone === "comment" && "border-blue-200/80 bg-blue-50/50 dark:border-blue-900/40 dark:bg-blue-950/10"
       )}
@@ -689,66 +479,36 @@ function TestCaseSection({
   )
 }
 
-function TestCaseArtifact({
-  label,
-  value,
-  copied,
-  onCopy,
-}: {
-  label: string
-  value: string
-  copied: boolean
-  onCopy: () => void
-}) {
-  return (
-    <div className="group relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-      <div className="border-b border-slate-800 px-3 py-2">
-        <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</span>
-      </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 py-3 text-[0.75rem] font-mono leading-6 text-slate-100">
-        <code>{value}</code>
-      </pre>
-      <button
-        onClick={onCopy}
-        className="absolute right-2 top-2 rounded-md bg-slate-700 p-1.5 text-slate-300 transition-opacity hover:bg-slate-600 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-        title="Копировать"
-      >
-        {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-      </button>
-    </div>
-  )
-}
-
 function SqlRunResults({ result }: { result: SqlExecuteResponse }) {
   return (
-    <div className="border-t border-slate-800">
+    <div className="overflow-hidden rounded-lg border">
       {result.results.map((res, i) => (
-        <div key={i} className="border-b border-slate-800/60 px-3 py-2 last:border-b-0">
+        <div key={i} className="border-b px-3 py-2 last:border-b-0">
           <div className="flex items-center gap-2">
-            <span className="text-[0.6875rem] font-semibold tabular-nums text-slate-500">{i + 1}</span>
-            <code className="min-w-0 flex-1 truncate text-[0.6875rem] font-mono text-slate-400" title={res.statement}>
+            <span className="text-[0.6875rem] font-semibold tabular-nums text-muted-foreground">{i + 1}</span>
+            <code className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-muted-foreground" title={res.statement}>
               {res.statement.replace(/\s+/g, " ")}
             </code>
-            <span className="shrink-0 rounded-md bg-emerald-950/60 px-1.5 py-0.5 text-[0.625rem] font-mono text-emerald-400">
+            <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px font-mono text-[0.625rem] text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400">
               {res.status}
             </span>
           </div>
           {res.columns && res.columns.length > 0 && res.rows && (
-            <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800">
-              <table className="w-full text-[0.6875rem] font-mono">
+            <div className="mt-2 overflow-x-auto rounded-md border">
+              <table className="w-full font-mono text-[0.6875rem]">
                 <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/60">
+                  <tr className="border-b bg-muted/40">
                     {res.columns.map((col) => (
-                      <th key={col} className="whitespace-nowrap px-2 py-1.5 text-left font-semibold text-slate-400">{col}</th>
+                      <th key={col} className="whitespace-nowrap px-2 py-1.5 text-left font-semibold text-muted-foreground">{col}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {res.rows.map((row, ri) => (
-                    <tr key={ri} className="border-b border-slate-800/50 last:border-b-0">
+                    <tr key={ri} className="border-b last:border-b-0">
                       {row.map((cell, ci) => (
-                        <td key={ci} className="whitespace-nowrap px-2 py-1 text-slate-200">
-                          {cell === null ? <span className="italic text-slate-600">null</span> : String(cell)}
+                        <td key={ci} className="whitespace-nowrap px-2 py-1">
+                          {cell === null ? <span className="italic text-muted-foreground">null</span> : String(cell)}
                         </td>
                       ))}
                     </tr>
@@ -757,119 +517,146 @@ function SqlRunResults({ result }: { result: SqlExecuteResponse }) {
               </table>
             </div>
           )}
-          {res.truncated && (
-            <p className="mt-1 text-[0.625rem] text-slate-500">Показаны первые строки — результат обрезан</p>
-          )}
+          {res.truncated && <p className="mt-1 text-[0.625rem] text-muted-foreground">Показаны первые строки — результат обрезан</p>}
         </div>
       ))}
       {result.error && (
         <div className="px-3 py-2">
-          <p className="text-[0.6875rem] font-semibold text-red-400">
+          <p className="text-[0.6875rem] font-semibold text-destructive">
             Ошибка{result.failed_statement !== null ? ` в выражении ${result.failed_statement + 1}` : ""} — изменения отменены
           </p>
-          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[0.6875rem] text-red-300/90">{result.error}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[0.6875rem] text-destructive/90">{result.error}</p>
         </div>
       )}
       {!result.error && (
-        <p className="px-3 py-2 text-[0.625rem] text-slate-500">
-          Выполнено за {result.duration_ms} мс, изменения применены
-        </p>
+        <p className="px-3 py-2 text-[0.625rem] text-muted-foreground">Выполнено за {result.duration_ms} мс, изменения применены</p>
       )}
     </div>
   )
 }
 
-function SqlSetupArtifact({
-  value,
-  copied,
-  onCopy,
-}: {
-  value: string
-  copied: boolean
-  onCopy: () => void
-}) {
+function countSqlStatements(sql: string) {
+  return sql.split(";").filter((s) => s.trim()).length
+}
+
+function SqlArtifact({ value }: { value: string }) {
   const { data: dbStatus } = useTestDbStatus()
   const execMut = useExecuteSql()
+  const statements = countSqlStatements(value)
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-slate-400">SQL</span>
-          {dbStatus?.configured && (
-            <span
-              className="inline-flex min-w-0 items-center gap-1 truncate text-[0.625rem] font-mono text-slate-500"
-              title={`${dbStatus.host ?? ""}/${dbStatus.database ?? ""}`}
-            >
-              <Database className="h-3 w-3 shrink-0" />
-              <span className="truncate">{dbStatus.database}</span>
-            </span>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {dbStatus?.configured && (
-            <button
+    <div className="space-y-2.5">
+      <ArtifactHead
+        badge={<TypeBadge label="SQL" className={ARTIFACT_BADGE.SQL} />}
+        target={dbStatus?.configured ? dbStatus.database : undefined}
+        chips={<MetaChip>{countLabel(statements, ["запрос", "запроса", "запросов"])}</MetaChip>}
+        actions={
+          dbStatus?.configured ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-900/60 dark:text-emerald-400 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300"
               onClick={() => execMut.mutate(value)}
               disabled={execMut.isPending}
-              className="inline-flex items-center gap-1.5 rounded-md bg-emerald-900/60 px-2.5 py-1 text-[0.6875rem] font-medium text-emerald-300 transition-colors hover:bg-emerald-900 disabled:opacity-60"
-              title="Выполнить на тестовой БД"
+              title={`Выполнить на тестовой БД ${dbStatus.host ?? ""}/${dbStatus.database ?? ""}`}
             >
               {execMut.isPending ? (
                 <>
-                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Выполняется
                 </>
               ) : (
                 <>
-                  <Play className="h-3 w-3" />
-                  Выполнить
+                  <Play className="h-3.5 w-3.5" />
+                  Выполнить в тестовой БД
                 </>
               )}
-            </button>
-          )}
-          <button onClick={onCopy} className="rounded-md bg-slate-700 p-1.5 text-slate-300 transition-colors hover:bg-slate-600" title="Копировать">
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-          </button>
-        </div>
-      </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 py-3 text-[0.75rem] font-mono leading-6 text-slate-100">
-        <code>{value}</code>
-      </pre>
+            </Button>
+          ) : undefined
+        }
+      />
+      <CodeBlock value={value} />
       {execMut.error && (
-        <div className="border-t border-slate-800 px-3 py-2">
-          <p className="whitespace-pre-wrap break-words text-[0.6875rem] text-red-400">{(execMut.error as Error).message}</p>
-        </div>
+        <p className="whitespace-pre-wrap break-words text-[0.75rem] text-destructive">{(execMut.error as Error).message}</p>
       )}
       {execMut.data && <SqlRunResults result={execMut.data} />}
     </div>
   )
 }
 
-function TestCaseInlineArtifact({
-  label,
-  value,
-  copied,
-  onCopy,
-}: {
-  label: string
-  value: string
-  copied: boolean
-  onCopy: () => void
-}) {
+function KafkaArtifact({ message }: { message: { key: string; value: string } }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950 px-3 py-2.5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-          <code className="mt-1 block overflow-x-auto whitespace-pre-wrap break-all text-[0.75rem] font-mono leading-6 text-slate-100">
-            {value}
-          </code>
-        </div>
-        <button onClick={onCopy} className="shrink-0 self-start rounded-md bg-slate-700 p-1.5 text-slate-300 transition-colors hover:bg-slate-600" title="Копировать">
-          {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-        </button>
-      </div>
+    <div className="space-y-2.5">
+      <ArtifactHead
+        badge={<TypeBadge label="KAFKA" className={ARTIFACT_BADGE.KAFKA} />}
+        target="сообщение"
+        chips={message.key ? <MetaChip mono title={message.key}>key {message.key}</MetaChip> : undefined}
+        actions={message.key ? <CopyButton value={message.key} label="key" /> : undefined}
+      />
+      <CodeBlock value={formatJsonOrRaw(message.value)} copyValue={message.value} />
     </div>
+  )
+}
+
+/** WireMock stub: show what is mocked (method + path → status) above the formatted JSON. */
+function MockArtifact({ value }: { value: string }) {
+  let method: string | null = null
+  let path: string | null = null
+  let status: number | null = null
+  try {
+    const parsed = JSON.parse(value)
+    method = typeof parsed?.request?.method === "string" ? parsed.request.method : null
+    const req = parsed?.request ?? {}
+    path = req.urlPath ?? req.url ?? req.urlPattern ?? req.urlPathPattern ?? null
+    status = typeof parsed?.response?.status === "number" ? parsed.response.status : null
+  } catch {
+    // not JSON — show as is
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <ArtifactHead
+        badge={<TypeBadge label="MOCK" className={ARTIFACT_BADGE.MOCK} />}
+        target={path ? `${method ? `${method} ` : ""}${path}` : "мок внешней системы"}
+        chips={status !== null ? <MetaChip>ответ {status}</MetaChip> : undefined}
+      />
+      <CodeBlock value={formatJsonOrRaw(value)} copyValue={value} />
+    </div>
+  )
+}
+
+function ArtifactsSection({ tc, projectSlug, featureName }: { tc: TestCaseItem; projectSlug: string; featureName: string }) {
+  const available = ARTIFACTS.filter((artifact) => tc[artifact.key as keyof TestCaseItem])
+  const [active, setActive] = useState<string>(available[0]?.key ?? "")
+  if (available.length === 0) return null
+  const current = available.some((a) => a.key === active) ? active : available[0].key
+
+  return (
+    <TestCaseSection title="Технические артефакты" surface>
+      {available.length > 1 && (
+        <div className="mb-3 inline-flex h-7 items-center gap-0.5 rounded-lg bg-muted p-[3px]">
+          {available.map((artifact) => (
+            <button
+              key={artifact.key}
+              onClick={() => setActive(artifact.key)}
+              className={cn(
+                "h-full rounded-md px-2.5 text-[0.75rem] font-medium transition-colors",
+                current === artifact.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {artifact.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {current === "curl_command" && tc.curl_command && (
+        <CurlArtifact value={tc.curl_command} projectSlug={projectSlug} featureName={featureName} />
+      )}
+      {current === "kafka_message" && tc.kafka_message && <KafkaArtifact message={tc.kafka_message} />}
+      {current === "sql_setup" && tc.sql_setup && <SqlArtifact value={tc.sql_setup} />}
+      {current === "mock_config" && tc.mock_config && <MockArtifact value={tc.mock_config} />}
+    </TestCaseSection>
   )
 }
 
@@ -964,24 +751,27 @@ export function TestCasesView({
     })
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-baseline gap-2.5">
-              <h2 className="text-lg font-semibold">Ревью тест-кейсов</h2>
-              <span className="text-sm text-muted-foreground">
-                Просмотрено {reviewedCount}/{displayTcs.length || 0}
-              </span>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Быстрый разбор сценариев: принять, отправить в баг, вернуться к деталям только когда это действительно нужно.
-            </p>
-          </div>
+  const pendingCount = displayTcs.length - reviewedCount
+  const categoryCounts = (["validation", "positive", "negative", "edge_case"] as TestCaseCategory[]).map((category) => ({
+    category,
+    count: displayTcs.filter((tc) => tc.category === category).length,
+  }))
 
+  return (
+    <div className="space-y-4">
+      <section className="space-y-3 rounded-xl border bg-card p-4">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <h2 className="text-base font-semibold">Ревью тест-кейсов</h2>
+          <StatStrip
+            className="flex-1"
+            items={[
+              { value: `${reviewedCount} / ${displayTcs.length}`, label: "просмотрено" },
+              { value: acceptedCount, label: "принято", tone: acceptedCount > 0 ? "success" : "default" },
+              { value: bugCount, label: "с багом", tone: bugCount > 0 ? "danger" : "default" },
+            ]}
+          />
           {!generationComplete ? (
-            <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800" onClick={() => runMut.mutate()} disabled={isRunning}>
+            <Button size="sm" onClick={() => runMut.mutate()} disabled={isRunning}>
               {isRunning ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -995,49 +785,48 @@ export function TestCasesView({
               )}
             </Button>
           ) : (
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/10 dark:text-emerald-300">
-              <Check className="h-3.5 w-3.5" />
-              Сгенерировано
-            </span>
+            <Badge variant="outline" className="border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-400">
+              <Check className="h-3 w-3" />
+              сгенерировано
+            </Badge>
           )}
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <ReviewStat label="Сгенерировано" value={String(displayTcs.length)} />
-          <ReviewStat label="Принято" value={String(acceptedCount)} tone={acceptedCount > 0 ? "accent" : "default"} />
-          <ReviewStat label="С багом" value={String(bugCount)} tone={bugCount > 0 ? "danger" : "default"} />
-          <ReviewStat label="Не просмотрено" value={String(Math.max(displayTcs.length - reviewedCount, 0))} />
-        </div>
-      </div>
+        {displayTcs.length > 0 && (
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${(reviewedCount / displayTcs.length) * 100}%` }} />
+          </div>
+        )}
 
-      <form
-        className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:flex-row sm:items-center"
-        onSubmit={(e) => {
-          e.preventDefault()
-          handleAsk()
-        }}
-      >
-        <div className="relative flex-1">
-          <Sparkles className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={askText}
-            onChange={(e) => setAskText(e.target.value)}
-            placeholder="Нужен кейс на пункт ТЗ (можно несколько через запятую) — например: «негативные сценарии для шага проверки тарифа»"
-            className="pl-8 text-sm"
-            disabled={askMut.isPending}
-          />
-        </div>
-        <Button size="sm" type="submit" disabled={isRunning || askMut.isPending || askText.trim().length < 3}>
-          {askMut.isPending ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Отправка<AnimatedDots />
-            </>
-          ) : (
-            "Попросить кейс"
-          )}
-        </Button>
-      </form>
+        <form
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleAsk()
+          }}
+        >
+          <div className="relative flex-1">
+            <Sparkles className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={askText}
+              onChange={(e) => setAskText(e.target.value)}
+              placeholder="Нужен кейс на пункт ТЗ — например: «негативные сценарии для шага проверки тарифа»"
+              className="pl-8 text-sm"
+              disabled={askMut.isPending}
+            />
+          </div>
+          <Button size="sm" variant="outline" type="submit" disabled={isRunning || askMut.isPending || askText.trim().length < 3}>
+            {askMut.isPending ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Отправка<AnimatedDots />
+              </>
+            ) : (
+              "Попросить кейс"
+            )}
+          </Button>
+        </form>
+      </section>
 
       {askMut.error && (
         <p className="text-[0.8125rem] text-destructive">{(askMut.error as Error).message}</p>
@@ -1051,9 +840,9 @@ export function TestCasesView({
       )}
 
       {tcData?.last_ask_message && tcData.last_ask_at !== dismissedAskAt && !isRunning && (
-        <div className="flex items-start justify-between gap-3 rounded-2xl border border-blue-200/80 bg-blue-50/50 px-4 py-3 dark:border-blue-900/40 dark:bg-blue-950/10">
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-blue-200/80 bg-blue-50/50 px-3 py-2 dark:border-blue-900/40 dark:bg-blue-950/10">
           <div className="min-w-0">
-            <p className="text-sm leading-[1.6] text-foreground/85">
+            <p className="text-[0.8125rem] leading-[1.6] text-foreground/85">
               <span className="font-semibold">Ответ на запрос кейса:</span> {tcData.last_ask_message}
             </p>
             {(() => {
@@ -1088,54 +877,44 @@ export function TestCasesView({
       )}
 
       {displayTcs.length > 0 && (
-        <div className="sticky top-0 z-10 -mx-4 rounded-2xl border border-border/70 bg-background/95 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-wrap items-center gap-2">
-                <ReviewChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>Все</ReviewChip>
-                <ReviewChip active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>Не просмотрено</ReviewChip>
-                <ReviewChip active={statusFilter === "approved"} onClick={() => setStatusFilter("approved")}>Принято</ReviewChip>
-                <ReviewChip active={statusFilter === "edited"} onClick={() => setStatusFilter("edited")}>С багом</ReviewChip>
-              </div>
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="relative min-w-[15rem] flex-1">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск по названию, шагам и ожиданиям" className="pl-8 text-sm" />
-                </div>
-
-                <select
-                  value={sortMode}
-                  onChange={(e) => setSortMode(e.target.value as SortMode)}
-                  className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm text-foreground outline-none"
-                >
-                  <option value="default">По умолчанию</option>
-                  <option value="unreviewed">Сначала не просмотренные</option>
-                  <option value="with_bug">Сначала с багом</option>
-                  <option value="longest">Сначала длинные</option>
-                </select>
-
-                <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => setOpenCardKey(null)}>
-                  Свернуть все
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <ReviewChip active={categoryFilter === "all"} onClick={() => setCategoryFilter("all")}>Все категории</ReviewChip>
-              {(["validation", "positive", "negative", "edge_case"] as TestCaseCategory[]).map((category) => (
-                <ReviewChip key={category} active={categoryFilter === category} onClick={() => setCategoryFilter(category)}>
-                  {CATEGORY_LABEL[category]}
-                </ReviewChip>
-              ))}
-            </div>
+        <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center gap-2 rounded-lg bg-background/95 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/85">
+          <Segmented<ReviewFilter>
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={[
+              { value: "all", label: "Все", count: displayTcs.length },
+              { value: "pending", label: "Не просмотрено", count: pendingCount },
+              { value: "approved", label: "Принято", count: acceptedCount },
+              { value: "edited", label: "С багом", count: bugCount },
+            ]}
+          />
+          <FilterSelect<TestCaseCategory | "all">
+            ariaLabel="Категория"
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            options={[
+              { value: "all", label: "Все категории" },
+              ...categoryCounts.map(({ category, count }) => ({ value: category, label: `${CATEGORY_LABEL[category]} · ${count}` })),
+            ]}
+          />
+          <FilterSelect<SortMode>
+            ariaLabel="Сортировка"
+            value={sortMode}
+            onChange={setSortMode}
+            options={[
+              { value: "default", label: "По умолчанию" },
+              { value: "unreviewed", label: "Сначала не просмотренные" },
+              { value: "with_bug", label: "Сначала с багом" },
+              { value: "longest", label: "Сначала длинные" },
+            ]}
+          />
+          <div className="relative ml-auto min-w-[15rem]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Название, шаг или ожидание" className="h-7 pl-8 text-xs" />
           </div>
-        </div>
-      )}
-
-      {displayTcs.length > 0 && (
-        <div className="h-1 overflow-hidden rounded-full bg-muted">
-          <div className="h-full rounded-full bg-foreground transition-all duration-500" style={{ width: `${(reviewedCount / displayTcs.length) * 100}%` }} />
+          <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => setOpenCardKey(null)}>
+            Свернуть все
+          </Button>
         </div>
       )}
 
@@ -1165,7 +944,7 @@ export function TestCasesView({
         </div>
       )}
 
-      <div className="space-y-6">
+      <div className="space-y-5">
         {askedItems.length > 0 && (
           <section className="space-y-3">
             <div className="flex items-center gap-2 px-1">
@@ -1178,7 +957,7 @@ export function TestCasesView({
               </span>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-1.5">
               {askedItems.map(({ tc, idx }) => (
                 <TestCaseCard
                   key={idx}
@@ -1204,7 +983,7 @@ export function TestCasesView({
               </div>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-1.5">
               {items.map(({ tc, idx }) => (
                 <TestCaseCard
                   key={idx}

@@ -30,6 +30,12 @@ interface ProjectSidebarProps {
   onStartDrag: () => void
 }
 
+function SidebarLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mb-1.5 px-2 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{children}</p>
+  )
+}
+
 export function ProjectSidebar({
   project,
   projectSlug,
@@ -52,10 +58,6 @@ export function ProjectSidebar({
   const { data: runningTasks } = useProjectTasks(projectSlug, { status: "running" })
   const runningCount = runningTasks?.tasks.length ?? 0
   const isTasksActive = location.pathname === tasksPath(projectSlug)
-
-  const readyFeatures = features?.filter((f) => f.status === "done").length ?? 0
-  const errorFeatures = 0
-  const totalDependencies = dependencies?.length ?? 0
 
   const depsByType = {
     db_table: dependencies?.filter((dep) => dep.dep_type === "db_table") ?? [],
@@ -89,50 +91,12 @@ export function ProjectSidebar({
       <SidebarHeader
         project={project}
         featureCount={features?.length ?? 0}
-        readyFeatures={readyFeatures}
-        errorFeatures={errorFeatures}
-        totalDependencies={totalDependencies}
+        totalDependencies={dependencies?.length ?? 0}
         onRename={(name) => renameMutation.mutate(name)}
       />
 
-      <div className="border-b p-4">
-        <div className="mb-2 px-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Источники</p>
-          <p className="mt-1 text-xs text-muted-foreground">Импортируйте страницу Confluence, чтобы обновить фичи и зависимости проекта.</p>
-        </div>
-        <UploadZone
-          onImportConfluence={onImportConfluence}
-          isImporting={isImporting}
-          importError={importError}
-        />
-        <div className="mt-2">
-          <SourcesPanel
-            documents={documents}
-            onReimport={onImportConfluence}
-            isImporting={isImporting}
-            isCheckingUpdates={isCheckingUpdates}
-          />
-        </div>
-      </div>
-
-      <ScrollArea className="flex-1 min-h-0 p-4">
+      <ScrollArea className="flex-1 min-h-0 px-2 py-3">
         <div className="space-y-5">
-          <button
-            onClick={() => navigate(tasksPath(projectSlug))}
-            className={cn(
-              "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
-              isTasksActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
-            )}
-          >
-            <Activity className={cn("h-3.5 w-3.5 shrink-0", runningCount > 0 ? "text-amber-500" : "text-muted-foreground")} />
-            <span className="flex-1 truncate">Фоновые задачи</span>
-            {runningCount > 0 && (
-              <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[0.6875rem] font-medium text-amber-600 dark:text-amber-400 tabular-nums">
-                {runningCount}
-              </span>
-            )}
-          </button>
-
           <FeatureList
             features={features}
             selectedFeatureName={selectedFeatureName}
@@ -142,9 +106,10 @@ export function ProjectSidebar({
           />
 
           <section>
-            <div className="space-y-4">
+            <SidebarLabel>Зависимости</SidebarLabel>
+            <div className="space-y-0.5">
               <DependencySection
-                label="DB"
+                label="Таблицы БД"
                 icon={<Database className="h-3.5 w-3.5" />}
                 deps={depsByType.db_table}
                 depType="db_table"
@@ -153,7 +118,7 @@ export function ProjectSidebar({
                 onDepClick={handleDepClick}
               />
               <DependencySection
-                label="API"
+                label="Внешние API"
                 icon={<Globe className="h-3.5 w-3.5" />}
                 deps={depsByType.external_api}
                 depType="external_api"
@@ -171,7 +136,7 @@ export function ProjectSidebar({
                 onDepClick={handleDepClick}
               />
               <DependencySection
-                label="Топики"
+                label="Топики Kafka"
                 icon={<MessageSquare className="h-3.5 w-3.5" />}
                 deps={depsByType.kafka_topic}
                 depType="kafka_topic"
@@ -181,15 +146,41 @@ export function ProjectSidebar({
               />
             </div>
           </section>
+
+          <section className="px-0.5">
+            <SidebarLabel>Источники</SidebarLabel>
+            <SourcesPanel
+              documents={documents}
+              onReimport={onImportConfluence}
+              isImporting={isImporting}
+              isCheckingUpdates={isCheckingUpdates}
+            />
+            <div className="mt-2 px-1">
+              <UploadZone onImportConfluence={onImportConfluence} isImporting={isImporting} importError={importError} />
+            </div>
+          </section>
         </div>
       </ScrollArea>
 
-      <div className="border-t p-4">
-        <div className="mb-2 px-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Экспорт</p>
-          <p className="mt-1 text-xs text-muted-foreground">Соберите текущее состояние проекта в архив.</p>
+      <div className="flex gap-1.5 border-t p-3">
+        <button
+          onClick={() => navigate(tasksPath(projectSlug))}
+          className={cn(
+            "flex h-8 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border bg-background px-2 text-xs font-medium transition-colors",
+            isTasksActive ? "border-foreground/30" : "hover:bg-muted",
+          )}
+        >
+          <Activity className={cn("h-3.5 w-3.5 shrink-0", runningCount > 0 ? "text-amber-500" : "text-muted-foreground")} />
+          Фоновые задачи
+          {runningCount > 0 && (
+            <span className="rounded-full bg-amber-500/15 px-1.5 text-[0.6875rem] font-medium text-amber-600 tabular-nums dark:text-amber-400">
+              {runningCount}
+            </span>
+          )}
+        </button>
+        <div className="shrink-0">
+          <ExportDialog projectSlug={projectSlug} />
         </div>
-        <ExportDialog projectSlug={projectSlug} />
       </div>
 
       <div

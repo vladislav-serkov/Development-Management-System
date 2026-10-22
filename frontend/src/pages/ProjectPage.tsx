@@ -6,26 +6,17 @@ import { useProjectDependencies } from "@/hooks/useDependencies"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { StatStrip } from "@/components/ui/stat-strip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ProjectSidebar, MethodBadge } from "@/components/sidebar"
-import {
-  ArrowRight,
-  Bot,
-  Files,
-  FolderKanban,
-  Gauge,
-  Inbox,
-  Loader2,
-  Sparkles,
-  Trash2,
-  Workflow,
-  X,
-} from "lucide-react"
+import { Bot, Loader2, Trash2, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { countLabel, plural } from "@/lib/plural"
+import { stripMethodPrefix } from "@/lib/artifacts"
 import { dependencyPath, featurePath, isFeatureTab, projectPath, type FeatureTab } from "@/lib/routes"
 import { useConfirm } from "@/components/ConfirmDialog"
 import type {
+  DocumentResponse,
   FeatureResponse,
   ProjectDependency,
 } from "@/types/api"
@@ -135,7 +126,7 @@ export default function ProjectPage() {
           key={contentKey}
           projectSlug={projectSlug!}
           projectName={project.name}
-          projectDocumentCount={project.document_count}
+          documents={documents}
           selectedFeature={selectedFeature}
           selectedDep={selectedDep}
           projectDependencies={dependencies}
@@ -156,7 +147,7 @@ export default function ProjectPage() {
 function ProjectContentArea({
   projectSlug,
   projectName,
-  projectDocumentCount,
+  documents,
   selectedFeature,
   selectedDep,
   projectDependencies,
@@ -167,7 +158,7 @@ function ProjectContentArea({
 }: {
   projectSlug: string
   projectName: string
-  projectDocumentCount: number
+  documents?: DocumentResponse[]
   selectedFeature: FeatureResponse | null
   selectedDep: ProjectDependency | null
   projectDependencies?: ProjectDependency[]
@@ -197,223 +188,189 @@ function ProjectContentArea({
     const displayLogic = selectedFeature.structured_logic
     const integrationMeta = getFeatureIntegrationMeta(selectedFeature, selectedFeature.endpoint)
     const featureSummary = selectedFeature.summary ?? "Добавьте краткое описание, чтобы экран было проще сканировать и обсуждать с командой."
-    const canCollapseSummary = featureSummary.length > 240
+    const canCollapseSummary = featureSummary.length > 200
+    const title = selectedFeature.display_name ?? stripMethodPrefix(selectedFeature.name, selectedFeature.method)
+    const extraMeta = integrationMeta.value && integrationMeta.value !== title && integrationMeta.value !== selectedFeature.name ? integrationMeta : null
+    const staleTargets = [
+      selectedFeature.gaps_stale ? "Gaps-анализ" : null,
+      selectedFeature.test_cases_stale ? "тест-кейсы" : null,
+    ].filter(Boolean)
 
     return (
-      <div className="space-y-6">
-        <Card className="border border-border/70">
-          <CardHeader className="gap-4">
-            <div className="flex flex-wrap items-start gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="min-w-0 text-2xl font-semibold tracking-tight" title={selectedFeature.name}>
-                    {selectedFeature.display_name ?? selectedFeature.name}
-                  </h2>
-
-                  <MethodBadge method={selectedFeature.method} featureType={selectedFeature.type} large />
-
-                  <Badge variant="outline" className="text-xs">
-                    {Math.round(selectedFeature.confidence * 100)}% заполнено
+      <div className="space-y-4">
+        <header className="space-y-3">
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <MethodBadge method={selectedFeature.method} featureType={selectedFeature.type} large />
+                <h1 className="min-w-0 break-all font-mono text-[1.375rem] leading-8 font-semibold tracking-tight" title={selectedFeature.name}>
+                  {title}
+                </h1>
+                <Badge variant="outline" className="text-xs text-muted-foreground">
+                  {Math.round(selectedFeature.confidence * 100)}% заполнено
+                </Badge>
+                {extraMeta && (
+                  <Badge variant="outline" className="max-w-full text-xs text-muted-foreground" title={extraMeta.label}>
+                    <span className="truncate">{extraMeta.value}</span>
                   </Badge>
-                  {selectedFeature.source_document && (
-                    <Badge variant="secondary" className="max-w-full text-xs text-muted-foreground">
-                      <span className="truncate">Источник: {selectedFeature.source_document}</span>
-                    </Badge>
-                  )}
-                  {selectedFeature.orphaned && (
-                    <Badge variant="outline" className="border-red-300 text-xs text-red-700 dark:border-red-800 dark:text-red-400">
-                      нет в текущей спеке
-                    </Badge>
-                  )}
-                </div>
-
-                <div className="mt-3 max-w-5xl">
-                  <CardDescription
-                    className="text-sm leading-6"
-                    style={
-                      canCollapseSummary && !isSummaryExpanded
-                        ? {
-                            display: "-webkit-box",
-                            WebkitLineClamp: 3,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                          }
-                        : undefined
-                    }
-                  >
-                    {featureSummary}
-                  </CardDescription>
-                  {canCollapseSummary && (
-                    <button
-                      className="mt-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-                      onClick={() => setIsSummaryExpanded((value) => !value)}
-                    >
-                      {isSummaryExpanded ? "Свернуть описание" : "Показать описание полностью"}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="ml-auto flex items-center gap-2 self-start">
-                {selectedFeature.impl_status !== "queued" && selectedFeature.impl_status !== "running" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-emerald-200 text-emerald-700 shadow-none hover:bg-emerald-50 hover:text-emerald-800"
-                    onClick={() => setShowImplementForm((v) => !v)}
-                  >
-                    <Bot className="h-3.5 w-3.5" />
-                    Реализовать по ТЗ
-                  </Button>
                 )}
+                {selectedFeature.orphaned && (
+                  <Badge variant="outline" className="border-red-300 text-xs text-red-700 dark:border-red-800 dark:text-red-400">
+                    нет в текущей спеке
+                  </Badge>
+                )}
+              </div>
+              <p
+                className="max-w-4xl text-sm leading-6 text-muted-foreground"
+                style={canCollapseSummary && !isSummaryExpanded ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } : undefined}
+              >
+                {featureSummary}
+              </p>
+              <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                {canCollapseSummary && (
+                  <button className="font-medium text-foreground/80 hover:text-foreground" onClick={() => setIsSummaryExpanded((value) => !value)}>
+                    {isSummaryExpanded ? "Свернуть" : "Подробнее"}
+                  </button>
+                )}
+                {selectedFeature.source_document && <span>Источник: {selectedFeature.source_document}</span>}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start">
+              {selectedFeature.impl_status !== "queued" && selectedFeature.impl_status !== "running" && (
                 <Button
                   variant="outline"
                   size="sm"
-                  className="border-destructive/20 text-destructive shadow-none hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
-                  onClick={async () => {
-                    const ok = await askConfirm({
-                      title: `Удалить фичу "${selectedFeature.display_name ?? selectedFeature.name}"?`,
-                      description: "Действие нельзя отменить.",
-                      confirmText: "Удалить",
-                      destructive: true,
-                    })
-                    if (ok) {
-                      deleteFeatureMutation.mutate(selectedFeature.name, {
-                        onSuccess: () => navigate(projectPath(projectSlug)),
-                      })
-                    }
-                  }}
+                  className="border-emerald-200 text-emerald-700 shadow-none hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-900/60 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                  onClick={() => setShowImplementForm((v) => !v)}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Удалить
+                  <Bot className="h-3.5 w-3.5" />
+                  Реализовать по ТЗ
                 </Button>
-              </div>
-            </div>
-
-            {showImplementForm && selectedFeature.impl_status !== "queued" && selectedFeature.impl_status !== "running" && (
-              <form
-                className="mb-4 flex flex-col gap-2 rounded-2xl border border-emerald-200/70 bg-emerald-50/40 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/10 sm:flex-row sm:items-center"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  const key = implementJiraKey.trim()
-                  if (key.length < 3 || implementMutation.isPending) return
-                  implementMutation.mutate(
-                    { featureName: selectedFeature.name, jiraKey: key },
-                    { onSuccess: () => { setShowImplementForm(false); setImplementJiraKey("") } }
-                  )
+              )}
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={async () => {
+                  const ok = await askConfirm({
+                    title: `Удалить фичу "${selectedFeature.display_name ?? selectedFeature.name}"?`,
+                    description: "Действие нельзя отменить.",
+                    confirmText: "Удалить",
+                    destructive: true,
+                  })
+                  if (ok) {
+                    deleteFeatureMutation.mutate(selectedFeature.name, {
+                      onSuccess: () => navigate(projectPath(projectSlug)),
+                    })
+                  }
                 }}
               >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-foreground">Реализовать задачу по этой фиче</p>
-                  <p className="mt-0.5 text-[0.8125rem] text-muted-foreground">Агент возьмёт тикет в работу по стандартному флоу: ТЗ, реализация с тестами, MR, статусы Jira.</p>
-                  {implementMutation.error && (
-                    <p className="mt-1 text-[0.75rem] text-destructive">{(implementMutation.error as Error).message}</p>
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Input
-                    value={implementJiraKey}
-                    onChange={(e) => setImplementJiraKey(e.target.value)}
-                    placeholder="MTSPAY-12345"
-                    className="w-40 font-mono text-sm"
-                    disabled={implementMutation.isPending}
-                  />
-                  <Button size="sm" type="submit" disabled={implementMutation.isPending || implementJiraKey.trim().length < 3}>
-                    {implementMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Запустить"}
-                  </Button>
-                  <Button size="icon-sm" type="button" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => setShowImplementForm(false)}>
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </form>
-            )}
-
-            {selectedFeature.orphaned && (
-              <div className="mb-4 rounded-2xl border border-red-200/70 bg-red-50/40 px-4 py-2.5 text-[0.8125rem] text-red-800 dark:border-red-900/40 dark:bg-red-950/10 dark:text-red-300">
-                Этой фичи больше нет в текущей версии страницы Confluence. Она сохранена вместе со своими
-                тест-кейсами и багами — удалите её вручную, когда артефакты больше не нужны.
-              </div>
-            )}
-
-            {(selectedFeature.gaps_stale || selectedFeature.test_cases_stale) && (
-              <div className="mb-4 rounded-2xl border border-amber-200/70 bg-amber-50/40 px-4 py-2.5 text-[0.8125rem] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-300">
-                {[
-                  selectedFeature.gaps_stale ? "Gaps-анализ" : null,
-                  selectedFeature.test_cases_stale ? "тест-кейсы" : null,
-                ].filter(Boolean).join(" и ")}{" "}
-                посчитаны до изменений{selectedFeature.stale_spec_note ? ` (${selectedFeature.stale_spec_note})` : ""} —
-                спека или страницы её зависимостей с тех пор изменились по существу. Перегенерируйте их, чтобы учесть изменения.
-              </div>
-            )}
-
-            {selectedFeature.impl_status && (
-              <div className="mb-4 flex flex-wrap items-center gap-2.5 rounded-2xl border border-border/70 bg-muted/[0.15] px-4 py-2.5 text-[0.8125rem]">
-                {selectedFeature.impl_status === "queued" && (
-                  <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <Bot className="h-3.5 w-3.5" /> {selectedFeature.impl_jira_key}: в очереди на реализацию
-                  </span>
-                )}
-                {selectedFeature.impl_status === "running" && (
-                  <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code делает {selectedFeature.impl_jira_key}…
-                  </span>
-                )}
-                {selectedFeature.impl_status === "implemented" && (
-                  <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-                    <Bot className="h-3.5 w-3.5" />
-                    {selectedFeature.impl_jira_key}: реализовано
-                    {selectedFeature.impl_mr_url && (
-                      <a href={selectedFeature.impl_mr_url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-emerald-700 dark:hover:text-emerald-300">MR</a>
-                    )}
-                    {selectedFeature.impl_summary && <span className="text-foreground/60">— {selectedFeature.impl_summary}</span>}
-                  </span>
-                )}
-                {selectedFeature.impl_status === "no_changes_needed" && (
-                  <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <Bot className="h-3.5 w-3.5" />
-                    {selectedFeature.impl_jira_key}: изменения не требуются{selectedFeature.impl_error ? ` — ${selectedFeature.impl_error}` : ""}
-                  </span>
-                )}
-                {selectedFeature.impl_status === "failed" && (
-                  <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                    <Bot className="h-3.5 w-3.5" />
-                    {selectedFeature.impl_jira_key}: агент остановился{selectedFeature.impl_error ? `: ${selectedFeature.impl_error}` : ""}
-                  </span>
-                )}
-              </div>
-            )}
-
-        <div className="grid overflow-hidden rounded-2xl border border-border/70 bg-muted/10 md:grid-cols-3 md:divide-x md:divide-border/70">
-          <FeatureOverviewCard
-            icon={<Workflow className="h-4 w-4" />}
-            label={integrationMeta.label}
-            value={integrationMeta.value}
-            tone="muted"
-              />
-              <FeatureOverviewCard
-                icon={<Gauge className="h-4 w-4" />}
-                label="Тест-кейсы"
-                value={String(selectedFeature.test_case_count ?? 0)}
-                tone={(selectedFeature.test_case_count ?? 0) > 0 ? "default" : "muted"}
-              />
-              <FeatureOverviewCard
-                icon={<Inbox className="h-4 w-4" />}
-                label="Баги"
-                value={String(selectedFeature.bug_count ?? 0)}
-                tone={(selectedFeature.bug_count ?? 0) > 0 ? "danger" : "muted"}
-              />
+                <Trash2 className="h-3.5 w-3.5" />
+                Удалить
+              </Button>
             </div>
-          </CardHeader>
-        </Card>
+          </div>
+
+          {showImplementForm && selectedFeature.impl_status !== "queued" && selectedFeature.impl_status !== "running" && (
+            <form
+              className="flex flex-col gap-2 rounded-xl border border-emerald-200/70 bg-emerald-50/40 p-3 dark:border-emerald-900/40 dark:bg-emerald-950/10 sm:flex-row sm:items-center"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const key = implementJiraKey.trim()
+                if (key.length < 3 || implementMutation.isPending) return
+                implementMutation.mutate(
+                  { featureName: selectedFeature.name, jiraKey: key },
+                  { onSuccess: () => { setShowImplementForm(false); setImplementJiraKey("") } }
+                )
+              }}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-foreground">Реализовать задачу по этой фиче</p>
+                <p className="mt-0.5 text-[0.8125rem] text-muted-foreground">Агент возьмёт тикет в работу по стандартному флоу: ТЗ, реализация с тестами, MR, статусы Jira.</p>
+                {implementMutation.error && (
+                  <p className="mt-1 text-[0.75rem] text-destructive">{(implementMutation.error as Error).message}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Input
+                  value={implementJiraKey}
+                  onChange={(e) => setImplementJiraKey(e.target.value)}
+                  placeholder="MTSPAY-12345"
+                  className="w-40 font-mono text-sm"
+                  disabled={implementMutation.isPending}
+                />
+                <Button size="sm" type="submit" disabled={implementMutation.isPending || implementJiraKey.trim().length < 3}>
+                  {implementMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Запустить"}
+                </Button>
+                <Button size="icon-sm" type="button" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => setShowImplementForm(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {selectedFeature.orphaned && (
+            <Notice tone="danger">
+              Этой фичи больше нет в текущей версии страницы Confluence. Она сохранена вместе со своими тест-кейсами и багами — удалите её вручную, когда артефакты больше не нужны.
+            </Notice>
+          )}
+
+          {staleTargets.length > 0 && (
+            <Notice tone="warning">
+              Спека обновилась{selectedFeature.stale_spec_note ? ` (${selectedFeature.stale_spec_note})` : ""} после того, как посчитаны {staleTargets.join(" и ")}. Перегенерируйте их, чтобы учесть изменения.
+            </Notice>
+          )}
+
+          {selectedFeature.impl_status && (
+            <Notice tone="default">
+              {selectedFeature.impl_status === "queued" && (
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <Bot className="h-3.5 w-3.5" /> {selectedFeature.impl_jira_key}: в очереди на реализацию
+                </span>
+              )}
+              {selectedFeature.impl_status === "running" && (
+                <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code делает {selectedFeature.impl_jira_key}…
+                </span>
+              )}
+              {selectedFeature.impl_status === "implemented" && (
+                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                  <Bot className="h-3.5 w-3.5" />
+                  {selectedFeature.impl_jira_key}: реализовано
+                  {selectedFeature.impl_mr_url && (
+                    <a href={selectedFeature.impl_mr_url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-emerald-700 dark:hover:text-emerald-300">MR</a>
+                  )}
+                  {selectedFeature.impl_summary && <span className="text-foreground/60">— {selectedFeature.impl_summary}</span>}
+                </span>
+              )}
+              {selectedFeature.impl_status === "no_changes_needed" && (
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <Bot className="h-3.5 w-3.5" />
+                  {selectedFeature.impl_jira_key}: изменения не требуются{selectedFeature.impl_error ? ` — ${selectedFeature.impl_error}` : ""}
+                </span>
+              )}
+              {selectedFeature.impl_status === "failed" && (
+                <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                  <Bot className="h-3.5 w-3.5" />
+                  {selectedFeature.impl_jira_key}: агент остановился{selectedFeature.impl_error ? `: ${selectedFeature.impl_error}` : ""}
+                </span>
+              )}
+            </Notice>
+          )}
+        </header>
 
         <Tabs value={activeFeatureTab} onValueChange={(tab) => onFeatureTabChange(tab as FeatureTab)} className="gap-4">
           <TabsList className="flex-wrap">
             <TabsTrigger value="logic">Логика</TabsTrigger>
-            <TabsTrigger value="tests">Тест-кейсы{selectedFeature.test_case_count ? ` (${selectedFeature.test_case_count})` : ""}</TabsTrigger>
-            <TabsTrigger value="bugs">Баги{selectedFeature.bug_count ? ` (${selectedFeature.bug_count})` : ""}</TabsTrigger>
+            <TabsTrigger value="tests">
+              Тест-кейсы{selectedFeature.test_case_count ? <span className="text-xs tabular-nums opacity-60">{selectedFeature.test_case_count}</span> : null}
+            </TabsTrigger>
+            <TabsTrigger value="bugs">
+              Баги{selectedFeature.bug_count ? <span className="text-xs tabular-nums opacity-60">{selectedFeature.bug_count}</span> : null}
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="logic" className="rounded-xl border border-border/70 bg-card p-4">
+          <TabsContent value="logic" className="rounded-xl border bg-card p-4">
             <Suspense fallback={<ContentLoadingState label="Загрузка логики..." />}>
               {displayLogic ? (
                 <StructuredLogicView
@@ -431,13 +388,13 @@ function ProjectContentArea({
             </Suspense>
           </TabsContent>
 
-          <TabsContent value="tests" className="rounded-xl border border-border/70 bg-card p-4">
+          <TabsContent value="tests">
             <Suspense fallback={<ContentLoadingState label="Загрузка тест-кейсов..." />}>
               <TestCasesView projectSlug={projectSlug} featureName={selectedFeature.name} />
             </Suspense>
           </TabsContent>
 
-          <TabsContent value="bugs" className="rounded-xl border border-border/70 bg-card p-4">
+          <TabsContent value="bugs">
             <Suspense fallback={<ContentLoadingState label="Загрузка багов..." />}>
               <BugsView projectSlug={projectSlug} featureName={selectedFeature.name} />
             </Suspense>
@@ -447,141 +404,147 @@ function ProjectContentArea({
     )
   }
 
-  const totalFeatures = features?.length ?? 0
-  const totalDependencies = projectDependencies?.length ?? 0
-  const completedFeatures = features?.filter((feature) => feature.status === "done").length ?? 0
-  const pendingFeatures = Math.max(totalFeatures - completedFeatures, 0)
+  const featureList = features ?? []
+  const totalTestCases = featureList.reduce((sum, f) => sum + (f.test_case_count ?? 0), 0)
+  const totalBugs = featureList.reduce((sum, f) => sum + (f.bug_count ?? 0), 0)
+  const deps = projectDependencies ?? []
+  const depGroups: { label: string; type: ProjectDependency["dep_type"] }[] = [
+    { label: "Таблицы БД", type: "db_table" },
+    { label: "Внешние API", type: "external_api" },
+    { label: "Кэш", type: "cache" },
+    { label: "Топики Kafka", type: "kafka_topic" },
+    { label: "Документы", type: "external_doc" },
+  ]
+  const confluenceDocs = documents?.filter((d) => d.confluence_url) ?? []
 
   return (
-    <div className="space-y-6">
-      <div className="max-w-4xl space-y-2">
-        <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">Обзор проекта</p>
-        <h2 className="text-3xl font-semibold tracking-tight">{projectName}</h2>
-        <p className="text-base text-muted-foreground">
-          Выберите фичу или зависимость слева. Пока ничего не выбрано, здесь отображается текущее состояние проекта и следующий полезный шаг.
-        </p>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <ProjectOverviewCard icon={<FolderKanban className="h-4 w-4" />} label="Фичи" value={String(totalFeatures)} helper={`${completedFeatures} готовы, ${pendingFeatures} в работе`} />
-        <ProjectOverviewCard icon={<Files className="h-4 w-4" />} label="Источники" value={String(projectDocumentCount)} helper="Импортированные страницы" />
-        <ProjectOverviewCard icon={<Workflow className="h-4 w-4" />} label="Зависимости" value={String(totalDependencies)} helper="DB, API, кэш, топики" />
-        <ProjectOverviewCard icon={<Sparkles className="h-4 w-4" />} label="Следующий шаг" value={totalFeatures > 0 ? "Выбрать фичу" : "Импортировать страницу"} helper={totalFeatures > 0 ? "Перейдите к логике и тест-кейсам" : "После импорта появятся фичи и зависимости"} />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <Card className="border border-border/70">
-          <CardHeader>
-            <CardTitle>С чего начать</CardTitle>
-            <CardDescription>Основные сценарии, которые должны быть видны до выбора конкретной сущности.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <NextStepCard
-              title="1. Обновить исходники проекта"
-              description="Импортируйте страницу Confluence, если нужно переизвлечь фичи или пополнить модель зависимостей."
-              icon={<Files className="h-4 w-4" />}
-            />
-            <NextStepCard
-              title="2. Открыть конкретную фичу"
-              description="Проверьте summary, параметры и артефакты. Это основной рабочий сценарий продукта."
-              icon={<ArrowRight className="h-4 w-4" />}
-            />
-            <NextStepCard
-              title="3. Дойти до тест-кейсов"
-              description="После проверки логики можно быстро перейти к test-cases и баг-репортам."
-              icon={<Sparkles className="h-4 w-4" />}
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border/70">
-          <CardHeader>
-            <CardTitle>Что доступно сейчас</CardTitle>
-            <CardDescription>Подсказка по рабочему сценарию без лишней пустоты на экране.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>В левой колонке собраны фичи, зависимости и загрузка исходников. Правая часть предназначена для детальной работы с выбранной сущностью.</p>
-            <p>Если вы видите этот экран, проект уже готов к навигации, но ни одна фича еще не выбрана.</p>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  )
-}
-
-function ProjectOverviewCard({
-  icon,
-  label,
-  value,
-  helper,
-}: {
-  icon: ReactNode
-  label: string
-  value: string
-  helper: string
-}) {
-  return (
-    <Card className="border border-border/70">
-      <CardContent className="flex items-start justify-between gap-4 py-4">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-2 text-2xl font-semibold">{value}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{helper}</p>
-        </div>
-        <div className="rounded-lg bg-muted p-2 text-muted-foreground">{icon}</div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function FeatureOverviewCard({
-  icon,
-  label,
-  value,
-  tone = "default",
-}: {
-  icon: ReactNode
-  label: string
-  value: string
-  tone?: "default" | "warning" | "danger" | "muted"
-}) {
-  const toneClasses = {
-    default: "bg-transparent",
-    warning: "bg-amber-50/60",
-    danger: "bg-red-50/60",
-    muted: "bg-muted/30",
-  }
-
-  return (
-    <div className={cn("min-w-0 min-h-20 px-4 py-3.5", toneClasses[tone])}>
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <span className="rounded-md bg-background/80 p-1.5 text-muted-foreground shadow-sm">{icon}</span>
-        <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em]">{label}</span>
-      </div>
-      <p className="mt-3 truncate text-lg font-semibold leading-tight" title={value}>{value}</p>
-    </div>
-  )
-}
-
-function NextStepCard({
-  title,
-  description,
-  icon,
-}: {
-  title: string
-  description: string
-  icon: ReactNode
-}) {
-  return (
-    <div className="flex items-start gap-3 rounded-xl border border-border/70 px-4 py-3">
-      <div className="rounded-lg bg-muted p-2 text-muted-foreground">{icon}</div>
+    <div className="space-y-5">
       <div>
-        <p className="text-sm font-medium">{title}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Обзор проекта</p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{projectName}</h1>
+      </div>
+
+      <StatStrip
+        items={[
+          { value: featureList.length, label: plural(featureList.length, ["фича", "фичи", "фич"]) },
+          { value: totalTestCases, label: plural(totalTestCases, ["тест-кейс", "тест-кейса", "тест-кейсов"]) },
+          { value: totalBugs, label: plural(totalBugs, ["баг", "бага", "багов"]), tone: totalBugs > 0 ? "danger" : "default" },
+          { value: deps.length, label: plural(deps.length, ["зависимость", "зависимости", "зависимостей"]) },
+        ]}
+      />
+
+      <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="border-b px-4 py-3">
+          <h2 className="text-base font-semibold">Фичи</h2>
+        </div>
+        {featureList.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">Импортируйте страницу Confluence в сайдбаре — здесь появятся извлечённые фичи.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="px-4 py-2 font-medium">Фича</th>
+                <th className="px-4 py-2 font-medium">Тест-кейсы</th>
+                <th className="px-4 py-2 font-medium">Баги</th>
+                <th className="px-4 py-2 font-medium">Спека</th>
+              </tr>
+            </thead>
+            <tbody>
+              {featureList.map((f) => {
+                const stale = f.gaps_stale || f.test_cases_stale
+                return (
+                  <tr
+                    key={f.name}
+                    className="cursor-pointer border-b last:border-b-0 hover:bg-muted/40"
+                    onClick={() => navigate(featurePath(projectSlug, f.name))}
+                  >
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-start gap-1.5">
+                        <MethodBadge method={f.method} featureType={f.type} />
+                        <span className="break-all font-mono text-[0.8125rem] font-medium">{f.display_name ?? stripMethodPrefix(f.name, f.method)}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums">{f.test_case_count ?? 0}</td>
+                    <td className="px-4 py-2.5">
+                      {(f.bug_count ?? 0) > 0 ? (
+                        <Badge variant="destructive">{countLabel(f.bug_count ?? 0, ["баг", "бага", "багов"])}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {f.orphaned ? (
+                        <Badge variant="destructive">нет в спеке</Badge>
+                      ) : stale ? (
+                        <Badge variant="outline" className="border-amber-300 text-amber-800 dark:border-amber-700 dark:text-amber-300">обновилась{f.stale_spec_note ? ` ${f.stale_spec_note}` : ""}</Badge>
+                      ) : (
+                        <Badge variant="outline" className="border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-400">актуальна</Badge>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="overflow-hidden rounded-xl border bg-card">
+          <div className="border-b px-4 py-3"><h2 className="text-base font-semibold">Источники</h2></div>
+          {confluenceDocs.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-muted-foreground">Пока нет импортированных страниц.</p>
+          ) : (
+            confluenceDocs.map((doc) => (
+              <div key={doc.slug} className="flex items-center gap-3 border-b px-4 py-2.5 last:border-b-0">
+                <div className="min-w-0 flex-1">
+                  <a href={doc.confluence_url ?? undefined} target="_blank" rel="noreferrer" className="block truncate font-mono text-[0.8125rem] hover:underline">{doc.filename}</a>
+                  <p className="text-xs text-muted-foreground">Confluence · v{doc.confluence_version ?? "?"} · {countLabel(doc.feature_count, ["фича", "фичи", "фич"])}</p>
+                </div>
+                {doc.spec_outdated ? (
+                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:border-amber-700 dark:text-amber-300">v{doc.confluence_version} → v{doc.latest_confluence_version}</Badge>
+                ) : (doc.deps_outdated?.length ?? 0) > 0 ? (
+                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:border-amber-700 dark:text-amber-300">обновились источники</Badge>
+                ) : (
+                  <Badge variant="outline" className="border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-400">актуальна</Badge>
+                )}
+              </div>
+            ))
+          )}
+        </section>
+
+        <section className="overflow-hidden rounded-xl border bg-card">
+          <div className="border-b px-4 py-3"><h2 className="text-base font-semibold">Зависимости</h2></div>
+          {depGroups.map((group) => {
+            const items = deps.filter((d) => d.dep_type === group.type)
+            if (items.length === 0) return null
+            const stubs = items.filter((d) => d.enrichment_status !== "enriched").length
+            return (
+              <div key={group.type} className="flex items-center gap-3 border-b px-4 py-2.5 last:border-b-0">
+                <span className="flex-1">{group.label}</span>
+                <span className="text-sm tabular-nums text-muted-foreground">{items.length}</span>
+                {stubs > 0 && (
+                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:border-amber-700 dark:text-amber-300">{stubs} не обогащено</Badge>
+                )}
+              </div>
+            )
+          })}
+          {deps.length === 0 && <p className="px-4 py-6 text-sm text-muted-foreground">Зависимости появятся после импорта спеки.</p>}
+        </section>
       </div>
     </div>
   )
 }
+
+function Notice({ tone, children }: { tone: "warning" | "danger" | "default"; children: ReactNode }) {
+  const toneClasses = {
+    warning: "border-amber-200/80 bg-amber-50/60 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-300",
+    danger: "border-red-200/80 bg-red-50/50 text-red-800 dark:border-red-900/40 dark:bg-red-950/10 dark:text-red-300",
+    default: "border-border bg-muted/20",
+  }
+  return <div className={cn("flex flex-wrap items-center gap-2.5 rounded-lg border px-3 py-2 text-[0.8125rem]", toneClasses[tone])}>{children}</div>
+}
+
 
 function EmptyPanel({ title, description }: { title: string; description: string }) {
   return (

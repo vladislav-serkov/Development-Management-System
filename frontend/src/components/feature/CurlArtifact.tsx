@@ -1,75 +1,28 @@
 import { useMemo, useState } from "react"
-import { Check, ChevronDown, ChevronRight, Copy, Globe, Loader2, Play } from "lucide-react"
+import { ChevronDown, ChevronRight, Loader2, Play } from "lucide-react"
 import { parseCurl, type CurlParam } from "@/lib/curl"
 import { useExecuteHttpRequest, useTestStandStatus } from "@/hooks/useTestStand"
 import { Button } from "@/components/ui/button"
+import { MethodBadge } from "@/components/sidebar/MethodBadge"
 import { cn } from "@/lib/utils"
+import { ArtifactHead, CodeBlock, CopyButton, MetaChip, SubTabs } from "./artifact-ui"
+import { prettyJsonOrRaw } from "@/lib/artifacts"
 import type { HttpExecuteResponse } from "@/types/api"
 
-// Swagger-like chrome: the card frame and header are tinted by HTTP method
-const METHOD_BADGE: Record<string, string> = {
-  GET: "bg-sky-600",
-  POST: "bg-emerald-600",
-  PUT: "bg-amber-600",
-  PATCH: "bg-teal-600",
-  DELETE: "bg-red-600",
-  HEAD: "bg-violet-600",
-  OPTIONS: "bg-slate-600",
-}
-
-const METHOD_TINT: Record<string, { frame: string; head: string }> = {
-  GET: { frame: "border-sky-200/80 dark:border-sky-900/50", head: "bg-sky-50/70 dark:bg-sky-950/20" },
-  POST: { frame: "border-emerald-200/80 dark:border-emerald-900/50", head: "bg-emerald-50/70 dark:bg-emerald-950/20" },
-  PUT: { frame: "border-amber-200/80 dark:border-amber-900/50", head: "bg-amber-50/70 dark:bg-amber-950/20" },
-  PATCH: { frame: "border-teal-200/80 dark:border-teal-900/50", head: "bg-teal-50/70 dark:bg-teal-950/20" },
-  DELETE: { frame: "border-red-200/80 dark:border-red-900/50", head: "bg-red-50/70 dark:bg-red-950/20" },
-  HEAD: { frame: "border-violet-200/80 dark:border-violet-900/50", head: "bg-violet-50/70 dark:bg-violet-950/20" },
-  OPTIONS: { frame: "border-border", head: "bg-muted/30" },
-}
-
-function prettyJsonOrRaw(s: string): string {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2)
-  } catch {
-    return s
-  }
-}
-
 function statusTone(status: number): string {
-  if (status < 300) return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
-  if (status < 400) return "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
-  if (status < 500) return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-  return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300"
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mb-1.5 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-      {children}
-    </p>
-  )
-}
-
-function CodeBlock({ value, subdued = false }: { value: string; subdued?: boolean }) {
-  return (
-    <pre
-      className={cn(
-        "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border/60 px-3 py-2.5 text-[0.75rem] font-mono leading-6",
-        subdued ? "bg-muted/30 text-muted-foreground" : "bg-muted/40 text-foreground"
-      )}
-    >
-      <code>{value}</code>
-    </pre>
-  )
+  if (status < 300) return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400"
+  if (status < 400) return "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-300"
+  if (status < 500) return "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
+  return "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400"
 }
 
 function ParamsTable({ params }: { params: CurlParam[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border/70">
+    <div className="overflow-hidden rounded-lg border">
       <table className="w-full text-xs">
         <tbody>
           {params.map((p, i) => (
-            <tr key={i} className={cn(i > 0 && "border-t border-muted")}>
+            <tr key={i} className={cn(i > 0 && "border-t")}>
               <td className="w-[220px] whitespace-nowrap bg-muted/40 px-2.5 py-1.5 align-top font-mono font-medium text-foreground/90">
                 {p.name}
               </td>
@@ -100,29 +53,33 @@ function Collapsible({ label, children }: { label: string; children: React.React
 
 function ResponsePanel({ result }: { result: HttpExecuteResponse }) {
   return (
-    <div className="border-t border-border/70 bg-muted/[0.12] px-4 py-3">
-      <SectionLabel>Ответ стенда</SectionLabel>
-      {result.error ? (
-        <p className="whitespace-pre-wrap break-words text-[0.8125rem] text-destructive">{result.error}</p>
-      ) : (
-        <div className="space-y-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={cn("rounded-md px-2 py-0.5 text-[0.75rem] font-mono font-semibold", statusTone(result.status_code ?? 0))}>
+    <div className="space-y-2 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Ответ стенда</span>
+        {!result.error && (
+          <>
+            <span className={cn("rounded-full border px-2 py-px font-mono text-[0.6875rem] font-semibold", statusTone(result.status_code ?? 0))}>
               {result.status_code} {result.reason}
             </span>
             <span className="text-[0.6875rem] text-muted-foreground">{result.duration_ms} мс</span>
-            <code className="min-w-0 flex-1 truncate text-[0.6875rem] font-mono text-muted-foreground" title={result.url}>
+            <code className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-muted-foreground" title={result.url}>
               {result.url}
             </code>
-          </div>
+          </>
+        )}
+      </div>
+      {result.error ? (
+        <p className="whitespace-pre-wrap break-words text-[0.8125rem] text-destructive">{result.error}</p>
+      ) : (
+        <>
           {result.headers.length > 0 && (
             <Collapsible label={`Заголовки ответа (${result.headers.length})`}>
               <ParamsTable params={result.headers} />
             </Collapsible>
           )}
-          {result.body && <CodeBlock value={prettyJsonOrRaw(result.body)} />}
+          {result.body && <CodeBlock value={prettyJsonOrRaw(result.body)} copyValue={result.body} />}
           {result.body_truncated && <p className="text-[0.625rem] text-muted-foreground">Тело ответа обрезано</p>}
-        </div>
+        </>
       )}
     </div>
   )
@@ -130,14 +87,10 @@ function ResponsePanel({ result }: { result: HttpExecuteResponse }) {
 
 export function CurlArtifact({
   value,
-  copied,
-  onCopy,
   projectSlug,
   featureName,
 }: {
   value: string
-  copied: boolean
-  onCopy: () => void
   projectSlug: string
   featureName: string
 }) {
@@ -148,9 +101,9 @@ export function CurlArtifact({
   const tabs = useMemo(
     () =>
       [
+        parsed?.body && { key: "body", label: "Тело" },
         parsed && parsed.query.length > 0 && { key: "query", label: `Query (${parsed.query.length})` },
         parsed && parsed.headers.length > 0 && { key: "headers", label: `Заголовки (${parsed.headers.length})` },
-        parsed?.body && { key: "body", label: "Тело" },
         { key: "curl", label: "curl" },
       ].filter(Boolean) as { key: string; label: string }[],
     [parsed]
@@ -174,95 +127,61 @@ export function CurlArtifact({
   // Unparsable command — fall back to a plain code block
   if (!parsed) {
     return (
-      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
-        <div className="flex items-center justify-between gap-2 border-b border-border/70 bg-muted/[0.18] px-4 py-2.5">
-          <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">cURL</p>
-          <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={onCopy} title="Копировать">
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-          </Button>
-        </div>
-        <div className="px-4 py-3">
-          <CodeBlock value={value} />
-        </div>
+      <div className="space-y-2.5">
+        <ArtifactHead badge={<MethodBadge method={null} featureType="rest_endpoint" />} target="curl" />
+        <CodeBlock value={value} />
       </div>
     )
   }
 
-  const tint = METHOD_TINT[parsed.method] ?? METHOD_TINT.OPTIONS
-
   return (
-    <div className={cn("overflow-hidden rounded-2xl border bg-card", tint.frame)}>
-      <div className={cn("flex items-center gap-2.5 px-4 py-2.5", tint.head)}>
-        <span className={cn("shrink-0 rounded-md px-2.5 py-1 text-[0.6875rem] font-mono font-bold uppercase text-white", METHOD_BADGE[parsed.method] ?? "bg-slate-600")}>
-          {parsed.method}
-        </span>
-        <code className="min-w-0 flex-1 truncate text-[0.8125rem] font-mono font-medium text-foreground" title={targetUrl ?? undefined}>
-          {targetUrl}
-        </code>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {stand?.configured && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-              onClick={handleExecute}
-              disabled={execMut.isPending}
-              title={`Выполнить на тестовом стенде: ${targetUrl}`}
-            >
-              {execMut.isPending ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Выполняется
-                </>
-              ) : (
-                <>
-                  <Play className="h-3.5 w-3.5" />
-                  Выполнить
-                </>
-              )}
-            </Button>
-          )}
-          <Button size="icon-sm" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={onCopy} title="Копировать curl">
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-          </Button>
-        </div>
-      </div>
-
-      {stand?.configured && (
-        <div className="flex items-center gap-1.5 border-b border-border/60 px-4 py-1.5 text-[0.6875rem] text-muted-foreground">
-          <Globe className="h-3 w-3 shrink-0" />
-          <span className="truncate">
-            стенд: <span className="font-mono">{stand.target_base}</span>
-          </span>
-        </div>
-      )}
-
-      <div className="flex items-center gap-1 px-4 pt-2.5">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              "rounded-md px-2.5 py-1 text-[0.75rem] font-medium transition-colors",
-              tab === t.key ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+    <div className="space-y-2.5">
+      <ArtifactHead
+        badge={<MethodBadge method={parsed.method} featureType="rest_endpoint" />}
+        target={parsed.path}
+        chips={
+          stand?.configured ? (
+            <MetaChip mono title={stand.target_base ?? undefined}>стенд {stand.target_base}</MetaChip>
+          ) : undefined
+        }
+        actions={
+          <>
+            {stand?.configured && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-900/60 dark:text-emerald-400 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300"
+                onClick={handleExecute}
+                disabled={execMut.isPending}
+                title={`Выполнить на тестовом стенде: ${targetUrl}`}
+              >
+                {execMut.isPending ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Выполняется
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3.5 w-3.5" />
+                    Выполнить на стенде
+                  </>
+                )}
+              </Button>
             )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+            <CopyButton value={value} label="curl" />
+          </>
+        }
+      />
 
-      <div className="px-4 pb-3.5 pt-2.5">
-        {tab === "query" && <ParamsTable params={parsed.query} />}
-        {tab === "headers" && <ParamsTable params={parsed.headers} />}
-        {tab === "body" && parsed.body && <CodeBlock value={prettyJsonOrRaw(parsed.body)} />}
-        {tab === "curl" && <CodeBlock value={value} subdued />}
-      </div>
+      <SubTabs tabs={tabs} value={tab} onChange={setTab} />
+
+      {tab === "query" && <ParamsTable params={parsed.query} />}
+      {tab === "headers" && <ParamsTable params={parsed.headers} />}
+      {tab === "body" && parsed.body && <CodeBlock value={prettyJsonOrRaw(parsed.body)} copyValue={parsed.body} />}
+      {tab === "curl" && <CodeBlock value={value} />}
 
       {execMut.error && (
-        <div className="border-t border-border/70 px-4 py-2.5">
-          <p className="whitespace-pre-wrap break-words text-[0.8125rem] text-destructive">{(execMut.error as Error).message}</p>
-        </div>
+        <p className="whitespace-pre-wrap break-words text-[0.8125rem] text-destructive">{(execMut.error as Error).message}</p>
       )}
       {execMut.data && <ResponsePanel result={execMut.data} />}
     </div>
