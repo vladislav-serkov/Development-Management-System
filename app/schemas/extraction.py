@@ -246,6 +246,7 @@ class FeatureResponse(BaseModel):
     test_case_count: int = 0
     pending_test_case_count: int = 0
     test_cases_running: bool = False
+    bug_count: int = 0
     impl_status: str | None = None
     impl_jira_key: str | None = None
     impl_mr_url: str | None = None
