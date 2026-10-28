@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import re
-import socket
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class BugFixerError(Exception):
-    """User-facing bug fixer error (config, repo not found, tunnel down)."""
+    """User-facing bug fixer error (config, repo not found)."""
 
 
 def is_configured() -> bool:
@@ -44,31 +43,6 @@ def resolve_repo(service_name: str | None) -> Path | None:
         if (candidate / ".git").exists():
             return candidate
     return None
-
-
-def _tunnel_up() -> bool:
-    host_port = settings.claude_proxy.rsplit("//", 1)[-1]
-    host, _, port = host_port.partition(":")
-    try:
-        with socket.create_connection((host, int(port or 80)), timeout=2):
-            return True
-    except OSError:
-        return False
-
-
-async def ensure_tunnel() -> None:
-    """Bring up the SSH tunnel to the Claude proxy if it is not already listening."""
-    if _tunnel_up():
-        return
-    logger.info("[bug_fixer] Starting SSH tunnel to %s", settings.claude_proxy_ssh_host)
-    proc = await asyncio.create_subprocess_exec(
-        "ssh", "-fN", settings.claude_proxy_ssh_host,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if not _tunnel_up():
-        detail = (stderr or b"").decode(errors="replace").strip()[:200]
-        raise BugFixerError(f"SSH-туннель к claude-proxy не поднялся: {detail or 'порт не слушает'}")
 
 
 def build_prompt(bug: dict, feature: dict, spec_url: str | None) -> str:
@@ -263,7 +237,6 @@ async def _fix_one(store, project_slug, feature_name, bug_index, bug, feature, s
     logger.info("[bug_fixer] Fixing %s in %s (log: %s)", bug["jira_key"], repo, log_path)
 
     try:
-        await ensure_tunnel()
         result = await _run_claude(build_prompt(bug, feature, spec_url), repo, log_path)
     except (BugFixerError, OSError) as exc:
         await _update_bug(
@@ -306,13 +279,7 @@ async def _run_claude(
     generator reuses this runner with its own verdict statuses/continue prompt.
     """
     env = os.environ.copy()
-    env.update({
-        "HTTPS_PROXY": settings.claude_proxy,
-        "HTTP_PROXY": settings.claude_proxy,
-        "https_proxy": settings.claude_proxy,
-        "http_proxy": settings.claude_proxy,
-        "CLAUDE_CODE_OAUTH_TOKEN": settings.claude_code_oauth_token,
-    })
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = settings.claude_code_oauth_token
     # The backend itself may run under Claude Code — the child is an independent session.
     env.pop("CLAUDECODE", None)
 
