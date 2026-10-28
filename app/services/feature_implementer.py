@@ -227,7 +227,6 @@ async def _implement_one(store, project_slug, feature_name, feature, service) ->
     logger.info("[implementer] Implementing %s (%s) in %s (log: %s)", feature_name, jira_key, repo, log_path)
 
     try:
-        await bug_fixer.ensure_tunnel()
         result = await bug_fixer._run_claude(
             build_prompt(jira_key, feature, doc), repo, log_path,
             statuses=VERDICT_STATUSES, continue_prompt=_CONTINUE_PROMPT,

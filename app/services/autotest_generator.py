@@ -240,7 +240,6 @@ async def _generate_one(store, project_slug, feature_name, tc_index, tc, feature
                 project_slug, feature_name, tc_index, repo_dir(), log_path)
 
     try:
-        await bug_fixer.ensure_tunnel()
         result = await bug_fixer._run_claude(
             build_prompt(project_slug, feature, tc_index, tc, doc),
             repo_dir(), log_path,

@@ -44,9 +44,6 @@ class Settings(BaseSettings):
     # Auth is a subscription OAuth token from `claude setup-token` (empty = feature off).
     claude_code_oauth_token: str = ""
     claude_cli: str = "claude"
-    # Anthropic API is reached through a local SSH tunnel (same as the user's shell wrapper)
-    claude_proxy: str = "http://127.0.0.1:8888"
-    claude_proxy_ssh_host: str = "claude-proxy"
     # Roots where service repos live; a service name must match a directory name
     repos_dirs: str = "~/IdeaProjects:~/IdeaProjects/flp"
     bug_fixer_auto: bool = True  # enqueue a fix as soon as a bug is exported to Jira
@@ -54,7 +51,7 @@ class Settings(BaseSettings):
     bug_fix_log_dir: str = "logs/bug-fixer"
     # Autotest generator: headless Claude Code runs that turn accepted test cases
     # into Java autotests in the flp-autotests repo (empty dir = feature off).
-    # Shares the Claude Code auth/proxy/timeout settings with the bug fixer.
+    # Shares the Claude Code auth/timeout settings with the bug fixer.
     autotests_repo_dir: str = ""
     autotest_auto: bool = True  # queue generation as soon as a test case is approved
     autotest_log_dir: str = "logs/autotest-gen"
