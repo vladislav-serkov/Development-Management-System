@@ -79,11 +79,11 @@ async def test_ask_already_covered_adds_nothing(store, monkeypatch):
     await store.save_feature("p", dict(FEATURE))
     existing = dict(CASE, status="approved", analyst_text=None)
     await store.save_test_cases("p", "create-order", [existing])
-    _mock_claude(monkeypatch, {
+    calls = _mock_claude(monkeypatch, {
         "test_cases": [],
         "comment": "Пункт уже покрыт существующим кейсом",
-        # one real ref + one hallucinated — the latter must be dropped
-        "covered_by": [CASE["name"], "Несуществующий кейс"],
+        # one real #N ref (twice) + one out of range — dupes and the latter are dropped
+        "covered_by": [1, 1, 7],
     })
 
     task = await store.create_task("p", kind="test_cases", target_type="feature", target_id="create-order")
@@ -98,6 +98,9 @@ async def test_ask_already_covered_adds_nothing(store, monkeypatch):
     assert tasks[0]["status"] == "done"
     assert "уже покрыт" in tasks[0]["result_message"]
     assert tasks[0]["result_data"] == {"covered_by": [CASE["name"]]}
+    # existing cases reach the prompt numbered, so the model can refer to them by #N
+    texts = [b["text"] for b in calls[0]["messages"][0]["content"]]
+    assert any(f"#1 [{CASE['category']}] {CASE['name']}" in t for t in texts)
 
 
 async def test_ask_dedupes_against_existing(store, monkeypatch):
