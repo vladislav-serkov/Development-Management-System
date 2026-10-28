@@ -300,30 +300,60 @@ def _table_grid(table) -> tuple[list[str], list[list[str]], list[list[list[dict]
     grid: list[list[str]] = []
     links_grid: list[list[list[dict]]] = []
     deprecated: list[int] = []
+    # column index -> [rows still covered, text, links] of a rowspan cell from a row above
+    carried: dict[int, list] = {}
+
+    def _span(cell, attr: str) -> int:
+        try:
+            return max(int(cell.get(attr) or 1), 1)
+        except (TypeError, ValueError):
+            return 1
 
     for tr in table.find_all("tr"):
         if tr.find_parent("table") is not table:
             continue
+        own_cells = tr.find_all(["th", "td"], recursive=False)
+        if not own_cells:
+            continue
         cells: list[str] = []
         cell_links: list[list[dict]] = []
-        struck_flags: list[bool] = []
-        for cell in tr.find_all(["th", "td"], recursive=False):
+        # struck flag per position; None = cell carried down by a rowspan, not this row's own
+        struck_flags: list[bool | None] = []
+
+        def _fill_carried() -> None:
+            # A rowspan cell repeats in the rows it covers: an indent cell keeps nested
+            # names in their deeper column, a shared "Источник" applies to every row.
+            while len(cells) in carried:
+                entry = carried[len(cells)]
+                cells.append(entry[1])
+                cell_links.append(list(entry[2]))
+                struck_flags.append(None)
+                entry[0] -= 1
+                if entry[0] == 0:
+                    del carried[len(cells) - 1]
+
+        for cell in own_cells:
+            _fill_carried()
             raw = " ".join(cell.get_text(" ", strip=True).split())
-            try:
-                span = int(cell.get("colspan") or 1)
-            except (TypeError, ValueError):
-                span = 1
-            cells.append(strip_link_markers(raw))
-            cell_links.append(_cell_links(raw))
-            struck_flags.append(_is_struck(cell))
-            cells.extend([""] * (span - 1))
-            cell_links.extend([[] for _ in range(span - 1)])
-            struck_flags.extend([False] * (span - 1))
-        if not cells:
-            continue
+            span = _span(cell, "colspan")
+            rowspan = _span(cell, "rowspan")
+            text, links = strip_link_markers(raw), _cell_links(raw)
+            for offset in range(span):
+                if rowspan > 1:
+                    carried[len(cells)] = [rowspan - 1, text if offset == 0 else "", links if offset == 0 else []]
+                cells.append(text if offset == 0 else "")
+                cell_links.append(links if offset == 0 else [])
+                struck_flags.append(_is_struck(cell) if offset == 0 else False)
+        # rowspan cells to the right of this row's own cells
+        while carried and max(carried) >= len(cells):
+            if len(cells) not in carried:
+                cells.append("")
+                cell_links.append([])
+                struck_flags.append(False)
+            _fill_carried()
         # A row counts as retired only when every cell carrying text is struck through —
         # a single struck word inside one cell is an edit, not a deprecation.
-        filled = [i for i, c in enumerate(cells) if c]
+        filled = [i for i, c in enumerate(cells) if c and struck_flags[i] is not None]
         if filled and all(struck_flags[i] for i in filled):
             deprecated.append(len(grid))
         grid.append(cells)
