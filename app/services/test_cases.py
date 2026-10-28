@@ -717,13 +717,17 @@ async def _run_test_cases_pipeline_inner(
 
 
 def _summarize_existing_test_cases(test_cases: list[dict]) -> str:
-    """Compact list of existing cases (name/category/covers) for the ask prompt."""
+    """Numbered list of existing cases (#N, name/category/covers) for the ask prompt.
+
+    The model refers to covering cases by #N — copying long names verbatim was
+    unreliable, and a single changed character dropped the link.
+    """
     if not test_cases:
         return "Существующих тест-кейсов нет."
     lines = []
-    for tc in test_cases:
+    for n, tc in enumerate(test_cases, start=1):
         covers = tc.get("covers") or "—"
-        lines.append(f"- [{tc.get('category', '?')}] {tc.get('name', '')} (покрывает: {covers})")
+        lines.append(f"#{n} [{tc.get('category', '?')}] {tc.get('name', '')} (покрывает: {covers})")
     return "\n".join(lines)
 
 
@@ -845,9 +849,13 @@ async def _run_test_case_ask_pipeline_inner(
     for warning in validation_warnings:
         logger.warning("[test_cases:ask:validate] %s", warning)
 
-    # Keep only refs that exactly match an existing case — the UI links by name
-    existing_names = {tc.get("name") for tc in existing_test_cases}
-    covered_by = [name for name in result.covered_by if name in existing_names]
+    # #N refs → case names (the UI links by name); out-of-range numbers are dropped
+    covered_by: list[str] = []
+    for n in result.covered_by:
+        if 1 <= n <= len(existing_test_cases):
+            name = existing_test_cases[n - 1].get("name")
+            if name and name not in covered_by:
+                covered_by.append(name)
 
     if added:
         message = f"Добавлено кейсов: {len(added)}."
@@ -857,7 +865,7 @@ async def _run_test_case_ask_pipeline_inner(
         message = result.comment or "Кейсы не добавлены: запрошенный пункт уже покрыт или не найден в ТЗ."
 
     logger.info(
-        "[test_cases:ask] project=%s feature=%s added=%d covered_by=%d message=%s",
-        project_slug, feature_name, len(added), len(covered_by), message,
+        "[test_cases:ask] project=%s feature=%s added=%d covered_by=%s→%d message=%s",
+        project_slug, feature_name, len(added), result.covered_by, len(covered_by), message,
     )
     return {"added": added, "message": message, "covered_by": covered_by}
