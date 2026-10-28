@@ -5,8 +5,6 @@ import logging
 import re
 from datetime import UTC, datetime
 
-from pydantic import ValidationError
-
 from app.config import settings
 from app.prompts.test_cases import (
     ASK_SYSTEM_PROMPT,
@@ -17,7 +15,7 @@ from app.prompts.test_cases import (
 )
 from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
 from app.services import sql_runner
-from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services.claude_client import call_structured
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
@@ -312,51 +310,24 @@ def _build_shared_context(feature: dict, enriched_deps: dict, db_schema: str | N
     return base + "\n" + "\n".join(extra)
 
 
-_PLAN_TOOL = {
-    "name": "plan_test_cases",
-    "description": "Plan test cases for the feature — coverage plan without details",
-    "input_schema": TestCasePlanResult.model_json_schema(),
-}
-
-
 async def _call_plan_tool(label: str, model: str, system_prompt: str, user_blocks: list[dict]) -> list[dict] | None:
-    """Shared plumbing for the plan and critic phases: forced plan_test_cases call.
+    """Shared plumbing for the plan and critic phases.
 
-    Returns parsed plan items, or None when the model returned an empty list —
+    Returns plan items, or None when the model returned an empty list —
     the caller decides whether empty is an error (plan) or "nothing to add" (critic).
     """
-    # Sonnet 5: adaptive thinking is on by default and counts against max_tokens,
-    # and the new tokenizer emits ~30% more tokens for the same text — a tight
-    # budget truncates the tool_use block, which surfaces as "no tool_use in response".
-    # Missing/malformed tool_use is also a transient model failure — re-ask before giving up.
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        response = await call_claude(
-            label=label,
-            model=model,
-            max_tokens=16000,
-            system=system_prompt,
-            tools=[_PLAN_TOOL],
-            tool_choice={"type": "tool", "name": _PLAN_TOOL["name"]},
-            messages=[{"role": "user", "content": user_blocks}],
-        )
-        log_cache_stats(response.usage, label)
-
-        tool_block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
-        try:
-            if tool_block is None:
-                raise RuntimeError(
-                    f"[{label}] Claude did not return tool_use (stop_reason={response.stop_reason})"
-                )
-            if not tool_block.input or not tool_block.input.get("test_cases"):
-                return None
-            result = parse_tool_input(TestCasePlanResult, tool_block.input)
-        except (RuntimeError, ValidationError) as exc:
-            if attempt == max_attempts:
-                raise
-            logger.warning("[%s] attempt %d/%d failed, retrying: %s", label, attempt, max_attempts, exc)
-            continue
-        return [item.model_dump() for item in result.test_cases]
+    # Adaptive thinking counts against max_tokens — keep the budget generous.
+    result = await call_structured(
+        TestCasePlanResult,
+        label=label,
+        model=model,
+        max_tokens=16000,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_blocks}],
+    )
+    if not result.test_cases:
+        return None
+    return [item.model_dump() for item in result.test_cases]
 
 
 async def _call_plan_phase(
@@ -438,72 +409,44 @@ async def _call_detail_phase(
     run sequentially so every batch after the first reads the shared context
     from the prompt cache.
     """
-    tool = {
-        "name": "generate_detailed_test_cases",
-        "description": "Generate detailed test cases with artifacts based on the plan",
-        "input_schema": TestCaseGenerationResult.model_json_schema(),
-    }
-
     covers_by_name = {_norm(item.get("name", "")): item.get("covers") for item in plan_items}
     batches = [plan_items[i:i + DETAIL_BATCH_SIZE] for i in range(0, len(plan_items), DETAIL_BATCH_SIZE)]
 
     async def detail_batch(batch_no: int, batch: list[dict]) -> list[dict]:
         label = f"test_cases_detail[{batch_no}/{len(batches)}]"
-        max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
-            response = await call_claude(
-                label=label,
-                model=model,
-                max_tokens=64000,
-                system=system_prompt,
-                tools=[tool],
-                tool_choice={"type": "tool", "name": tool["name"]},
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": shared_context,
-                                "cache_control": {"type": "ephemeral"},
-                            },
-                            {
-                                "type": "text",
-                                "text": get_few_shot(feature_type),
-                            },
-                            {
-                                "type": "text",
-                                "text": "## План тест-кейсов (батч "
-                                f"{batch_no} из {len(batches)}, {len(batch)} кейсов)\n"
-                                + json.dumps(batch, ensure_ascii=False, indent=2),
-                            },
-                            {
-                                "type": "text",
-                                "text": "Детализируй каждый тест-кейс из этого батча — ровно "
-                                f"{len(batch)} кейсов. Сохраняй category и priority из плана.",
-                            },
-                        ],
-                    }
-                ],
-            )
-
-            log_cache_stats(response.usage, label)
-            logger.info("[%s] stop_reason=%s, content_blocks=%d", label, response.stop_reason, len(response.content))
-
-            tool_block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
-            try:
-                if tool_block is None or not tool_block.input or not tool_block.input.get("test_cases"):
-                    raise RuntimeError(
-                        f"[{label}] Claude did not return tool_use — no test cases generated "
-                        f"(stop_reason={response.stop_reason})"
-                    )
-                result = parse_tool_input(TestCaseGenerationResult, tool_block.input)
-            except (RuntimeError, ValidationError) as exc:
-                if attempt == max_attempts:
-                    raise
-                logger.warning("[%s] attempt %d/%d failed, retrying: %s", label, attempt, max_attempts, exc)
-                continue
-            break
+        result = await call_structured(
+            TestCaseGenerationResult,
+            label=label,
+            model=model,
+            max_tokens=64000,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": shared_context,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {"type": "text", "text": get_few_shot(feature_type)},
+                        {
+                            "type": "text",
+                            "text": "## План тест-кейсов (батч "
+                            f"{batch_no} из {len(batches)}, {len(batch)} кейсов)\n"
+                            + json.dumps(batch, ensure_ascii=False, indent=2),
+                        },
+                        {
+                            "type": "text",
+                            "text": "Детализируй каждый тест-кейс из этого батча — ровно "
+                            f"{len(batch)} кейсов. Сохраняй category и priority из плана.",
+                        },
+                    ],
+                }
+            ],
+        )
+        if not result.test_cases:
+            raise RuntimeError(f"[{label}] Claude returned no test cases for the batch")
         if len(result.test_cases) != len(batch):
             logger.warning(
                 "[%s] batch size mismatch: plan had %d, generated %d",
@@ -793,50 +736,28 @@ async def _call_ask_phase(
     system_prompt: str = ASK_SYSTEM_PROMPT,
 ) -> TestCaseAskResult:
     """Single Claude call: tester's free-text ask → 0..N detailed test cases + comment."""
-    tool = {
-        "name": "generate_requested_test_cases",
-        "description": "Generate detailed test cases for the requested spec item, or explain why none were added",
-        "input_schema": TestCaseAskResult.model_json_schema(),
-    }
-    label = "test_cases_ask"
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        response = await call_claude(
-            label=label,
-            model=model,
-            max_tokens=32000,
-            system=system_prompt,
-            tools=[tool],
-            tool_choice={"type": "tool", "name": tool["name"]},
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": shared_context,
-                            "cache_control": {"type": "ephemeral"},
-                        },
-                        {"type": "text", "text": get_few_shot(feature_type)},
-                        {"type": "text", "text": "## Существующие тест-кейсы\n" + existing_summary},
-                        {"type": "text", "text": "## Запрос тестировщика\n" + request_text},
-                    ],
-                }
-            ],
-        )
-        log_cache_stats(response.usage, label)
-
-        tool_block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
-        try:
-            if tool_block is None or tool_block.input is None:
-                raise RuntimeError(
-                    f"[{label}] Claude did not return tool_use (stop_reason={response.stop_reason})"
-                )
-            return parse_tool_input(TestCaseAskResult, tool_block.input)
-        except (RuntimeError, ValidationError) as exc:
-            if attempt == max_attempts:
-                raise
-            logger.warning("[%s] attempt %d/%d failed, retrying: %s", label, attempt, max_attempts, exc)
+    return await call_structured(
+        TestCaseAskResult,
+        label="test_cases_ask",
+        model=model,
+        max_tokens=32000,
+        system=system_prompt,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": shared_context,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {"type": "text", "text": get_few_shot(feature_type)},
+                    {"type": "text", "text": "## Существующие тест-кейсы\n" + existing_summary},
+                    {"type": "text", "text": "## Запрос тестировщика\n" + request_text},
+                ],
+            }
+        ],
+    )
 
 
 async def run_test_case_ask_pipeline(

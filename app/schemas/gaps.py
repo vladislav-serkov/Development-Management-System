@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+from app.schemas.extraction import LogicStep, UsedDependency
 
 
 class SingleGapResult(BaseModel):
     """One gap found by Claude."""
     gap_type: str = Field(description="Gap category in snake_case describing the issue, e.g. missing_branch, field_not_in_schema, contradictory_logic, nullable_without_handling, ambiguous_condition")
-    severity: str = Field(description="Impact level: critical (developer cannot implement correctly, data loss or wrong business result) or major (real bug in non-main scenario)")
+    severity: Literal["critical", "major"] = Field(description="Impact level: critical (developer cannot implement correctly, data loss or wrong business result) or major (real bug in non-main scenario)")
     question: str = Field(description="What is missing or inconsistent, in Russian")
     suggestion: str = Field(description="How to fix it, in Russian")
     actionable: bool = Field(description="true if suggestion is a concrete spec requirement ready to implement; false if it requires analyst clarification first")
@@ -34,21 +38,14 @@ class ApplyChange(BaseModel):
 
 
 class ApplyResult(BaseModel):
-    """Tool output for apply-preview: updated logic + change descriptions."""
-    structured_logic: "StructuredBusinessLogic" = Field(description="Complete updated structured_logic with all changes applied. MUST preserve all existing data — only add/modify what gaps require.")  # noqa: F821 — resolved at runtime by _rebuild_apply_result()
+    """Structured output of apply-preview: the updated logic steps and
+    dependencies plus change descriptions. Parameter tables mirror the spec
+    verbatim and are not edited here — the service carries them over."""
+    logic_steps: list[LogicStep] = Field(description="All logic steps after the changes, flat, in document order, existing numbers kept")
+    used_dependencies: list[UsedDependency] = Field(description="All dependencies after the changes")
     changes: list[ApplyChange] = Field(description="Human-readable list of every change made")
 
 
 class ApplyConfirmRequest(BaseModel):
     """Request body for apply-confirm endpoint."""
     proposed: dict
-
-
-# Rebuild forward refs once StructuredBusinessLogic is importable
-def _rebuild_apply_result() -> None:
-    from app.schemas.extraction import StructuredBusinessLogic
-
-    ApplyResult.model_rebuild(_types_namespace={"StructuredBusinessLogic": StructuredBusinessLogic})
-
-
-_rebuild_apply_result()

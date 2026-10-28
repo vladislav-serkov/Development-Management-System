@@ -1,13 +1,12 @@
-"""Enrichment pipeline: Claude tool_use extraction for dependency documents (Confluence markdown)."""
+"""Enrichment pipeline: structured extraction of dependency documents (Confluence markdown)."""
 import logging
 from datetime import UTC, datetime
-
-from pydantic import ValidationError
 
 from app.config import settings
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
 from app.schemas.enrichment import DependencyResponse
-from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.schemas.extraction import nest_message_fields
+from app.services.claude_client import call_structured
 from app.services.dep_impact import mark_dependents_stale
 from app.services.extraction import (
     _build_document_block,
@@ -172,7 +171,6 @@ async def _extract_enrichment(
 
     cfg = ENRICHMENT_SCHEMAS[dep_type]
     schema_class = cfg["schema"]
-    tool_name = cfg["tool_name"]
     prompt_text = cfg["prompt"]
 
     logger.info(
@@ -192,68 +190,29 @@ async def _extract_enrichment(
         project_rules=project_rules.get("enrichment", ""),
     )
 
-    tool = {
-        "name": tool_name,
-        "description": f"Extract structured {dep_type} data from the document",
-        "input_schema": schema_class.model_json_schema(),
-    }
-
-    create_kwargs_enr: dict = dict(
+    result = await call_structured(
+        schema_class,
+        label=f"enrichment:{dep_type}",
         model=model,
-        max_tokens=16384,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool_name},
+        max_tokens=32000,
+        effort=settings.extraction_effort,
+        system=system_prompt or None,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    _build_document_block(text_content, cache=True),
+                    {"type": "text", "text": prompt_text},
+                ],
+            }
+        ],
     )
-    if system_prompt:
-        create_kwargs_enr["system"] = system_prompt
-
-    # The model occasionally emits an unrecoverably malformed tool input
-    # (garbage fields, wrong shape); a fresh re-ask usually fixes it,
-    # so retry the Claude call on validation failure.
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        response = await call_claude(
-            label=f"enrichment:{dep_type}",
-            **create_kwargs_enr,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        _build_document_block(text_content, cache=True),
-                        {"type": "text", "text": prompt_text},
-                    ],
-                }
-            ],
-        )
-
-        log_cache_stats(response.usage, f"enrichment:{dep_type}")
-
-        tool_block = None
-        for block in response.content:
-            if getattr(block, "type", None) == "tool_use":
-                tool_block = block
-                break
-
-        if tool_block is None:
-            raise ValueError("No tool_use block in Claude response for enrichment")
-
-        if response.stop_reason == "max_tokens":
-            raise ValueError(
-                f"Claude response truncated by max_tokens for enrichment:{dep_type} — document too large"
-            )
-
-        try:
-            result = parse_tool_input(schema_class, tool_block.input)
-        except ValidationError as exc:
-            if attempt == max_attempts:
-                raise
-            logger.warning(
-                "enrichment:%s tool input invalid (attempt %d/%d), retrying: %s",
-                dep_type, attempt, max_attempts, exc,
-            )
-            continue
-        logger.info("Enrichment extraction complete for dep_type=%s", dep_type)
-        return result
+    # Kafka message fields come back flat (parent names) — rebuild the tree
+    for topic in getattr(result, "topics", []):
+        topic.message_fields = nest_message_fields(topic.message_fields)
+        topic.key_fields = nest_message_fields(topic.key_fields)
+    logger.info("Enrichment extraction complete for dep_type=%s", dep_type)
+    return result
 
 
 # Types whose page describes a LIST of entities (one page → many tables/topics/caches):

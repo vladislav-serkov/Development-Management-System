@@ -43,6 +43,29 @@ def project(store):
     return asyncio.get_event_loop()
 
 
+def _as_grids(detected: list[DetectedFeature]) -> list[dict]:
+    """The LLM only references tables by [TABLE:Tn] id; the grid itself is parsed
+    from the page. Turn the fixtures' inline tables into parsed grids (one id per
+    feature) and leave the features with id references, as the real call does."""
+    grids = []
+    for i, feature in enumerate(detected, start=1):
+        refs = []
+        for table in feature.structured_logic.input_tables:
+            if not table.fields:
+                continue
+            tid = f"T{i}"
+            grids.append({
+                "id": tid,
+                "context": table.caption or "",
+                "headers": [c.header for c in table.columns],
+                "rows": [list(f.cells) for f in table.fields],
+            })
+            refs.append(SpecTable(table_id=tid))
+        if refs:
+            feature.structured_logic.input_tables = refs
+    return grids
+
+
 async def _run_pipeline(store, monkeypatch, project_slug, doc_slug, detected, prev_version=None, new_version=None):
     async def fake_detect(*args, **kwargs):
         return detected
@@ -57,6 +80,7 @@ async def _run_pipeline(store, monkeypatch, project_slug, doc_slug, detected, pr
         store=store,
         project_slug=project_slug,
         doc_slug=doc_slug,
+        tables=_as_grids(detected),
         prev_confluence_version=prev_version,
     )
 
@@ -212,13 +236,16 @@ TEXT = "GET /v1/x и GET /v1/y — тестовое ТЗ"
 
 
 async def _pipeline(store, monkeypatch, slug, detect, **kwargs):
+    # Callable detectors (failing / slow) carry no tables worth diffing
+    grids = _as_grids(detect) if not callable(detect) else []
+
     async def fake_detect(*args, **kw):
         return await detect() if callable(detect) else detect
 
     monkeypatch.setattr(extraction, "_detect_features", fake_detect)
     await extraction.run_extraction_pipeline(
         filename=kwargs.pop("filename", "doc"), text_content=kwargs.pop("text", TEXT),
-        store=store, project_slug=slug, doc_slug="doc", **kwargs,
+        store=store, project_slug=slug, doc_slug="doc", tables=grids, **kwargs,
     )
 
 

@@ -3,6 +3,13 @@ from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
+
+# ``SkipJsonSchema`` marks fields the LLM never fills: they stay in the stored
+# shape but are left out of the structured-output schema. This is also what keeps
+# the schema free of recursion (the API rejects self-referencing definitions):
+# the LLM returns trees as flat lists, and ``nest_steps`` / ``nest_message_fields``
+# rebuild ``children`` in code.
 
 
 class FeatureType(str, Enum):
@@ -71,19 +78,18 @@ class SpecField(BaseModel):
 class SpecTable(BaseModel):
     """A parameter/mapping table mirroring the spec's own structure.
 
-    When the document carries [TABLE:Tn] markers, the LLM only references the
-    table (``table_id``, plus ``status_codes`` for response tables) and the
-    grid is parsed deterministically — ``caption``/``location``/``columns``/
-    ``fields`` are filled by code. Inline ``columns``+``fields`` are the
-    fallback for documents without markers.
+    The LLM only references the table (``table_id`` from its [TABLE:Tn] marker,
+    plus ``status_codes`` for response tables); the grid is parsed
+    deterministically and ``caption``/``location``/``columns``/``fields`` are
+    filled by code.
     """
 
-    table_id: str | None = Field(default=None, description="Id from the [TABLE:Tn] marker above the table, e.g. 'T3'. Null only for documents without markers.")
-    caption: str | None = Field(default=None, description="Text introducing the table, verbatim. Filled by code from the parsed document.")
-    location: str | None = Field(default=None, description="Where the fields live: body, header, query, path. Derived from the caption by code.")
+    table_id: str | None = Field(default=None, description="Id from the [TABLE:Tn] marker above the table, e.g. 'T3'")
+    caption: SkipJsonSchema[str | None] = Field(default=None, description="Text introducing the table, verbatim. Filled by code from the parsed document.")
+    location: SkipJsonSchema[str | None] = Field(default=None, description="Where the fields live: body, header, query, path. Derived from the caption by code.")
     status_codes: str | None = Field(default=None, description="For response tables: HTTP status codes from the heading above, verbatim, e.g. '200' or '400, 404, 500'. Null for input tables.")
-    columns: list[SpecColumn] = Field(default_factory=list, description="Data columns verbatim. Leave empty when table_id is set — filled by code.")
-    fields: list[SpecField] = Field(default_factory=list, description="Field rows. Leave empty when table_id is set — filled by code.")
+    columns: SkipJsonSchema[list[SpecColumn]] = Field(default_factory=list, description="Data columns verbatim. Filled by code.")
+    fields: SkipJsonSchema[list[SpecField]] = Field(default_factory=list, description="Field rows. Filled by code.")
 
 
 class MessageField(BaseModel):
@@ -91,7 +97,7 @@ class MessageField(BaseModel):
     feature structured logic stores tables as SpecTable."""
 
     element: str = Field(description="Field/element name")
-    parent: str | None = Field(default=None, description="Parent element name")
+    parent: str | None = Field(default=None, description="Element name of the enclosing (parent) field; null for top-level fields. Fields are listed in document order, each right after its parent subtree started")
     field_type: str | None = Field(default=None, description="Data type")
     required: bool | None = Field(default=None, description="Verbatim from spec table 'Обяз.' column: true/false. Null if no such column in spec.")
     cardinality: str | None = Field(default=None, description="Verbatim cardinality from spec table: '1', '0-1', '1-N', '0-N'. Null if not present in spec.")
@@ -103,7 +109,7 @@ class MessageField(BaseModel):
         description="Dependencies the source cell links to, parsed deterministically from the spec table. A field can draw on several (availableLimit = credit_line.limit - Debt.totalDebt).",
     )
     example: str | None = Field(default=None, description="Sample value for this field. Extract from spec if given, otherwise synthesise a realistic one based on type. Null for container fields whose value is represented by children.")
-    children: list["MessageField"] = Field(default_factory=list)
+    children: SkipJsonSchema[list["MessageField"]] = Field(default_factory=list)
 
 
 class GenericTable(BaseModel):
@@ -120,15 +126,18 @@ class GenericTable(BaseModel):
 
 
 class LogicStep(BaseModel):
-    number: str = Field(description="Step number like '1', '1.1', '1.1.2'")
-    text: str = Field(description="VERBATIM text from the specification document in Russian")
-    has_detailed_mapping: bool = Field(default=False, description="True if this step contains XML/JSON message mapping table")
+    """One step of the feature logic. The LLM returns steps as a flat list in
+    document order; nesting is rebuilt from ``number`` (see ``nest_steps``)."""
+
+    number: str = Field(description="Hierarchical step number in document order: '1', '1.1', '1.1.2'. The number encodes nesting — a step numbered '2.3' is a sub-step of '2'")
+    text: str = Field(description="Step text verbatim from the specification, in Russian")
+    has_detailed_mapping: bool = Field(default=False, description="True if this step fills a message/record field by field (its mapping table ids go to mapping_table_ids)")
     mapping_table_ids: list[str] = Field(
         default_factory=list,
-        description="IDs from [TABLE:Tn] markers in the document whose tables contain this step's field mapping, e.g. ['T3']. Fill ONLY when such markers exist in the document; otherwise leave empty.",
+        description="IDs from [TABLE:Tn] markers of the tables holding this step's field mapping, e.g. ['T3']",
     )
     message_type: str | None = Field(default=None, description="Target table/message type name, e.g. 'outbox_payment'")
-    mapping_tables: list[SpecTable] = Field(default_factory=list, description="Mapping tables of this step. Filled by code from mapping_table_ids; fill inline ONLY for documents without [TABLE:Tn] markers.")
+    mapping_tables: SkipJsonSchema[list[SpecTable]] = Field(default_factory=list, description="Mapping tables of this step. Filled by code from mapping_table_ids.")
     reference_tables: list[GenericTable] = Field(
         default_factory=list,
         description="Reference/lookup tables attached to this step (enum value mappings, code reference tables, etc.) — NOT field mappings.",
@@ -137,7 +146,7 @@ class LogicStep(BaseModel):
         default_factory=list,
         description="Names of external documents referenced in this step. Must exactly match names in used_dependencies (type=external_doc).",
     )
-    children: list["LogicStep"] = Field(default_factory=list)
+    children: SkipJsonSchema[list["LogicStep"]] = Field(default_factory=list)
 
 
 class UsedDependency(BaseModel):
@@ -151,12 +160,73 @@ class UsedDependency(BaseModel):
         default_factory=list,
         description="IDs from [LINK:Ln] markers in the document pointing at the page that documents this dependency, e.g. ['L5']. Fill for every dependency mentioned via a link. Empty if mentioned without a link.",
     )
-    source_doc_title: str | None = Field(default=None, description="Legacy fallback for link_ids: the EXACT link text when the document has no [LINK:Ln] markers. Null otherwise.")
+    source_doc_title: SkipJsonSchema[str | None] = Field(default=None, description="Legacy fallback for link_ids: the link text of the page documenting this dependency. Filled by code.")
 
 
 SpecField.model_rebuild()
 MessageField.model_rebuild()
 LogicStep.model_rebuild()
+
+
+def _parent_number(number: str) -> str | None:
+    head, sep, _ = number.strip().rstrip(".").rpartition(".")
+    return head if sep else None
+
+
+def nest_steps(flat: list[LogicStep]) -> list[LogicStep]:
+    """Rebuild the step tree from a flat, document-ordered list.
+
+    A step whose number has a dotted prefix ('2.3' → '2') becomes a child of the
+    nearest preceding step with that number; a step whose prefix is unknown is
+    attached to the step one level up in the current path, or to the root. Steps
+    that already carry children are returned as they are.
+    """
+    if any(step.children for step in flat):
+        return flat
+    roots: list[LogicStep] = []
+    path: list[LogicStep] = []  # current ancestor chain
+    for step in flat:
+        step.children = []
+        parent_num = _parent_number(step.number)
+        while path and path[-1].number != parent_num:
+            path.pop()
+        if parent_num is not None and not path:
+            # Prefix never seen (numbering gap in the spec): nest under the last
+            # step shallower than this one, so the document order is kept.
+            depth = step.number.count(".")
+            path = [s for s in _last_chain(roots) if s.number.count(".") < depth]
+        (path[-1].children if path else roots).append(step)
+        path.append(step)
+    return roots
+
+
+def _last_chain(roots: list[LogicStep]) -> list[LogicStep]:
+    chain: list[LogicStep] = []
+    nodes = roots
+    while nodes:
+        chain.append(nodes[-1])
+        nodes = nodes[-1].children
+    return chain
+
+
+def nest_message_fields(flat: list[MessageField]) -> list[MessageField]:
+    """Rebuild the message field tree from a flat, document-ordered list using
+    ``parent``: each field attaches to the nearest open ancestor with that
+    element name, so repeated element names in different branches stay apart."""
+    if any(field.children for field in flat):
+        return flat
+    roots: list[MessageField] = []
+    path: list[MessageField] = []
+    for field in flat:
+        field.children = []
+        if field.parent:
+            while path and path[-1].element != field.parent:
+                path.pop()
+        else:
+            path = []
+        (path[-1].children if path else roots).append(field)
+        path.append(field)
+    return roots
 
 
 class StructuredBusinessLogic(BaseModel):
@@ -180,23 +250,29 @@ class ConfluenceImportRequest(BaseModel):
 
 
 class DetectedFeature(BaseModel):
-    """Feature detected from PDF by the 1st Claude call (tool_use schema)."""
+    """Feature detected from a spec page by the extraction call (structured output schema)."""
 
-    name: str = Field(description="Latin slug identifier: topic name for Kafka, METHOD /path for REST, or a latin snake_case slug derived from the scheduled-task heading")
+    name: str = Field(description="Identifier: the Kafka topic name, 'METHOD /path' for REST, or a latin snake_case slug derived from the scheduled-task heading (unique within the document)")
     display_name: str | None = Field(default=None, description="Human-readable name verbatim from the spec (Russian). Required for scheduled_task (heading of the task section). Null for kafka_consumer/rest_endpoint — UI falls back to name.")
     type: FeatureType
     confidence: float = Field(ge=0.0, le=1.0)
-    summary: str
+    summary: str = Field(description="One-paragraph summary of what the feature does, in Russian")
     method: str | None = Field(default=None, description="HTTP method for REST (GET/POST/PUT/DELETE), CONSUMER for Kafka, SCHEDULED for scheduled_task")
     endpoint: str | None = Field(default=None, description="REST path like /v1/credit-line or Kafka topic like pay-later.flp.rbo-adapter.product.return.queue. Null for scheduled_task — use `schedule` instead.")
     schedule: str | None = Field(default=None, description="Trigger schedule verbatim from the spec (Russian). Examples: 'Ежедневно в 19:00 МСК', 'Каждый час'. Required for scheduled_task, null otherwise.")
-    dependencies: list[str] = Field(default_factory=list)
-    source: SourceInfo | None = Field(default=None, description="Provenance: pdf or code. Null for legacy records where kind is inferred from source_document presence.")
-    structured_logic: StructuredBusinessLogic = Field(default_factory=StructuredBusinessLogic)
+    dependencies: SkipJsonSchema[list[str]] = Field(default_factory=list, description="Names of used_dependencies. Derived by code.")
+    source: SkipJsonSchema[SourceInfo | None] = Field(default=None, description="Provenance: pdf or code. Null for legacy records where kind is inferred from source_document presence.")
+    structured_logic: StructuredBusinessLogic
+
+    def nest(self) -> "DetectedFeature":
+        """Turn the flat LLM output into the stored shape: step tree, dependency names."""
+        self.structured_logic.logic_steps = nest_steps(self.structured_logic.logic_steps)
+        self.dependencies = [d.name for d in self.structured_logic.used_dependencies]
+        return self
 
 
 class FeatureDetectionResult(BaseModel):
-    """Root model for 1st Claude call structured output."""
+    """Root model of the extraction call's structured output."""
 
     features: list[DetectedFeature]
 

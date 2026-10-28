@@ -1,75 +1,30 @@
-"""Centralized Claude API client with retry and error classification."""
+"""Centralized Claude API client: structured outputs, retry and error classification."""
 
 import asyncio
-import json
 import logging
+from typing import TypeVar
 
 import anthropic
 import httpx
-from pydantic import ValidationError
+from anthropic.lib._parse._transform import transform_schema
+from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
-def _coerce_json_strings(value):
-    """Recursively parse JSON-encoded strings inside a tool_use input.
 
-    Sonnet 5 occasionally returns a nested array/object field as a JSON string
-    (sometimes wrapping the whole payload into its own field, e.g.
-    ``{"tables": "{\\"tables\\": [...]}"``). Plain strings stay untouched.
+def output_schema(schema_class: type[BaseModel]) -> dict:
+    """JSON schema of a Pydantic model in the form structured outputs accept.
+
+    The SDK transform sets ``additionalProperties: false`` on every object and
+    moves unsupported constraints (``pattern``, ``minimum``…) into descriptions.
+    Recursive models are rejected by the API — keep tree-shaped fields out of the
+    schema (``SkipJsonSchema``) and rebuild the tree in code.
     """
-    if isinstance(value, dict):
-        fixed = {}
-        for k, v in value.items():
-            if isinstance(v, str) and v.strip()[:1] in ("[", "{"):
-                try:
-                    parsed = json.loads(v)
-                except ValueError:
-                    fixed[k] = v
-                    continue
-                if isinstance(parsed, dict) and list(parsed.keys()) == [k]:
-                    parsed = parsed[k]
-                fixed[k] = _coerce_json_strings(parsed)
-            else:
-                fixed[k] = _coerce_json_strings(v)
-        return fixed
-    if isinstance(value, list):
-        return [_coerce_json_strings(v) for v in value]
-    return value
-
-
-def parse_tool_input(schema_class, raw):
-    """Validate a tool_use input against a Pydantic schema.
-
-    Tries the raw input first, then progressively repaired variants covering
-    Sonnet 5's observed tool-input quirks: JSON-encoded string fields
-    (see _coerce_json_strings) and a single-key envelope wrapping the real
-    payload (e.g. ``{"api_spec": {...actual fields...}}``).
-    """
-    if isinstance(raw, str):
-        raw = json.loads(raw)
-
-    candidates = [raw, _coerce_json_strings(raw)]
-    for c in list(candidates):
-        if isinstance(c, dict) and len(c) == 1:
-            inner = next(iter(c.values()))
-            if isinstance(inner, dict):
-                candidates.append(inner)
-
-    last_err = None
-    for i, candidate in enumerate(candidates):
-        try:
-            result = schema_class.model_validate(candidate)
-            if i > 0:
-                logger.warning(
-                    "[%s] tool input accepted after repair variant %d", schema_class.__name__, i,
-                )
-            return result
-        except ValidationError as exc:
-            last_err = exc
-    raise last_err
+    return transform_schema(schema_class)
 
 
 def log_cache_stats(usage, call_name: str) -> None:
@@ -115,6 +70,10 @@ class PermanentAPIError(Exception):
     def __init__(self, message: str, status_code: int | None = None):
         super().__init__(message)
         self.status_code = status_code
+
+
+class TruncatedOutputError(ValueError):
+    """The response hit ``max_tokens`` before the structured output was complete."""
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -185,3 +144,51 @@ async def call_claude(*, label: str = "claude", **kwargs) -> anthropic.types.Mes
 
     # Should not reach here, but just in case
     raise TransientAPIError(str(last_exc))
+
+
+async def call_structured(
+    schema: type[ModelT],
+    *,
+    label: str,
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+    system: str | None = None,
+    effort: str | None = None,
+) -> ModelT:
+    """One Claude call whose answer is a ``schema`` instance.
+
+    Structured outputs (``output_config.format``) make the API guarantee a
+    schema-valid JSON document, so there is nothing to repair on this side:
+    the text is validated into the model and returned. The only failure modes
+    left are a truncated answer (``max_tokens``) and a refusal, both raised.
+    """
+    create_kwargs: dict = dict(
+        model=model,
+        max_tokens=max_tokens,
+        messages=messages,
+        output_config={"format": {"type": "json_schema", "schema": output_schema(schema)}},
+    )
+    if system:
+        create_kwargs["system"] = system
+    if effort:
+        create_kwargs["output_config"]["effort"] = effort
+
+    response = await call_claude(label=label, **create_kwargs)
+    log_cache_stats(response.usage, label)
+
+    if response.stop_reason == "max_tokens":
+        raise TruncatedOutputError(
+            f"Ответ Claude обрезан лимитом в {max_tokens} токенов — увеличьте лимит или уменьшите документ."
+        )
+    if response.stop_reason == "refusal":
+        raise PermanentAPIError(f"[{label}] Claude отказался отвечать (refusal)")
+
+    text = "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
+    if not text.strip():
+        raise ValueError(f"[{label}] пустой ответ Claude (stop_reason={response.stop_reason})")
+    try:
+        return schema.model_validate_json(text)
+    except ValidationError as exc:
+        logger.error("[%s] structured output failed validation: %s\n%s", label, exc, text[:500])
+        raise

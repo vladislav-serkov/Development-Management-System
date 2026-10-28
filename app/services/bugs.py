@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from app.config import settings
 from app.prompts.bugs import SYSTEM_PROMPT
 from app.schemas.bugs import BugReportResult
-from app.services.claude_client import call_claude, parse_tool_input
+from app.services.claude_client import call_structured
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -102,15 +102,6 @@ async def generate_bug_report(
 
     user_message = "\n".join(parts)
 
-    # Tool schema
-    tool_schema = BugReportResult.model_json_schema()
-    tool_name = "create_bug_report"
-    tool = {
-        "name": tool_name,
-        "description": "Создать минимальный воспроизводимый баг-репорт",
-        "input_schema": tool_schema,
-    }
-
     model = settings.bugs_model
 
     global_rules = await store.get_global_rules()
@@ -121,31 +112,14 @@ async def generate_bug_report(
         project_rules=project_rules.get("bugs", ""),
     )
 
-    response = await call_claude(
+    result = await call_structured(
+        BugReportResult,
         label="bug_report",
         model=model,
-        max_tokens=4096,
+        max_tokens=8000,
         system=system_prompt,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool_name},
-        messages=[
-            {
-                "role": "user",
-                "content": user_message,
-            }
-        ],
+        messages=[{"role": "user", "content": user_message}],
     )
-
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
-            break
-
-    if tool_block is None:
-        raise RuntimeError("Claude did not return tool_use block for bug report generation")
-
-    result = parse_tool_input(BugReportResult, tool_block.input)
     logger.info("[bugs] Generated bug report for test case '%s' (severity=%s)", tc.get("name", ""), result.severity)
 
     return {

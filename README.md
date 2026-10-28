@@ -25,7 +25,7 @@ Put the API key in a root `.env` file:
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
-CLAUDE_MODEL=claude-sonnet-4-6
+CLAUDE_MODEL=claude-sonnet-5-5
 DATA_DIR=./data/projects
 # Optional — enable Confluence import:
 CONFLUENCE_BASE_URL=https://confluence.example.com

@@ -11,8 +11,9 @@ from app.prompts.gaps import (
     SYSTEM_PROMPT,
     build_apply_user_message,
 )
+from app.schemas.extraction import nest_steps
 from app.schemas.gaps import ApplyResult, GapsAnalysisResult
-from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services.claude_client import call_structured
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
@@ -25,20 +26,12 @@ async def _call_gaps_analysis(
     system_prompt: str = SYSTEM_PROMPT,
 ) -> list[dict]:
     """Single Claude call to find all gap types with few-shot examples."""
-    tool_schema = GapsAnalysisResult.model_json_schema()
-    tool = {
-        "name": "analyze_gaps",
-        "description": "Find specification gaps across all categories",
-        "input_schema": tool_schema,
-    }
-
-    response = await call_claude(
-        label="gaps_analysis",
+    result = await call_structured(
+        GapsAnalysisResult,
+        label="gaps:analysis",
         model=model,
-        max_tokens=8192,
+        max_tokens=16000,
         system=system_prompt,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "analyze_gaps"},
         messages=[
             {
                 "role": "user",
@@ -48,32 +41,12 @@ async def _call_gaps_analysis(
                         "text": shared_context,
                         "cache_control": {"type": "ephemeral"},
                     },
-                    {
-                        "type": "text",
-                        "text": FEW_SHOT_EXAMPLES,
-                    },
-                    {
-                        "type": "text",
-                        "text": ANALYSIS_PROMPT,
-                    },
+                    {"type": "text", "text": FEW_SHOT_EXAMPLES},
+                    {"type": "text", "text": ANALYSIS_PROMPT},
                 ],
             }
         ],
     )
-
-    log_cache_stats(response.usage, "gaps:analysis")
-
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
-            break
-
-    if tool_block is None:
-        logger.warning("[gaps:analysis] No tool_use block in Claude response")
-        return []
-
-    result = parse_tool_input(GapsAnalysisResult, tool_block.input)
     logger.info("[gaps:analysis] Found %d gap(s)", len(result.gaps))
 
     return [
@@ -276,16 +249,15 @@ async def generate_apply_preview(
 
     gaps_text = "\n\n".join(gap_lines)
 
-    sl_json = json.dumps(current_sl, ensure_ascii=False, indent=2)
-
-    user_message = build_apply_user_message(sl_json, current_sl, gaps_text)
-
-    tool_schema = ApplyResult.model_json_schema()
-    tool = {
-        "name": "apply_gaps",
-        "description": "Return the complete updated structured_logic (preserving ALL existing data) plus human-readable change descriptions",
-        "input_schema": tool_schema,
+    # The model edits the logic steps and dependencies; parameter/mapping tables
+    # mirror the spec verbatim and are carried over by code (mapping tables are
+    # re-attached to the steps by number). Steps go in flat, without the tables.
+    flat_steps = _flatten_steps(current_sl.get("logic_steps") or [])
+    editable = {
+        "logic_steps": [{k: v for k, v in s.items() if k not in ("children", "mapping_tables")} for s in flat_steps],
+        "used_dependencies": current_sl.get("used_dependencies") or [],
     }
+    user_message = build_apply_user_message(json.dumps(editable, ensure_ascii=False, indent=2), gaps_text)
 
     global_rules = await store.get_global_rules()
     project_rules = await store.get_project_rules(project_slug)
@@ -294,40 +266,38 @@ async def generate_apply_preview(
         global_rules=global_rules.get("gaps", ""),
         project_rules=project_rules.get("gaps", ""),
     )
-    response = await call_claude(
-        label="gaps_apply_preview",
+    result = await call_structured(
+        ApplyResult,
+        label="gaps:apply_preview",
         model=settings.gaps_model,
-        max_tokens=16384,
+        max_tokens=32000,
         system=apply_system_prompt,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "apply_gaps"},
         messages=[{"role": "user", "content": user_message}],
     )
 
-    log_cache_stats(response.usage, "gaps:apply_preview")
-
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
-            break
-
-    if tool_block is None:
-        raise RuntimeError("Claude did not return a tool_use block for apply_preview")
-
-    result = parse_tool_input(ApplyResult, tool_block.input)
-    proposed_dict = result.structured_logic.model_dump(mode="json")
+    tables_by_number = {s["number"]: s.get("mapping_tables") or [] for s in flat_steps}
+    for step in result.logic_steps:
+        if step.mapping_table_ids and not step.mapping_tables:
+            step.mapping_tables = tables_by_number.get(step.number, [])
+    proposed_dict = {
+        "input_tables": current_sl.get("input_tables") or [],
+        "response_tables": current_sl.get("response_tables") or [],
+        "logic_steps": [s.model_dump(mode="json") for s in nest_steps(result.logic_steps)],
+        "used_dependencies": [d.model_dump(mode="json") for d in result.used_dependencies],
+    }
     changes_list = [c.model_dump(mode="json") for c in result.changes]
 
     # Sanity check: proposed should have at least as many items as original
-    for key in ("input_tables", "response_tables", "logic_steps", "used_dependencies"):
-        orig_count = len(current_sl.get(key, []))
-        proposed_count = len(proposed_dict.get(key, []))
-        if proposed_count < orig_count:
-            logger.warning(
-                "[gaps:apply_preview] %s shrunk: %d → %d — Claude may have dropped items",
-                key, orig_count, proposed_count,
-            )
+    if len(result.logic_steps) < len(flat_steps):
+        logger.warning(
+            "[gaps:apply_preview] logic_steps shrunk: %d → %d — Claude may have dropped steps",
+            len(flat_steps), len(result.logic_steps),
+        )
+    if len(result.used_dependencies) < len(editable["used_dependencies"]):
+        logger.warning(
+            "[gaps:apply_preview] used_dependencies shrunk: %d → %d — Claude may have dropped items",
+            len(editable["used_dependencies"]), len(result.used_dependencies),
+        )
 
     logger.info(
         "[gaps:apply_preview] Generated proposed logic with %d changes for feature '%s'",
@@ -335,6 +305,15 @@ async def generate_apply_preview(
     )
 
     return {"original": current_sl, "proposed": proposed_dict, "changes": changes_list}
+
+
+def _flatten_steps(steps: list[dict]) -> list[dict]:
+    """Depth-first list of step dicts (children included in order)."""
+    out: list[dict] = []
+    for step in steps:
+        out.append(step)
+        out.extend(_flatten_steps(step.get("children") or []))
+    return out
 
 
 async def run_apply_preview_background(

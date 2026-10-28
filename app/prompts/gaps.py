@@ -123,37 +123,23 @@ suggestion: Уточнить у аналитика корректное знач
 
 APPLY_SYSTEM_PROMPT = (
     "Ты — старший системный аналитик банковского проекта. "
-    "Тебя просят обновить структурированную логику фичи на основе утверждённых замечаний (gaps). "
-    "\n\n"
-    "КРИТИЧЕСКИ ВАЖНО:\n"
-    "- СКОПИРУЙ ВСЮ существующую structured_logic ПОЛНОСТЬЮ — каждый шаг, каждый параметр, каждую зависимость\n"
-    "- Добавь/измени ТОЛЬКО то, что требуют gaps\n"
-    "- Если gap требует изменить шаг — измени ТОЛЬКО этот шаг, остальные скопируй как есть\n"
-    "- Ни один существующий элемент не должен пропасть\n"
-    "\n"
-    "Для каждого изменения: заполни changes[] с читаемым описанием для аналитика.\n"
+    "Тебе дают логику фичи (шаги и зависимости) и утверждённые замечания к ней (gaps); "
+    "верни ту же логику с внесёнными правками и список изменений для аналитика.\n\n"
+    "Правки — только те, что требуют замечания; всё остальное возвращай как есть: "
+    "каждый шаг и каждая зависимость из входа должны остаться в ответе. "
+    "Номера существующих шагов не меняй — по ним к шагам привязаны таблицы маппинга; "
+    "новый шаг получает следующий свободный номер на нужном уровне (после «4.2» — «4.3»). "
+    "Таблицы параметров и маппинга полей здесь не редактируются — они зеркалят ТЗ; "
+    "если замечание касается таблицы, опиши нужную правку в changes "
+    "(section = input_tables / response_tables), не меняя шаги.\n\n"
     "Пиши на русском языке."
 )
 
 
-def build_apply_user_message(sl_json: str, current_sl: dict, gaps_text: str) -> str:
-    """Build the user message for the gaps apply preview call.
-
-    Args:
-        sl_json: JSON string of the current structured_logic.
-        current_sl: Current structured_logic as a dict (for counting elements).
-        gaps_text: Formatted text of approved gaps to apply.
-    """
+def build_apply_user_message(logic_json: str, gaps_text: str) -> str:
+    """User message for the apply-preview call: the editable part of the
+    structured logic (flat steps + dependencies) and the approved gaps."""
     return (
-        f"## Текущая structured_logic (СКОПИРУЙ ПОЛНОСТЬЮ, изменяя только то что требуют gaps)\n\n"
-        f"```json\n{sl_json}\n```\n\n"
-        f"Текущая logic содержит:\n"
-        f"- input_tables: {len(current_sl.get('input_tables', []))} шт\n"
-        f"- response_tables: {len(current_sl.get('response_tables', []))} шт\n"
-        f"- logic_steps: {len(current_sl.get('logic_steps', []))} шт\n"
-        f"- used_dependencies: {len(current_sl.get('used_dependencies', []))} шт\n\n"
-        f"В ответе structured_logic ДОЛЖНО быть НЕ МЕНЕЕ этих количеств "
-        f"(больше — если gap добавляет новые элементы).\n\n"
-        f"## Утверждённые замечания для применения\n\n{gaps_text}\n\n"
-        "Верни обновлённую structured_logic + список изменений через инструмент apply_gaps."
+        f"## Текущая логика фичи\n\n```json\n{logic_json}\n```\n\n"
+        f"## Утверждённые замечания для применения\n\n{gaps_text}"
     )

@@ -1,6 +1,6 @@
 """_enforce_spec_identity: feature identity must be verbatim from the spec."""
 
-from app.schemas.extraction import DetectedFeature, FeatureType
+from app.schemas.extraction import DetectedFeature, FeatureType, StructuredBusinessLogic
 from app.services.extraction import _enforce_spec_identity
 
 TITLE = "pay-later.flp.rbo-adapter.product.schedule.queue"
@@ -9,6 +9,7 @@ TEXT = "Сервис слушает и пишет результат в pay-late
 
 def _kafka(name: str, endpoint: str | None = None) -> DetectedFeature:
     return DetectedFeature(
+        structured_logic=StructuredBusinessLogic(),
         name=name, type=FeatureType.kafka_consumer, confidence=1.0,
         summary="s", method="CONSUMER", endpoint=endpoint or name,
     )
@@ -43,6 +44,7 @@ def test_kafka_topic_found_in_tables():
 
 def test_rest_path_corrected():
     f = DetectedFeature(
+        structured_logic=StructuredBusinessLogic(),
         name="GET /v1/credit-lines", type=FeatureType.rest_endpoint, confidence=1.0,
         summary="s", method="GET", endpoint="/v1/credit-lines",
     )
@@ -59,6 +61,7 @@ def test_rest_single_feature_title_path_wins():
     # on one run and the gateway path from the title on another
     text = "[swagger](https://host/swagger-ui/index.html#/payment-controller/getClientDebt)"
     f = DetectedFeature(
+        structured_logic=StructuredBusinessLogic(),
         name="GET /payment-controller/getClientDebt", type=FeatureType.rest_endpoint, confidence=1.0,
         summary="s", method="GET", endpoint="/payment-controller/getClientDebt",
     )
@@ -71,6 +74,7 @@ def test_rest_single_feature_title_path_wins():
     # Already the title path → no warning; multi-feature pages keep the LLM's pick
     assert _enforce_spec_identity(f, title="GET /v1/client/debt", text=text, tables=None, single_feature=True) is None
     g = DetectedFeature(
+        structured_logic=StructuredBusinessLogic(),
         name="GET /payment-controller/getClientDebt", type=FeatureType.rest_endpoint, confidence=1.0,
         summary="s", method="GET", endpoint="/payment-controller/getClientDebt",
     )
@@ -88,6 +92,7 @@ def test_kafka_single_feature_title_topic_wins():
 
 def test_scheduled_task_untouched():
     f = DetectedFeature(
+        structured_logic=StructuredBusinessLogic(),
         name="send_limit_check_request", type=FeatureType.scheduled_task, confidence=1.0,
         summary="s", method="SCHEDULED", schedule="Ежедневно в 19:00",
         display_name="Отправка запроса на проверку лимита",

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, Json
 
 from app.schemas.extraction import MessageField
 
@@ -43,8 +43,10 @@ class ApiEndpointInfo(BaseModel):
     path: str
     description: str = ""
     params: list[ApiParamInfo] = Field(default_factory=list)
-    request_body_schema: dict | None = None
-    response_schema: dict | None = None
+    # Free-form JSON must reach the LLM as a string (a structured-output object
+    # may not have unknown keys); pydantic parses it back into a dict.
+    request_body_schema: Json[dict] | None = Field(default=None, description="JSON schema of the request body as a JSON string, if the document gives one")
+    response_schema: Json[dict] | None = Field(default=None, description="JSON schema of the response as a JSON string, if the document gives one")
     error_codes: list[str] = Field(default_factory=list)
 
 
@@ -61,7 +63,7 @@ class CacheKeyPattern(BaseModel):
     pattern: str = Field(description="Key pattern, e.g. product:{id}:status")
     description: str = ""
     ttl_seconds: int | None = None
-    value_structure: dict | None = None
+    value_structure: Json[dict] | None = Field(default=None, description="Structure of the cached value as a JSON string, if the document gives one")
 
 
 class CacheEnrichment(BaseModel):
