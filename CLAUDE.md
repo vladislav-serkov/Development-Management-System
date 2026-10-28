@@ -35,6 +35,18 @@ npm run build    # typecheck + production build
 npm run lint     # eslint
 ```
 
+### Published instance (https://24dms.ru — this Mac + reverse SSH tunnel to the VPS)
+```bash
+scripts/launchd.sh install|uninstall|restart|status   # LaunchAgents: app, autossh tunnel, caffeinate
+python -m app.cli users add <name>              # issue a login (random password printed)
+python -m app.cli users passwd <name>           # reset password (drops that user's sessions)
+python -m app.cli users list | remove <name>
+npm --prefix frontend run build && scripts/launchd.sh restart   # deploy frontend/backend changes
+```
+- The app (`scripts/serve.sh`: API under `/api` + built SPA, login on) runs on the host at `127.0.0.1:8080`, not in Docker, so headless Claude Code runs reach the service repos and the corporate VPN reaches Confluence/Jira. Logs: `~/Library/Logs/extract-agent/`.
+- `autossh` keeps `ssh -R 127.0.0.1:18080:127.0.0.1:8080 tunnel@72.56.107.180` up (key `~/.ssh/extract_agent_tunnel`; on the VPS it is limited to `restrict,port-forwarding,permitlisten="127.0.0.1:18080"`, no shell).
+- VPS (Ubuntu, root via `~/.ssh/id_ed25519`): host nginx `/etc/nginx/sites-available/extract-agent` terminates TLS for 24dms.ru → `127.0.0.1:18080`, rate-limits `/api/auth/login`, serves `/var/www/extract-agent/maintenance.html` while the Mac is offline. Let's Encrypt renews via `certbot.timer` (nginx authenticator). Cloudflare Tunnel was tried and does not work from this network (port 7844 blocked through Happ, long-lived connections cut when direct).
+
 ### Docker
 ```bash
 docker compose up              # backend :8000 + frontend :5173 (dev)
@@ -44,13 +56,16 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 ## Architecture
 
 ### Backend (Python/FastAPI)
-- **`app/main.py`** — FastAPI app, CORS, router registration, lifespan
+- **`app/main.py`** — FastAPI app, CORS, login-required middleware, router registration, lifespan
+- **`app/serve.py`** — single-origin production entrypoint: mounts the API at `/api` + serves `frontend/dist` with SPA fallback
+- **`app/cli.py`** — operator commands (`users add/passwd/list/remove`)
 - **`app/config.py`** — `pydantic-settings` config; reads `.env` for `ANTHROPIC_API_KEY`, model names, `DATABASE_URL`
 - **`app/db.py`** — async SQLAlchemy engine + session factory (lazy, so imports never need a live DB)
 - **`app/models.py`** — SQLAlchemy models; entity payloads live in JSONB `data` columns so rows round-trip to the exact dict shapes the API serves
 - **`app/storage.py`** — `ProjectStore` — PostgreSQL-backed persistence facade. All persistence goes through this class; every public method is one transaction
 - **`alembic/`** — migrations, applied automatically in the app lifespan on startup
 - **`app/routers/`** — API endpoints:
+  - `auth.py` — `/auth/login|logout|me`; session = random token in HttpOnly cookie `ea_session`, DB stores only its SHA-256 (`users`, `user_sessions`; service `app/services/auth.py`, scrypt password hashes). With `AUTH_ENABLED` every other route except `/` returns 401 without a session; the frontend `AuthGate` shows the login screen on 401
   - `projects.py` — CRUD, import/export zip, `.context` import, list/patch/delete features (`/projects/...`)
   - `documents.py` — Confluence page import → extraction (`POST /documents/import-confluence`)
   - `dependencies.py` — dependency listing/enrichment (`/projects/{slug}/dependencies/...`)
@@ -118,4 +133,5 @@ There is no linked-project registry anymore; the DB is the single source of trut
 - `DATABASE_URL` — PostgreSQL DSN (default: `postgresql+asyncpg://extract:extract@localhost:5432/extract_agent`)
 - `CONFLUENCE_BASE_URL` / `CONFLUENCE_PAT` — optional, enable importing Confluence pages as documents (Data Center PAT, Bearer auth)
 - `JIRA_BASE_URL` / `JIRA_PAT` — optional, enable exporting bug reports as Jira issues (Data Center PAT, Bearer auth; a separate Jira token — the Confluence PAT is not accepted). `JIRA_PROJECT_KEY` (default `MTSPAY`) / `JIRA_ISSUE_TYPE` (default `Bug`) pick the target project and issue type for every exported bug
+- `AUTH_ENABLED` (default off — local dev stays open; `scripts/serve.sh` turns it on) / `COOKIE_SECURE` / `SESSION_TTL_DAYS` — web UI login
 - Python 3.12+, Node 22+

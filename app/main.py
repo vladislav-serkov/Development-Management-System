@@ -3,10 +3,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.routers.auth import router as auth_router
+from app.routers.auth import store as auth_store
 from app.routers.bugs import router as bugs_router
 from app.routers.dependencies import router as dependencies_router
 from app.routers.documents import router as documents_router
@@ -17,6 +20,7 @@ from app.routers.tasks import router as tasks_router
 from app.routers.test_cases import router as test_cases_router
 from app.routers.test_db import router as test_db_router
 from app.routers.test_stand import router as test_stand_router
+from app.services.auth import SESSION_COOKIE
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
@@ -54,6 +58,22 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="Extract Agent", lifespan=lifespan)
 
+# Paths reachable without a session: health check and the login flow itself
+_PUBLIC_PATHS = {"/", "/auth/login", "/auth/logout", "/auth/me"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    # Under app.serve the API is mounted at /api: compare paths relative to the mount
+    path = request.url.path.removeprefix(request.scope.get("root_path", ""))
+    if settings.auth_enabled and request.method != "OPTIONS" and path not in _PUBLIC_PATHS:
+        token = request.cookies.get(SESSION_COOKIE)
+        user = await auth_store.user_for_token(token) if token else None
+        if user is None:
+            return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        request.state.user = user
+    return await call_next(request)
+
 cors_origins = settings.parsed_cors_origins()
 allow_all_origins = not cors_origins
 
@@ -65,6 +85,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(documents_router)
 app.include_router(dependencies_router)
