@@ -41,8 +41,20 @@ scripts/launchd.sh install|uninstall|restart|status   # LaunchAgents: app, autos
 python -m app.cli users add <name>              # issue a login (random password printed)
 python -m app.cli users passwd <name>           # reset password (drops that user's sessions)
 python -m app.cli users list | remove <name>
-npm --prefix frontend run build && scripts/launchd.sh restart   # deploy frontend/backend changes
 ```
+
+**Updating the live site** (the service runs straight from this checkout — the code on disk *is* production):
+```bash
+git checkout main && git pull --ff-only                 # only merged code goes live
+.venv/bin/pip install -e ".[dev]"                       # only if pyproject.toml changed
+npm --prefix frontend ci                                # only if package-lock.json changed
+npm --prefix frontend run build                         # always when frontend/ changed (served from frontend/dist)
+scripts/launchd.sh restart                              # Alembic migrations run on startup
+scripts/launchd.sh status                               # all three "running"
+curl -s -o /dev/null -w '%{http_code}\n' https://24dms.ru/api/auth/me   # 401 = up (login required); 502 = app/tunnel down
+```
+Startup takes ~10–20 s; if it stays down, read `~/Library/Logs/extract-agent/app.log` / `tunnel.log`. Do feature work in a separate worktree or switch back to `main` before the next restart: a launchd restart (crash, reboot, login) serves whatever branch is checked out here.
+
 - The app (`scripts/serve.sh`: API under `/api` + built SPA, login on) runs on the host at `127.0.0.1:8080`, not in Docker, so headless Claude Code runs reach the service repos and the corporate VPN reaches Confluence/Jira. Logs: `~/Library/Logs/extract-agent/`.
 - `autossh` keeps `ssh -R 127.0.0.1:18080:127.0.0.1:8080 tunnel@72.56.107.180` up (key `~/.ssh/extract_agent_tunnel`; on the VPS it is limited to `restrict,port-forwarding,permitlisten="127.0.0.1:18080"`, no shell).
 - VPS (Ubuntu, root via `~/.ssh/id_ed25519`): host nginx `/etc/nginx/sites-available/extract-agent` terminates TLS for 24dms.ru → `127.0.0.1:18080`, rate-limits `/api/auth/login`, serves `/var/www/extract-agent/maintenance.html` while the Mac is offline. Let's Encrypt renews via `certbot.timer` (nginx authenticator). Cloudflare Tunnel was tried and does not work from this network (port 7844 blocked through Happ, long-lived connections cut when direct).
