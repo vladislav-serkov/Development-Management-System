@@ -118,3 +118,25 @@ class Task(Base):
     result_message: Mapped[str | None] = mapped_column(Text)
     result_data: Mapped[dict | None] = mapped_column(JSONB)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
+
+
+class User(Base):
+    """Login for the web UI. Accounts are issued by the operator via ``python -m app.cli``."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    username: Mapped[str] = mapped_column(Text, unique=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserSession(Base):
+    """Browser session; only the SHA-256 of the cookie token is stored."""
+
+    __tablename__ = "user_sessions"
+
+    token_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

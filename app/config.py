@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     # ("реализовать/доработать метод") in the service repo. Shares Claude Code auth.
     implement_log_dir: str = "logs/implement"
     cors_origins: str = ""
+    # Web UI login (users are issued via `python -m app.cli users add`). Off by default
+    # for local dev; scripts/serve.sh turns it on for the published instance.
+    auth_enabled: bool = False
+    session_ttl_days: int = 30
+    # Send the session cookie only over HTTPS (the public URL is HTTPS via Cloudflare)
+    cookie_secure: bool = False
+    # Built frontend served by app.serve on the same origin as the API (empty = off)
+    frontend_dist: str = "frontend/dist"
 
     model_config = SettingsConfigDict(env_file=".env")
 

@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { projectPath, rulesPath } from "@/lib/routes"
+import { useLogout, useMe } from "@/hooks/useAuth"
 import type { ProjectResponse } from "@/types/api"
 
 export default function HomePage() {
@@ -23,6 +24,8 @@ export default function HomePage() {
   const importContextMutation = useImportContext()
   const deleteMutation = useDeleteProject()
   const navigate = useNavigate()
+  const { data: me } = useMe()
+  const logoutMutation = useLogout()
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newName, setNewName] = useState("")
@@ -122,6 +125,11 @@ export default function HomePage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {me?.username && (
+            <Button variant="ghost" size="sm" onClick={() => logoutMutation.mutate()} title="Выйти">
+              {me.username} · Выйти
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => navigate(rulesPath())}>Правила</Button>
           <Dialog
             open={dialogOpen}
