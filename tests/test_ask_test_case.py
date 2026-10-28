@@ -1,7 +1,8 @@
 """Tests for the on-demand test case ask pipeline (tester asks for a case on a spec item)."""
+import json
 from types import SimpleNamespace
 
-import app.services.test_cases as tc_mod
+import app.services.claude_client as claude_client
 from app.services.test_cases import run_test_case_ask_pipeline
 
 FEATURE = {
@@ -22,19 +23,20 @@ CASE = {
 }
 
 
-def _mock_claude(monkeypatch, tool_input):
-    """Point the service at a fake call_claude; returns the list of captured kwargs."""
+def _mock_claude(monkeypatch, output):
+    """Fake the API call under call_structured with a structured-output answer;
+    returns the list of captured request kwargs."""
     calls = []
 
     async def fake_call_claude(*, label="", **kwargs):
         calls.append(kwargs)
         return SimpleNamespace(
-            content=[SimpleNamespace(type="tool_use", input=tool_input)],
+            content=[SimpleNamespace(type="text", text=json.dumps(output, ensure_ascii=False))],
             usage=SimpleNamespace(),
-            stop_reason="tool_use",
+            stop_reason="end_turn",
         )
 
-    monkeypatch.setattr(tc_mod, "call_claude", fake_call_claude)
+    monkeypatch.setattr(claude_client, "call_claude", fake_call_claude)
     return calls
 
 
@@ -120,7 +122,7 @@ async def test_ask_failure_marks_task_error(store, monkeypatch):
     async def boom(*, label="", **kwargs):
         raise RuntimeError("api down")
 
-    monkeypatch.setattr(tc_mod, "call_claude", boom)
+    monkeypatch.setattr(claude_client, "call_claude", boom)
     task = await store.create_task("p", kind="test_cases", target_type="feature", target_id="create-order")
 
     try:

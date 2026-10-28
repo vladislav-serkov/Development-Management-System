@@ -5,8 +5,6 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from pydantic import ValidationError
-
 from app.config import settings
 from app.prompts.extraction import DETECT_FEATURE_PROMPT
 from app.schemas.extraction import (
@@ -14,7 +12,7 @@ from app.schemas.extraction import (
     FeatureDetectionResult,
     GenericTable,
 )
-from app.services.claude_client import call_claude, log_cache_stats, parse_tool_input
+from app.services.claude_client import call_structured
 from app.services.dep_impact import mark_feature_stale
 from app.services.rules import build_system_prompt
 from app.services.spec_diff import _names_contain, compute_spec_diff, merge_reextracted_feature
@@ -222,8 +220,7 @@ def _resolve_spec_tables(structured_logic, tables_by_id: dict[str, dict], resolv
 
     The LLM only classified the tables (which id belongs to which section, plus
     status codes for responses); the columns and rows come from the parsed grid.
-    LLM entries without a table_id are the inline fallback for documents without
-    [TABLE:Tn] markers and are kept as-is when they carry fields.
+    A reference to an unknown or unparseable table is dropped.
     """
     from app.services.table_mapping import table_to_spec_table
 
@@ -243,10 +240,8 @@ def _resolve_spec_tables(structured_logic, tables_by_id: dict[str, dict], resolv
                     resolved.append(parsed)
                     continue
                 logger.warning("Table %s (%s) did not parse as a field table — dropped", tid, attr)
-            elif tid:
-                logger.warning("%s references unknown table id %s", attr, tid)
-            if entry.fields:
-                resolved.append(entry)
+            else:
+                logger.warning("%s references unknown table id %r — dropped", attr, entry.table_id)
         setattr(structured_logic, attr, resolved)
 
 
@@ -289,82 +284,44 @@ async def _detect_features(
     model: str,
     system_prompt: str = "",
 ) -> list[DetectedFeature]:
-    """Detect one or more features via tool_use.
+    """Detect one or more features as a structured output.
 
     Usually returns a single-element list for kafka_consumer/rest_endpoint, but may
     return multiple for scheduled_task documents that describe N independent tasks.
     """
     logger.info("[Detect] Detecting features (model=%s, doc_size=%.1fKB)", model, len(doc_content) / 1024)
-    tool = {
-        "name": "detect_features",
-        "description": "Extract one or more features from the technical specification",
-        "input_schema": FeatureDetectionResult.model_json_schema(),
-    }
-
-    create_kwargs: dict = dict(
+    # NOTE: current Claude models removed the sampling params (temperature/top_p/
+    # top_k return 400), so run-to-run extraction variance cannot be pinned at the
+    # API level. The spec diff neutralizes it structurally (app/services/spec_diff.py).
+    result = await call_structured(
+        FeatureDetectionResult,
+        label="detect_features",
         model=model,
         max_tokens=settings.extraction_max_tokens,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "detect_features"},
-        # NOTE: current Claude models (Sonnet 5 / Opus 5+) removed the sampling
-        # params (temperature/top_p/top_k return 400), so run-to-run extraction
-        # variance cannot be pinned at the API level. The spec diff neutralizes
-        # it structurally instead (see app/services/spec_diff.py).
-    )
-    if system_prompt:
-        create_kwargs["system"] = system_prompt
-
-    response = await call_claude(
-        label="detect_features",
-        **create_kwargs,
+        effort=settings.extraction_effort,
+        system=system_prompt or None,
         messages=[
             {
                 "role": "user",
                 "content": [
                     _build_document_block(doc_content, cache=True),
-                    {
-                        "type": "text",
-                        "text": DETECT_FEATURE_PROMPT,
-                    },
+                    {"type": "text", "text": DETECT_FEATURE_PROMPT},
                 ],
             }
         ],
     )
-
-    if response.stop_reason == "max_tokens":
-        # The tool_use block is cut off mid-JSON: its input is empty or partial, which
-        # would otherwise surface as the misleading "Claude извлёк 0 features".
+    if not result.features:
         raise ValueError(
-            f"Ответ Claude обрезан лимитом в {settings.extraction_max_tokens} токенов "
-            f"(документ слишком большой). Увеличьте EXTRACTION_MAX_TOKENS или разбейте документ."
-        )
-
-    tool_block = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_block = block
-            break
-
-    if tool_block is None:
-        raise ValueError("No tool_use block in Claude response")
-
-    try:
-        result = parse_tool_input(FeatureDetectionResult, tool_block.input or {})
-    except ValidationError:
-        logger.warning("[Detect] Unparseable tool input: %s", str(tool_block.input)[:500])
-        result = None
-    if result is None or not result.features:
-        raise ValueError(
-            "Claude не смог извлечь ни одной feature из документа. "
+            "Claude не нашёл ни одной feature в документе. "
             "Возможно, документ не содержит технического задания."
         )
+    features = [f.nest() for f in result.features]
     logger.info(
         "[Detect] Detected %d feature(s): %s",
-        len(result.features),
-        [(f.name, f.type.value) for f in result.features],
+        len(features),
+        [(f.name, f.type.value) for f in features],
     )
-    log_cache_stats(response.usage, "detect_features")
-    return result.features
+    return features
 
 
 async def _process_single_feature(
