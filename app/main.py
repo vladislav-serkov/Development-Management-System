@@ -20,6 +20,7 @@ from app.routers.tasks import router as tasks_router
 from app.routers.test_cases import router as test_cases_router
 from app.routers.test_db import router as test_db_router
 from app.routers.test_stand import router as test_stand_router
+from app.routers.test_wiremock import router as test_wiremock_router
 from app.services.auth import SESSION_COOKIE
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -96,6 +97,7 @@ app.include_router(rules_router)
 app.include_router(tasks_router)
 app.include_router(test_db_router)
 app.include_router(test_stand_router)
+app.include_router(test_wiremock_router)
 
 
 @app.get("/")

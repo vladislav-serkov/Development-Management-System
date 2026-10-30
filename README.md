@@ -44,6 +44,20 @@ DATABASE_URL=postgresql+asyncpg://extract:extract@localhost:5432/extract_agent_d
 
 The database must exist before starting the backend. Alembic migrations run automatically at startup. Confluence and Jira settings, test stand access, login, model overrides, and agent configuration are documented in [.env.example](.env.example).
 
+To upload a test case's `mock_config` with the **Загрузить в WireMock** button
+in its **Мок** tab, set `TEST_WIREMOCK_URL` to the WireMock base URL, including
+any gateway prefix (for example
+`http://services-ump2-test.mbrd.ru:8090/bnpl-wiremock`). Omit
+`/__admin/mappings`; the backend adds it. The backend host needs access to the
+stand, including the corporate VPN when required. With no URL configured, the
+button is disabled. Upload accepts one JSON mapping with `request` and
+`response`, preserving its response body verbatim. Explicit `id`/`uuid` values
+are honoured and must agree; without an id, a stable UUID is derived from the
+request matcher and scenario state. Repeated uploads update the same mapping,
+so cases with the same matcher replace its active response. Other mappings
+are preserved. Stubs are loaded into WireMock's runtime, without saving them
+as startup defaults.
+
 ## Running locally
 
 ```bash
