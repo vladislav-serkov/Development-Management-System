@@ -13,7 +13,7 @@ AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/extract-agent"
 VPS="${VPS:-tunnel@72.56.107.180}"
 TUNNEL_KEY="${TUNNEL_KEY:-$HOME/.ssh/extract_agent_tunnel}"
-# launchd starts with a bare PATH: docker, node/npm, autossh and the claude CLI live elsewhere
+# launchd starts with a bare PATH: docker, node/npm, autossh and optional codex CLI live elsewhere
 LAUNCH_PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 LABELS=(local.extract-agent.app local.extract-agent.tunnel local.extract-agent.awake)
 

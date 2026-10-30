@@ -5,7 +5,6 @@ import pytest
 from app.config import settings
 from app.services import autotest_generator
 from app.services.autotest_generator import build_prompt
-from app.services.bug_fixer import extract_result_json
 
 TEST_CASE = {
     "name": "Отсутствует обязательный параметр mtsBankCardPanHash",
@@ -39,7 +38,7 @@ DOC = {
 @pytest.fixture
 def generator_configured(monkeypatch, tmp_path):
     (tmp_path / "flp-autotests" / ".git").mkdir(parents=True)
-    monkeypatch.setattr(settings, "claude_code_oauth_token", "sk-ant-oat01-test")
+    monkeypatch.setattr(settings, "codex_enabled", True)
     monkeypatch.setattr(settings, "autotests_repo_dir", str(tmp_path / "flp-autotests"))
 
 
@@ -51,8 +50,8 @@ async def _make_test_case(client, store, *, status="approved", with_doc=True):
     await store.save_test_cases("p", "GET /v1/balance", [{**TEST_CASE, "status": status}])
 
 
-def test_configured_requires_token_and_repo(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "claude_code_oauth_token", "token")
+def test_configured_requires_enabled_codex_and_repo(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "codex_enabled", True)
     monkeypatch.setattr(settings, "autotests_repo_dir", "")
     assert not autotest_generator.is_configured()
 
@@ -81,17 +80,8 @@ def test_prompt_carries_spec_ref_conventions_and_contract():
     assert '"generated" | "failed"' in prompt
 
 
-def test_verdict_parsed_with_generator_statuses():
-    text = 'Готово.\n{"status": "generated", "branch": "autotest/p-case-0", "mr_url": "https://gitlab/mr/2", "summary": "тест добавлен", "reason": null}'
-    verdict = extract_result_json(text, autotest_generator.VERDICT_STATUSES)
-    assert verdict["status"] == "generated"
-    assert verdict["mr_url"] == "https://gitlab/mr/2"
-    # bug-fixer statuses stay the default and reject generator verdicts
-    assert extract_result_json(text) is None
-
-
 async def test_autotest_unconfigured(client, store, monkeypatch):
-    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    monkeypatch.setattr(settings, "codex_enabled", False)
     await _make_test_case(client, store)
     r = await client.post("/projects/p/features/GET __v1__balance/test-cases/0/autotest")
     assert r.status_code == 409

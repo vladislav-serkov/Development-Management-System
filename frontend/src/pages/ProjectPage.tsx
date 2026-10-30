@@ -330,7 +330,7 @@ function ProjectContentArea({
               )}
               {selectedFeature.impl_status === "running" && (
                 <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code делает {selectedFeature.impl_jira_key}…
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Codex делает {selectedFeature.impl_jira_key}…
                 </span>
               )}
               {selectedFeature.impl_status === "implemented" && (

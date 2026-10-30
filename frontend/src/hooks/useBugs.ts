@@ -6,7 +6,7 @@ export function useFeatureBugs(projectSlug: string | null, featureName: string |
     queryKey: ["projects", projectSlug, "features", featureName, "bugs"],
     queryFn: () => fetchBugs(projectSlug!, featureName!),
     enabled: !!projectSlug && !!featureName,
-    // A fix run takes minutes — keep polling while Claude Code works on any bug
+    // A fix run takes minutes — keep polling while Codex works on any bug
     refetchInterval: (query) => {
       const bugs = query.state.data?.bugs ?? []
       return bugs.some((b) => b.fix_status === "queued" || b.fix_status === "running") ? 5000 : false

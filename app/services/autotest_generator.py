@@ -1,8 +1,8 @@
 """Autotest generator: turns an accepted test case into a Java autotest via
-a headless Claude Code run in the flp-autotests repo.
+a headless Codex SDK run in the flp-autotests repo.
 
 Mirrors the bug fixer's queueing model (one running generation per autotests
-repo; a `autotest_gen` task with target_id = repo name) and reuses its headless
+repo; a `autotest_gen` task with target_id = repo name) and uses the shared Codex
 runner. The spawned agent follows the repo's README conventions: one test
 method per test case, @SpecRef carrying the case address and the spec page
 version, MR into main via push options. Assertions come only from the test
@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
-from app.services import bug_fixer
+from app.services import agent_runner
 from app.services.task_manager import task_manager
 from app.storage import ActiveTaskExistsError
 
@@ -36,7 +36,7 @@ def repo_dir() -> Path | None:
 
 
 def is_configured() -> bool:
-    return bool(settings.claude_code_oauth_token) and repo_dir() is not None
+    return agent_runner.is_configured() and repo_dir() is not None
 
 
 def build_prompt(project_slug: str, feature: dict, tc_index: int, tc: dict, doc: dict) -> str:
@@ -130,7 +130,7 @@ async def request_generation(store, project_slug: str, feature_name: str, tc_ind
     """
     if not is_configured():
         raise AutotestError(
-            "Autotest generator не настроен: задайте CLAUDE_CODE_OAUTH_TOKEN и AUTOTESTS_REPO_DIR в .env"
+            "Autotest generator не настроен: задайте CODEX_ENABLED=true и AUTOTESTS_REPO_DIR в .env; выполните codex login"
         )
 
     feature = await store.get_feature(project_slug, feature_name)
@@ -216,14 +216,6 @@ async def _run_queue(store, project_slug: str, task_id: str) -> None:
         await store.finish_task(project_slug, task_id, status=status, error_message=error)
 
 
-_CONTINUE_PROMPT = (
-    "Сессия продолжена. Заверши работу над автотестом до конца: проверь компиляцию СИНХРОННО "
-    "(mvn -q test-compile, без фоновых задач), закоммить, создай MR через push options в main — "
-    "и выведи в самом конце ровно один итоговый JSON-объект "
-    '{"status": "generated" | "failed", "branch": ..., "mr_url": ..., "summary": ..., "reason": ...}.'
-)
-
-
 async def _generate_one(store, project_slug, feature_name, tc_index, tc, feature) -> None:
     doc = await _doc_of_feature(store, project_slug, feature)
     started = datetime.now(UTC).isoformat()
@@ -240,12 +232,12 @@ async def _generate_one(store, project_slug, feature_name, tc_index, tc, feature
                 project_slug, feature_name, tc_index, repo_dir(), log_path)
 
     try:
-        result = await bug_fixer._run_claude(
+        result = await agent_runner.run(
             build_prompt(project_slug, feature, tc_index, tc, doc),
             repo_dir(), log_path,
-            statuses=VERDICT_STATUSES, continue_prompt=_CONTINUE_PROMPT,
+            statuses=VERDICT_STATUSES,
         )
-    except (bug_fixer.BugFixerError, OSError) as exc:
+    except (agent_runner.AgentError, OSError) as exc:
         await _update_tc(
             store, project_slug, feature_name, tc_index,
             autotest_status="failed", autotest_error=str(exc)[:500],

@@ -40,8 +40,11 @@ class Settings(BaseSettings):
     jira_developer: str = ""  # ОР, customfield_10402 (multiuserpicker) — Jira login
     jira_fix_version: str = ""  # Fix Version/s — current release name, update per release
     jira_board_id: int = 1880  # agile board whose active sprint lands in Спринт (0 = off)
-    # Bug fixer: headless Claude Code runs that fix exported bugs in the service repos.
-    # Auth is a subscription OAuth token from `claude setup-token` (empty = feature off).
+    # Local Codex SDK jobs use the host user's ChatGPT login (codex login).
+    codex_enabled: bool = True
+    codex_model: str = ""  # empty = default from the signed-in account's model catalog
+    codex_cli: str = ""  # empty = SDK's pinned bundled runtime
+    # Deprecated: accepted so existing .env files still load; never used for agent jobs.
     claude_code_oauth_token: str = ""
     claude_cli: str = "claude"
     # Roots where service repos live; a service name must match a directory name
@@ -49,14 +52,14 @@ class Settings(BaseSettings):
     bug_fixer_auto: bool = True  # enqueue a fix as soon as a bug is exported to Jira
     bug_fix_timeout_seconds: int = 3600
     bug_fix_log_dir: str = "logs/bug-fixer"
-    # Autotest generator: headless Claude Code runs that turn accepted test cases
+    # Autotest generator: Codex SDK jobs that turn accepted test cases
     # into Java autotests in the flp-autotests repo (empty dir = feature off).
-    # Shares the Claude Code auth/timeout settings with the bug fixer.
+    # Shares the Codex login and timeout settings with the bug fixer.
     autotests_repo_dir: str = ""
     autotest_auto: bool = True  # queue generation as soon as a test case is approved
     autotest_log_dir: str = "logs/autotest-gen"
-    # Feature implementer: headless Claude Code runs that implement a feature task
-    # ("реализовать/доработать метод") in the service repo. Shares Claude Code auth.
+    # Feature implementer: Codex jobs that implement a feature task
+    # ("реализовать/доработать метод") in the service repo. Shares Codex auth.
     implement_log_dir: str = "logs/implement"
     cors_origins: str = ""
     # Web UI login (users are issued via `python -m app.cli users add`). Off by default

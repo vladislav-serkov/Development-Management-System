@@ -4,14 +4,13 @@ import pytest
 
 from app.config import settings
 from app.services import bug_fixer
-from app.services.bug_fixer import build_prompt, extract_result_json, resolve_repo
-
+from app.services.bug_fixer import build_prompt, resolve_repo
 from tests.test_jira import BUG, FEATURE, _make_bug
 
 
 @pytest.fixture
 def fixer_configured(monkeypatch):
-    monkeypatch.setattr(settings, "claude_code_oauth_token", "sk-ant-oat01-test")
+    monkeypatch.setattr(settings, "codex_enabled", True)
 
 
 def test_resolve_repo_searches_roots(tmp_path, monkeypatch):
@@ -29,25 +28,11 @@ def test_prompt_carries_ticket_flow_and_contract():
     bug = {**BUG, "jira_key": "MTSPAY-100", "jira_url": "https://jira.example/browse/MTSPAY-100"}
     prompt = build_prompt(bug, FEATURE, "https://confluence.example/pages/1")
     assert "MTSPAY-100" in prompt
-    assert "CLAUDE.md" in prompt
+    assert "AGENTS.md" in prompt
     assert "регрессионный тест" in prompt
     assert "https://confluence.example/pages/1" in prompt
     assert "curl -X POST http://stand/payments" in prompt
     assert '"fix_proposed" | "failed"' in prompt
-
-
-def test_extract_result_json_takes_trailing_verdict():
-    text = (
-        'Сделал. Промежуточный объект: {"status": "wip"}\n'
-        'Итог:\n{"status": "fix_proposed", "branch": "feature/MTSPAY-100-fix", '
-        '"mr_url": "https://gitlab/mr/1", "summary": "починил", "reason": null}'
-    )
-    verdict = extract_result_json(text)
-    assert verdict["status"] == "fix_proposed"
-    assert verdict["mr_url"] == "https://gitlab/mr/1"
-
-    assert extract_result_json("никакого json тут нет") is None
-    assert extract_result_json('{"status": "что-то другое"}') is None
 
 
 async def test_fix_requires_jira_key(client, store, fixer_configured):
@@ -58,11 +43,11 @@ async def test_fix_requires_jira_key(client, store, fixer_configured):
 
 
 async def test_fix_unconfigured(client, store, monkeypatch):
-    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    monkeypatch.setattr(settings, "codex_enabled", False)
     await _make_bug(client, store, with_jira_key=True)
     r = await client.post("/projects/p/features/f1/bugs/0/fix")
     assert r.status_code == 409
-    assert "CLAUDE_CODE_OAUTH_TOKEN" in r.json()["detail"]
+    assert "CODEX_ENABLED" in r.json()["detail"]
 
 
 async def test_fix_queues_and_rejects_repeat(client, store, fixer_configured, monkeypatch, tmp_path):

@@ -281,7 +281,7 @@ function BugCard({
                   )}
                   {bug.fix_status === "running" && (
                     <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 px-2 py-px text-blue-700 dark:border-blue-900/50 dark:text-blue-400">
-                      <Loader2 className="h-3 w-3 animate-spin" /> Claude Code чинит…
+                      <Loader2 className="h-3 w-3 animate-spin" /> Codex чинит…
                     </span>
                   )}
                   {bug.fix_status === "fix_proposed" && (

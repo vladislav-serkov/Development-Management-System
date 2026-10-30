@@ -1,7 +1,7 @@
-"""Bug fixer: hands an exported Jira bug to a headless Claude Code run in the service repo.
+"""Bug fixer: hands an exported Jira bug to a local Codex SDK run in the service repo.
 
-The spawned `claude -p` process runs inside the service repository, so it picks up
-the user's global ~/.claude/CLAUDE.md and follows the standard MTSPAY bug flow on
+The Codex thread runs inside the service repository, so it picks up
+the user's global and project AGENTS.md and follows the standard MTSPAY bug flow on
 its own (Jira issue, Confluence spec, red regression test → green fix, MR via push
 options, Jira status transitions). The prompt therefore only points the agent at
 the Jira issue, passes the platform's repro context, and fixes the output contract.
@@ -11,15 +11,12 @@ service name); other exported bugs of the same service wait as fix_status="queue
 and are picked up by the same task loop.
 """
 
-import asyncio
-import json
 import logging
-import os
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
+from app.services import agent_runner
 from app.services.task_manager import task_manager
 from app.storage import ActiveTaskExistsError
 
@@ -31,7 +28,7 @@ class BugFixerError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(settings.claude_code_oauth_token)
+    return agent_runner.is_configured()
 
 
 def resolve_repo(service_name: str | None) -> Path | None:
@@ -46,13 +43,13 @@ def resolve_repo(service_name: str | None) -> Path | None:
 
 
 def build_prompt(bug: dict, feature: dict, spec_url: str | None) -> str:
-    """Task prompt for the headless run; the process' global CLAUDE.md carries the flow."""
+    """Task prompt for the headless run; AGENTS.md and take-task carry the flow."""
     parts: list[str] = [
         f"Возьми в работу баг {bug['jira_key']} ({bug.get('jira_url', '')}).",
         "",
         "Это баг, заведённый тестировщиком через платформу Extract Agent; описание тикета "
         "совпадает с контекстом ниже. Работай строго по стандартному флоу для задач типа "
-        "«баг» из глобального CLAUDE.md: свежий develop, ветка по тикету, ТЗ из Confluence, "
+        "«баг» из AGENTS.md и навыка take-task: свежий develop, ветка по тикету, ТЗ из Confluence, "
         "проверка что фактическое поведение действительно нарушает ТЗ, регрессионный тест "
         "(сначала убедиться, что он красный), фикс до зелёного, MR через push options, "
         "перевод статусов Jira.",
@@ -95,19 +92,6 @@ def build_prompt(bug: dict, feature: dict, spec_url: str | None) -> str:
     return "\n".join(parts)
 
 
-def extract_result_json(text: str, statuses: tuple[str, ...] = ("fix_proposed", "failed")) -> dict | None:
-    """Pull the trailing {"status": ...} object out of the agent's final message."""
-    matches = re.findall(r"\{[^{}]*\"status\"[^{}]*\}", text, re.DOTALL)
-    for raw in reversed(matches):
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if data.get("status") in statuses:
-            return data
-    return None
-
-
 async def _update_bug(store, project_slug: str, feature_name: str, bug_index: int, **fields) -> dict | None:
     bugs = await store.get_bugs(project_slug, feature_name)
     if bug_index >= len(bugs):
@@ -133,7 +117,7 @@ async def request_fix(store, project_slug: str, feature_name: str, bug_index: in
     be queued (not configured, no Jira key, repo not found).
     """
     if not is_configured():
-        raise BugFixerError("Bug fixer не настроен: задайте CLAUDE_CODE_OAUTH_TOKEN в .env")
+        raise BugFixerError("Bug fixer не настроен: установите CODEX_ENABLED=true и выполните codex login")
 
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
@@ -237,8 +221,8 @@ async def _fix_one(store, project_slug, feature_name, bug_index, bug, feature, s
     logger.info("[bug_fixer] Fixing %s in %s (log: %s)", bug["jira_key"], repo, log_path)
 
     try:
-        result = await _run_claude(build_prompt(bug, feature, spec_url), repo, log_path)
-    except (BugFixerError, OSError) as exc:
+        result = await agent_runner.run(build_prompt(bug, feature, spec_url), repo, log_path)
+    except (agent_runner.AgentError, OSError) as exc:
         await _update_bug(
             store, project_slug, feature_name, bug_index,
             fix_status="failed", fix_error=str(exc)[:500],
@@ -256,87 +240,3 @@ async def _fix_one(store, project_slug, feature_name, bug_index, bug, feature, s
         fix_finished_at=datetime.now(UTC).isoformat(),
     )
     logger.info("[bug_fixer] %s finished: %s (%s)", bug["jira_key"], result.get("status"), result.get("mr_url") or result.get("reason"))
-
-
-_CONTINUE_PROMPT = (
-    "Сессия продолжена. Заверши начатую работу по багу до конца: дождись/повтори проверки "
-    "СИНХРОННО (без фоновых задач), закоммить, создай MR через push options, переведи статусы "
-    "Jira — и выведи в самом конце ровно один итоговый JSON-объект "
-    '{"status": ..., "branch": ..., "mr_url": ..., "summary": ..., "reason": ...}.'
-)
-
-
-async def _run_claude(
-    prompt: str, repo: Path, log_path: Path,
-    statuses: tuple[str, ...] = ("fix_proposed", "failed"),
-    continue_prompt: str | None = None,
-) -> dict:
-    """Headless Claude Code run; returns the agent's final JSON verdict.
-
-    A one-shot -p session dies the moment the agent ends its turn, even if it ended
-    it "waiting" for something — so when the final message carries no verdict, the
-    same session is resumed once and asked to finish the job. The autotest
-    generator reuses this runner with its own verdict statuses/continue prompt.
-    """
-    env = os.environ.copy()
-    env["CLAUDE_CODE_OAUTH_TOKEN"] = settings.claude_code_oauth_token
-    # The backend itself may run under Claude Code — the child is an independent session.
-    env.pop("CLAUDECODE", None)
-
-    deadline = asyncio.get_running_loop().time() + settings.bug_fix_timeout_seconds
-    result_text, session_id = await _one_pass(["-p", prompt], repo, env, log_path, deadline, mode="w")
-
-    verdict = extract_result_json(result_text, statuses)
-    if verdict is None and session_id:
-        logger.warning("[bug_fixer] No verdict in final message — resuming session %s once", session_id)
-        result_text, _ = await _one_pass(
-            ["-p", "--resume", session_id, continue_prompt or _CONTINUE_PROMPT], repo, env, log_path, deadline, mode="a",
-        )
-        verdict = extract_result_json(result_text, statuses)
-
-    if verdict is None:
-        raise BugFixerError(
-            f"Агент не вернул итоговый JSON (см. лог {log_path}); конец ответа: {result_text[-200:]}"
-        )
-    return verdict
-
-
-async def _one_pass(
-    args: list[str], repo: Path, env: dict, log_path: Path, deadline: float, mode: str,
-) -> tuple[str, str | None]:
-    """Run one claude process until its result event; returns (final_text, session_id)."""
-    proc = await asyncio.create_subprocess_exec(
-        settings.claude_cli, *args,
-        "--output-format", "stream-json", "--verbose",
-        "--dangerously-skip-permissions",
-        cwd=repo, env=env,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-
-    result_text = ""
-    session_id: str | None = None
-    try:
-        async with asyncio.timeout(deadline - asyncio.get_running_loop().time()):
-            with log_path.open(mode, encoding="utf-8") as log:
-                async for raw_line in proc.stdout:
-                    line = raw_line.decode(errors="replace")
-                    log.write(line)
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if event.get("session_id"):
-                        session_id = event["session_id"]
-                    if event.get("type") == "result":
-                        result_text = event.get("result") or ""
-            stderr = (await proc.stderr.read()).decode(errors="replace")
-            rc = await proc.wait()
-    except TimeoutError:
-        proc.kill()
-        raise BugFixerError(
-            f"Прогон превысил таймаут {settings.bug_fix_timeout_seconds}с и был остановлен"
-        )
-
-    if rc != 0 and not result_text:
-        raise BugFixerError(f"claude завершился с кодом {rc}: {stderr.strip()[:300]}")
-    return result_text, session_id
