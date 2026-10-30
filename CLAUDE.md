@@ -1,6 +1,23 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This is the shared project guide for coding agents. Claude Code reads it directly;
+Codex reads it via the root `AGENTS.md`. Keep architecture and implementation
+conventions here; setup is in `README.md`, deployment is in `DEPLOY.md`.
+
+## Working agreements
+
+- The published app runs directly from this checkout. Make source-code changes
+  in a separate Git worktree with its own `.env` and development database;
+  documentation-only changes can stay here. Do not build the frontend or restart
+  the service in the live checkout except as part of a requested deployment.
+- Use the checkout's `.venv/bin/` Python tools. For backend changes run relevant
+  pytest tests; database tests require a dedicated test database (the fixtures
+  drop/recreate its schema). For frontend changes run
+  `npm --prefix frontend run lint` and `npm --prefix frontend run build` in the
+  development worktree.
+- Preserve the application's Anthropic API and local Codex SDK workflows
+  unless changing them is part of the task. The coding agent used to edit this
+  repository does not determine the application's runtime providers.
 
 ## Project
 
@@ -11,53 +28,37 @@ Extract Agent — AI-powered platform that extracts structured feature specifica
 ### Backend
 ```bash
 # Install (from repo root, uses .venv)
-pip install -e ".[dev]"
+.venv/bin/python -m pip install -e ".[dev]"
 
-# Start PostgreSQL (required)
+# Start PostgreSQL if not already running on :5432 (reuse the host DB otherwise)
 docker compose up -d db
 
 # Run dev server (applies Alembic migrations on startup)
-uvicorn app.main:app --reload --port 8000
+.venv/bin/uvicorn app.main:app --reload --port 8000
 
 # Tests (need the db container running; they use a separate extract_agent_test DB)
-pytest
+.venv/bin/pytest
+.venv/bin/ruff check app tests
 
 # New migration after changing app/models.py
-alembic revision --autogenerate -m "message"
+.venv/bin/alembic revision --autogenerate -m "message"
 ```
 
 ### Frontend
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev      # dev server on :5173, proxies /api → backend :8000
 npm run build    # typecheck + production build
 npm run lint     # eslint
 ```
 
-### Published instance (https://24dms.ru — this Mac + reverse SSH tunnel to the VPS)
-```bash
-scripts/launchd.sh install|uninstall|restart|status   # LaunchAgents: app, autossh tunnel, caffeinate
-python -m app.cli users add <name>              # issue a login (random password printed)
-python -m app.cli users passwd <name>           # reset password (drops that user's sessions)
-python -m app.cli users list | remove <name>
-```
+### Published instance
 
-**Updating the live site** (the service runs straight from this checkout — the code on disk *is* production):
-```bash
-git checkout main && git pull --ff-only                 # only merged code goes live
-.venv/bin/pip install -e ".[dev]"                       # only if pyproject.toml changed
-npm --prefix frontend ci                                # only if package-lock.json changed
-npm --prefix frontend run build                         # always when frontend/ changed (served from frontend/dist)
-scripts/launchd.sh restart                              # Alembic migrations run on startup
-scripts/launchd.sh status                               # all three "running"
-curl -s -o /dev/null -w '%{http_code}\n' https://24dms.ru/api/auth/me   # 401 = up (login required); 502 = app/tunnel down
-```
-Startup takes ~10–20 s; if it stays down, read `~/Library/Logs/extract-agent/app.log` / `tunnel.log`. Do feature work in a separate worktree or switch back to `main` before the next restart: a launchd restart (crash, reboot, login) serves whatever branch is checked out here.
-
-- The app (`scripts/serve.sh`: API under `/api` + built SPA, login on) runs on the host at `127.0.0.1:8080`, not in Docker, so headless Claude Code runs reach the service repos and the corporate VPN reaches Confluence/Jira. Logs: `~/Library/Logs/extract-agent/`.
-- `autossh` keeps `ssh -R 127.0.0.1:18080:127.0.0.1:8080 tunnel@72.56.107.180` up (key `~/.ssh/extract_agent_tunnel`; on the VPS it is limited to `restrict,port-forwarding,permitlisten="127.0.0.1:18080"`, no shell).
-- VPS (Ubuntu, root via `~/.ssh/id_ed25519`): host nginx `/etc/nginx/sites-available/extract-agent` terminates TLS for 24dms.ru → `127.0.0.1:18080`, rate-limits `/api/auth/login`, serves `/var/www/extract-agent/maintenance.html` while the Mac is offline. Let's Encrypt renews via `certbot.timer` (nginx authenticator). Cloudflare Tunnel was tried and does not work from this network (port 7844 blocked through Happ, long-lived connections cut when direct).
+The published site (https://24dms.ru) runs from this checkout on the Mac, with a
+reverse SSH tunnel to VPS nginx. Source work belongs in a separate worktree.
+See [DEPLOY.md](DEPLOY.md) for host setup, builds, LaunchAgents, migrations,
+health checks, logs, user administration, and the alternative Docker stack.
 
 ### Docker
 ```bash
@@ -93,8 +94,10 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `confluence.py` — Confluence DC integration: fetch page by URL via PAT (Bearer), convert storage XHTML → markdown for extraction (`POST /documents/import-confluence`); `fetch_page_meta` — lightweight version probe (no body) for spec-update checks
   - `spec_diff.py` — deterministic diff of a document's features between spec versions, computed on re-import (no LLM). **Primary materiality gate is the page text itself**: the import endpoint passes the previously imported markdown, and if the whitespace-normalized text is identical (`source_unchanged`), nothing is material, no feature goes stale or orphaned — every difference is LLM run-to-run noise (QA on 9 real specs: LLM rewrites step text, re-slices steps, re-attaches tables between runs, so diffing LLM output alone gave 6/9 false positives). Only for pages whose text changed does the structural diff decide what changed: tables matched globally by content fingerprint (moves and extra copies of the same table are non-material), steps matched by verbatim text first, dependencies by stable link target (`link_keys`) then punctuation-insensitive name containment. Also `merge_reextracted_feature` — re-extraction carries over analysis state; it runs inside `ProjectStore.merge_feature` (SELECT … FOR UPDATE on the live row), so analysis written during the 1–2 min LLM call survives. Pipeline rules: version + source are committed to the document only when every feature succeeded (a failed/partial re-import keeps the old version and `spec_outdated`); feature identity of single-feature REST/Kafka pages comes from the page title; dependency names are canonical (external_doc = linked page title, external_api = path without method) and existing rows are renamed to them instead of duplicated; renames are carried 1↔1 on single-feature pages and by display_name/endpoint on multi-feature pages; a detected name owned by another document's feature is skipped (never overwritten). Stale flags carry `*_stale_at`; a gaps/test-case run clears its flag only if it started after the flag was raised (`ProjectStore.clear_stale`). `POST /documents/check-spec-updates` probes Confluence for new page versions and persists `spec_outdated` badges; the frontend auto-checks every 5 min on an open project
   - `jira.py` — Jira DC integration: create Bug issues from stored bug reports (wiki-markup description, severity → priority) and read back live issue statuses (`POST .../bugs/{index}/export-jira`, `POST .../bugs/sync-jira`)
-  - `bug_fixer.py` — hands an exported Jira bug to a headless Claude Code run (`claude -p`, subscription OAuth token) inside the service repo resolved from `REPOS_DIRS`; the run follows the user's global `~/.claude/CLAUDE.md` bug flow (spec check, red regression test → green fix, MR via push options, Jira transitions) and returns a JSON verdict stored on the bug (`fix_status`/`fix_mr_url`/...). One running fix per service repo (task kind `bug_fix`, target = service); exporting a bug to Jira auto-queues it (`BUG_FIXER_AUTO`), `POST .../bugs/{index}/fix` retries manually
-  - `autotest_generator.py` — turns an accepted test case (`status=approved`) into a Java autotest via a headless Claude Code run in the flp-autotests repo (`AUTOTESTS_REPO_DIR`): the agent follows the repo's README conventions (one method per case, `@SpecRef` with the case address + spec page version, MR into main via push options) and returns a JSON verdict stored on the test case (`autotest_status`/`autotest_mr_url`/...). Mirrors bug_fixer's queueing (task kind `autotest_gen`, one per repo) and reuses its headless runner; accepting a case auto-queues generation (`AUTOTEST_AUTO`), `POST .../test-cases/{index}/autotest` retries manually
+  - `agent_runner.py` — shared `AsyncCodex` runner with ChatGPT-only auth, model catalog selection, workspace sandbox + automatic approval review, process-wide serialization, schema-validated verdicts, streamed JSONL logs, and interruption/cleanup on timeout or cancellation. Only invalid JSON gets one correction turn; failed/limited turns do not retry
+  - `bug_fixer.py` — hands an exported Jira bug to a local Codex SDK job (saved ChatGPT subscription login) inside the service repo resolved from `REPOS_DIRS`; the run follows global/project `AGENTS.md` and the migrated `take-task` bug flow (spec check, red regression test → green fix, MR via push options, Jira transitions) and returns a JSON verdict stored on the bug (`fix_status`/`fix_mr_url`/...). One running fix per service repo (task kind `bug_fix`, target = service); exporting a bug to Jira auto-queues it (`BUG_FIXER_AUTO`), `POST .../bugs/{index}/fix` retries manually
+  - `autotest_generator.py` — turns an accepted test case (`status=approved`) into a Java autotest via a local Codex SDK job in the flp-autotests repo (`AUTOTESTS_REPO_DIR`): the agent follows the repo's README conventions (one method per case, `@SpecRef` with the case address + spec page version, MR into main via push options) and returns a JSON verdict stored on the test case (`autotest_status`/`autotest_mr_url`/...). Mirrors bug_fixer's queueing (task kind `autotest_gen`, one per repo) and uses the shared Codex runner; accepting a case auto-queues generation (`AUTOTEST_AUTO`), `POST .../test-cases/{index}/autotest` retries manually
+  - `feature_implementer.py` — hands a feature task to the shared Codex SDK runner in a service repo (task kind `implement`, target = service). Uses the global Codex `take-task` new-functionality flow, returns `implemented`/`no_changes_needed`/`failed`, and stores `impl_status`/`impl_mr_url`/logs on the feature
   - `gaps.py` — Gaps analysis via Claude
   - `test_cases.py` — Test case generation via Claude
   - `bugs.py` — Bug report generation from test case review via Claude
@@ -107,9 +110,9 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 - **`app/schemas/`** — Pydantic response/request models
 
 ### Frontend (React 19/Vite/TypeScript)
-- **`src/pages/`** — `HomePage` (project grid), `ProjectPage` (single project view), `RulesPage` (validation rules)
+- **`src/pages/`** — `HomePage` (project grid), `ProjectPage` (single project view), `RulesPage` (validation rules), `BackgroundTasksPage` (job status)
 - **`src/api/`** — API client functions (fetch-based, typed)
-- **`src/hooks/`** — TanStack Query hooks per domain (`useDocuments`, `useExtraction`, `useGaps`, `useTestCases`, `useDependencies`, `useExport`, `useBugs`, `useRules`)
+- **`src/hooks/`** — TanStack Query hooks per domain (`useDocuments`, `useGaps`, `useTestCases`, `useDependencies`, `useExport`, `useBugs`, `useRules`, `useTasks`, `useAuth`, `useTestDb`, `useTestStand`)
 - **`src/stores/`** — Zustand store (`uiStore`) for UI state
 - **`src/components/`** — organized by domain: `project/`, `feature/`, `dependency/`, `sidebar/`, `ui/` (shadcn)
 - Path alias: `@` → `src/`
@@ -146,5 +149,9 @@ There is no linked-project registry anymore; the DB is the single source of trut
 - `DATABASE_URL` — PostgreSQL DSN (default: `postgresql+asyncpg://extract:extract@localhost:5432/extract_agent`)
 - `CONFLUENCE_BASE_URL` / `CONFLUENCE_PAT` — optional, enable importing Confluence pages as documents (Data Center PAT, Bearer auth)
 - `JIRA_BASE_URL` / `JIRA_PAT` — optional, enable exporting bug reports as Jira issues (Data Center PAT, Bearer auth; a separate Jira token — the Confluence PAT is not accepted). `JIRA_PROJECT_KEY` (default `MTSPAY`) / `JIRA_ISSUE_TYPE` (default `Bug`) pick the target project and issue type for every exported bug
+- `CODEX_ENABLED` (default on) / `CODEX_MODEL` / `CODEX_CLI` — local Codex jobs using the saved ChatGPT login; empty model = account catalog default, empty executable = SDK bundled runtime. Legacy `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CLI` are accepted but unused
+- `REPOS_DIRS` — service repo roots for bug fixing and feature implementation
+- `AUTOTESTS_REPO_DIR` / `AUTOTEST_AUTO` / `BUG_FIXER_AUTO` / `BUG_FIX_TIMEOUT_SECONDS` — optional agent targets, automatic queueing, and timeout
+- `TEST_DB_URL` / `TEST_STAND_URL` — optional execution of SQL/curl test artifacts against a test stand
 - `AUTH_ENABLED` (default off — local dev stays open; `scripts/serve.sh` turns it on) / `COOKIE_SECURE` / `SESSION_TTL_DAYS` — web UI login
 - Python 3.12+, Node 22+

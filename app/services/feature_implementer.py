@@ -1,8 +1,8 @@
 """Feature implementer: hands a "реализовать/доработать метод" task to a headless
-Claude Code run in the service repo.
+Codex SDK run in the service repo.
 
-Mirrors the bug fixer: the spawned `claude -p` session runs inside the service
-repository, picks up the user's global ~/.claude/CLAUDE.md and follows the
+Mirrors the bug fixer: the local Codex thread runs inside the service
+repository, picks up the user's global and project AGENTS.md and follows the
 standard MTSPAY new-functionality flow (fresh develop, branch by ticket, spec
 from Confluence, implementation with tests, MR via push options, Jira status
 transitions). The platform contributes what it already knows: the extracted
@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
-from app.services import bug_fixer
+from app.services import agent_runner, bug_fixer
 from app.services.task_manager import task_manager
 from app.storage import ActiveTaskExistsError
 
@@ -33,7 +33,7 @@ class ImplementError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(settings.claude_code_oauth_token)
+    return agent_runner.is_configured()
 
 
 def _format_logic(feature: dict) -> list[str]:
@@ -55,13 +55,13 @@ def _format_logic(feature: dict) -> list[str]:
 
 
 def build_prompt(jira_key: str, feature: dict, doc: dict) -> str:
-    """Task prompt for the headless run; the global CLAUDE.md carries the flow."""
+    """Task prompt for the headless run; the AGENTS.md and take-task carry the flow."""
     parts: list[str] = [
         f"Возьми в работу задачу {jira_key}.",
         "",
         "Это задача на новый функционал (реализовать новый метод или доработать существующий). "
         "Работай строго по стандартному флоу для задач типа «новый функционал» из глобального "
-        "CLAUDE.md: свежий develop, ветка по тикету, ТЗ из Confluence, реализация с тестами "
+        "AGENTS.md и навыка take-task: свежий develop, ветка по тикету, ТЗ из Confluence, реализация с тестами "
         "(TDD), MR через push options, перевод статусов Jira.",
         "",
         "## Контекст от платформы Extract Agent",
@@ -119,7 +119,7 @@ async def request_implementation(store, project_slug: str, feature_name: str, ji
     even be queued (not configured, no ticket, repo not found).
     """
     if not is_configured():
-        raise ImplementError("Агент не настроен: задайте CLAUDE_CODE_OAUTH_TOKEN в .env")
+        raise ImplementError("Агент не настроен: установите CODEX_ENABLED=true и выполните codex login")
 
     jira_key = (jira_key or "").strip().upper()
     if not jira_key:
@@ -201,15 +201,6 @@ async def _run_queue(store, project_slug: str, service: str, task_id: str) -> No
         await store.finish_task(project_slug, task_id, status=status, error_message=error)
 
 
-_CONTINUE_PROMPT = (
-    "Сессия продолжена. Заверши начатую задачу до конца: дождись/повтори проверки СИНХРОННО "
-    "(без фоновых задач), закоммить, создай MR через push options, переведи статусы Jira — "
-    "и выведи в самом конце ровно один итоговый JSON-объект "
-    '{"status": "implemented" | "no_changes_needed" | "failed", "branch": ..., "mr_url": ..., '
-    '"summary": ..., "reason": ...}.'
-)
-
-
 async def _implement_one(store, project_slug, feature_name, feature, service) -> None:
     repo = bug_fixer.resolve_repo(service)
     doc = await _doc_of_feature(store, project_slug, feature)
@@ -227,11 +218,11 @@ async def _implement_one(store, project_slug, feature_name, feature, service) ->
     logger.info("[implementer] Implementing %s (%s) in %s (log: %s)", feature_name, jira_key, repo, log_path)
 
     try:
-        result = await bug_fixer._run_claude(
+        result = await agent_runner.run(
             build_prompt(jira_key, feature, doc), repo, log_path,
-            statuses=VERDICT_STATUSES, continue_prompt=_CONTINUE_PROMPT,
+            statuses=VERDICT_STATUSES,
         )
-    except (bug_fixer.BugFixerError, OSError) as exc:
+    except (agent_runner.AgentError, OSError) as exc:
         await _update_feature(
             store, project_slug, feature_name,
             impl_status="failed", impl_error=str(exc)[:500],

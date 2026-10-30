@@ -194,7 +194,7 @@ async def generate_autotest(
     feature_name: str,
     tc_index: int = Path(..., description="Zero-based index of test case in the list"),
 ):
-    """Queue a headless Claude Code run that writes a Java autotest for the accepted case."""
+    """Queue a headless Codex run that writes a Java autotest for the accepted case."""
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(

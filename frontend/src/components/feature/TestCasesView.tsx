@@ -294,7 +294,7 @@ function TestCaseCard({
           )}
           {tc.autotest_status === "running" && (
             <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Claude Code пишет автотест…
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Codex пишет автотест…
             </span>
           )}
           {tc.autotest_status === "generated" && (

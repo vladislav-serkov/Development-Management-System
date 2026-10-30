@@ -295,7 +295,7 @@ class FeatureImplementRequest(BaseModel):
 
 @router.post("/{project_slug}/features/{feature_name}/implement", response_model=FeatureResponse)
 async def implement_feature(project_slug: str, feature_name: str, body: FeatureImplementRequest):
-    """Queue a headless Claude Code run that implements the feature task in the service repo."""
+    """Queue a headless Codex run that implements the feature task in the service repo."""
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")

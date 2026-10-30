@@ -144,7 +144,7 @@ async def fix_bug(
     feature_name: str,
     bug_index: int = Path(..., description="Zero-based index of bug to fix"),
 ):
-    """Queue a headless Claude Code run that fixes the bug in the service repo."""
+    """Queue a headless Codex run that fixes the bug in the service repo."""
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(

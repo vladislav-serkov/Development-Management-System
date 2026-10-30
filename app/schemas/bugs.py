@@ -36,7 +36,7 @@ class BugItem(BaseModel):
     jira_key: str | None = None
     jira_url: str | None = None
     jira_status: str | None = None
-    # Bug fixer (headless Claude Code run in the service repo)
+    # Bug fixer (headless Codex run in the service repo)
     fix_status: str | None = None  # "queued" | "running" | "fix_proposed" | "failed"
     fix_service: str | None = None
     fix_branch: str | None = None
