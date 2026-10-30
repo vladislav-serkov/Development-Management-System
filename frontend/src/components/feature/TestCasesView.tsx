@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
 import { CurlArtifact } from "@/components/feature/CurlArtifact"
+import { MockArtifact } from "@/components/feature/MockArtifact"
 import { ArtifactHead, CodeBlock, CopyButton, MetaChip, TypeBadge } from "@/components/feature/artifact-ui"
 import { ARTIFACT_BADGE } from "@/lib/artifacts"
 import { Bot, Check, ChevronDown, ChevronUp, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
@@ -598,33 +599,6 @@ function KafkaArtifact({ message }: { message: { key: string; value: string } })
   )
 }
 
-/** WireMock stub: show what is mocked (method + path → status) above the formatted JSON. */
-function MockArtifact({ value }: { value: string }) {
-  let method: string | null = null
-  let path: string | null = null
-  let status: number | null = null
-  try {
-    const parsed = JSON.parse(value)
-    method = typeof parsed?.request?.method === "string" ? parsed.request.method : null
-    const req = parsed?.request ?? {}
-    path = req.urlPath ?? req.url ?? req.urlPattern ?? req.urlPathPattern ?? null
-    status = typeof parsed?.response?.status === "number" ? parsed.response.status : null
-  } catch {
-    // not JSON — show as is
-  }
-
-  return (
-    <div className="space-y-2.5">
-      <ArtifactHead
-        badge={<TypeBadge label="MOCK" className={ARTIFACT_BADGE.MOCK} />}
-        target={path ? `${method ? `${method} ` : ""}${path}` : "мок внешней системы"}
-        chips={status !== null ? <MetaChip>ответ {status}</MetaChip> : undefined}
-      />
-      <CodeBlock value={formatJsonOrRaw(value)} copyValue={value} />
-    </div>
-  )
-}
-
 function ArtifactsSection({ tc, projectSlug, featureName }: { tc: TestCaseItem; projectSlug: string; featureName: string }) {
   const available = ARTIFACTS.filter((artifact) => tc[artifact.key as keyof TestCaseItem])
   const [active, setActive] = useState<string>(available[0]?.key ?? "")
@@ -655,7 +629,7 @@ function ArtifactsSection({ tc, projectSlug, featureName }: { tc: TestCaseItem; 
       )}
       {current === "kafka_message" && tc.kafka_message && <KafkaArtifact message={tc.kafka_message} />}
       {current === "sql_setup" && tc.sql_setup && <SqlArtifact value={tc.sql_setup} />}
-      {current === "mock_config" && tc.mock_config && <MockArtifact value={tc.mock_config} />}
+      {current === "mock_config" && tc.mock_config && <MockArtifact key={tc.mock_config} value={tc.mock_config} />}
     </TestCaseSection>
   )
 }

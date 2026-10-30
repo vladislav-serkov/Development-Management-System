@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Requests go to {test_stand_url}/{service_name}{path} — service name comes
     # from the feature's source document.
     test_stand_url: str = ""
+    # WireMock base URL including the gateway prefix, without /__admin/mappings.
+    # Empty = mock upload off.
+    test_wiremock_url: str = ""
     confluence_base_url: str = ""
     confluence_pat: str = ""
     # Jira DC integration for exporting bug reports as issues (empty = feature off).

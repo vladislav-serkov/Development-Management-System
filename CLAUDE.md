@@ -10,6 +10,12 @@ conventions here; setup is in `README.md`, deployment is in `DEPLOY.md`.
   in a separate Git worktree with its own `.env` and development database;
   documentation-only changes can stay here. Do not build the frontend or restart
   the service in the live checkout except as part of a requested deployment.
+- A request to deploy code changes also authorizes and requires creating a
+  merge request and merging it before deployment (a GitHub pull request in this
+  repository). Push the feature branch, create the PR with its validation
+  results, merge it into `main`, then update and deploy the live checkout from
+  `origin/main`. Do not deploy an unmerged feature branch or push changes
+  directly to `main` in place of a PR. No extra confirmation is needed.
 - Use the checkout's `.venv/bin/` Python tools. For backend changes run relevant
   pytest tests; database tests require a dedicated test database (the fixtures
   drop/recreate its schema). For frontend changes run
@@ -86,6 +92,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `test_cases.py` — test case generation per feature (`/projects/{slug}/features/{name}/test-cases/...`)
   - `bugs.py` — bug reports derived from test cases (`/projects/{slug}/features/{name}/bugs/...`)
   - `rules.py` — project-level validation rules (`/projects/{slug}/rules/...`)
+  - `test_wiremock.py` — `/test-wiremock/status|upload`; uploads a test-case `mock_config` to the fixed configured WireMock target. `services/wiremock.py` validates the mapping envelope, preserves response body strings, honours explicit UUIDs or derives a stable id from the matcher/scenario, updates via PUT and creates via POST on 404; never resets unrelated mappings or saves startup defaults
 - **`app/services/`** — Business logic:
   - `extraction.py` — single Claude call: markdown document → `FeatureDetectionResult` as a structured output (`claude_client.call_structured`). The LLM only *classifies* tables (which [TABLE:Tn] id belongs to input/response/step mapping + HTTP status codes); all parameter/mapping tables are built deterministically by `table_mapping.py` from parsed grids (no LLM rewriting). Logic steps come back as a flat list and are nested by number in code (`nest_steps`)
   - `claude_client.py` — the one place that talks to the API: `call_structured(schema, …)` sends `output_config.format` (JSON schema from the Pydantic model via the SDK's `transform_schema`) so the answer is schema-valid by construction — no tool_use, no `tool_choice`, no output repair. Schema rules: the API rejects recursive definitions and free-form objects, so tree fields (`children`, `mapping_tables`, code-filled table contents) are `SkipJsonSchema` and rebuilt in code, free-form JSON fields are `Json[dict]` (the LLM writes a string), and enums are `Literal`. `tests/test_structured_output.py` checks every schema stays API-compatible
@@ -153,5 +160,6 @@ There is no linked-project registry anymore; the DB is the single source of trut
 - `REPOS_DIRS` — service repo roots for bug fixing and feature implementation
 - `AUTOTESTS_REPO_DIR` / `AUTOTEST_AUTO` / `BUG_FIXER_AUTO` / `BUG_FIX_TIMEOUT_SECONDS` — optional agent targets, automatic queueing, and timeout
 - `TEST_DB_URL` / `TEST_STAND_URL` — optional execution of SQL/curl test artifacts against a test stand
+- `TEST_WIREMOCK_URL` — optional WireMock base URL including gateway prefix, without `/__admin/mappings`; enables one-click mock upload in test cases
 - `AUTH_ENABLED` (default off — local dev stays open; `scripts/serve.sh` turns it on) / `COOKIE_SECURE` / `SESSION_TTL_DAYS` — web UI login
 - Python 3.12+, Node 22+
