@@ -30,7 +30,14 @@ The user command applies migrations and prints a generated password. `install` c
 
 ### Update the live instance
 
-Run after the change has been tested and merged. Ensure this checkout has no uncommitted changes before switching branches or pulling.
+Every request to deploy code changes includes creating and merging a PR first,
+without another confirmation. After testing in the development worktree, push
+the feature branch, open a GitHub PR into `main` with the validation results,
+and merge it. Deploy the merged `origin/main`; do not bypass the PR with a
+direct push to `main` or deploy the feature branch.
+
+Ensure the live checkout has no uncommitted tracked changes before switching
+branches or pulling. Preserve unrelated untracked files.
 
 ```bash
 git checkout main

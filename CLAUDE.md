@@ -10,6 +10,12 @@ conventions here; setup is in `README.md`, deployment is in `DEPLOY.md`.
   in a separate Git worktree with its own `.env` and development database;
   documentation-only changes can stay here. Do not build the frontend or restart
   the service in the live checkout except as part of a requested deployment.
+- A request to deploy code changes also authorizes and requires creating a
+  merge request and merging it before deployment (a GitHub pull request in this
+  repository). Push the feature branch, create the PR with its validation
+  results, merge it into `main`, then update and deploy the live checkout from
+  `origin/main`. Do not deploy an unmerged feature branch or push changes
+  directly to `main` in place of a PR. No extra confirmation is needed.
 - Use the checkout's `.venv/bin/` Python tools. For backend changes run relevant
   pytest tests; database tests require a dedicated test database (the fixtures
   drop/recreate its schema). For frontend changes run
