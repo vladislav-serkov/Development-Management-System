@@ -37,6 +37,14 @@ DEP_TYPE_FILE = {
 
 AGENT_NAMES = ["extraction", "gaps", "test_cases", "bugs", "enrichment"]
 
+
+def _gap_counts(gaps: list[dict]) -> dict[str, int]:
+    active = [g for g in gaps if not g.get("archived") and (g.get("status") != "rejected" or g.get("needs_review"))
+              and g.get("presence", "current") == "current"]
+    return {"gap_count": len(active), "pending_gap_count": sum(
+        g.get("status") == "pending" or bool(g.get("needs_review")) for g in active
+    )}
+
 # Keys that indicate the dep dict already contains enrichment data (Context Collector format)
 _ENRICHMENT_MARKERS = {
     "db_table": "columns",
@@ -238,6 +246,31 @@ class ProjectStore:
             project = await self._project_row(session, slug)
             return project.context_dir if project else None
 
+    async def get_gap_context(self, slug: str) -> dict | None:
+        async with self._sf()() as session:
+            project = await self._project_row(session, slug)
+            if project is None:
+                return None
+            return dict(project.gap_context or {"notes": "", "source_urls": []})
+
+    async def save_gap_context(self, slug: str, context: dict) -> dict | None:
+        async with self._sf().begin() as session:
+            project = await self._project_row(session, slug, for_update=True)
+            if project is None:
+                return None
+            project.gap_context = dict(context)
+            # Business assumptions changed; existing analyses need rechecking.
+            rows = (await session.execute(select(Feature).where(
+                Feature.project_id == project.id,
+            ).with_for_update())).scalars().all()
+            for row in rows:
+                if (row.data.get("gaps_run_at") or row.data.get("gaps_analysis")
+                        or (row.data.get("gaps_job") or {}).get("stage") in (
+                            "sources", "queued", "research", "analysis", "verification", "saving",
+                        )):
+                    row.data = {**row.data, "gaps_stale": True, "gaps_stale_at": datetime.now(UTC).isoformat()}
+            return dict(context)
+
     async def delete_project(self, slug: str, *, remove_files: bool = False) -> None:
         """Delete a project row; FK cascade removes everything else.
 
@@ -393,8 +426,7 @@ class ProjectStore:
         bugs = feature_to_write.pop("bugs", None)
 
         if gaps is not None:
-            feature_to_write["gap_count"] = len(gaps)
-            feature_to_write["pending_gap_count"] = sum(1 for g in gaps if g.get("status") == "pending")
+            feature_to_write.update(_gap_counts(gaps))
         if test_cases is not None:
             feature_to_write["test_case_count"] = len(test_cases)
             feature_to_write["pending_test_case_count"] = sum(1 for t in test_cases if t.get("status") == "pending")
@@ -465,8 +497,7 @@ class ProjectStore:
             if "gaps" in updates_to_apply:
                 gaps = updates_to_apply.pop("gaps")
                 await self._replace_items(session, row.id, "gap", gaps)
-                updates_to_apply["gap_count"] = len(gaps)
-                updates_to_apply["pending_gap_count"] = sum(1 for g in gaps if g.get("status") == "pending")
+                updates_to_apply.update(_gap_counts(gaps))
 
             if "test_cases" in updates_to_apply:
                 test_cases = updates_to_apply.pop("test_cases")
@@ -582,12 +613,28 @@ class ProjectStore:
 
     async def save_gaps(self, project_slug: str, feature_name: str, gaps: list[dict]) -> None:
         """Replace the feature's gaps and update gap counts in the feature dict."""
-        active_gaps = [g for g in gaps if not g.get("archived")]
-        counts = {
-            "gap_count": len(active_gaps),
-            "pending_gap_count": sum(1 for g in active_gaps if g.get("status") == "pending"),
-        }
-        await self._save_items(project_slug, feature_name, "gap", gaps, counts)
+        await self._save_items(project_slug, feature_name, "gap", gaps, _gap_counts(gaps))
+
+    async def mutate_gaps(self, project_slug: str, feature_name: str, mutate, *, analysis: dict | None = None) -> list[dict]:
+        """Review/merge by stable identity under the same feature lock.
+
+        A review made during a long Codex run is read here at commit time and
+        cannot be overwritten by the run's earlier snapshot.
+        """
+        async with self._sf().begin() as session:
+            row = await self._project_and_feature(session, project_slug, feature_name, for_update=True)
+            if row is None:
+                raise ValueError("Фича не найдена")
+            items = (await session.execute(select(AnalysisItem.data).where(
+                AnalysisItem.feature_id == row.id, AnalysisItem.kind == "gap",
+            ).order_by(AnalysisItem.position))).scalars().all()
+            gaps = mutate([dict(item) for item in items])
+            await self._replace_items(session, row.id, "gap", gaps)
+            row.data = {
+                **row.data, **_gap_counts(gaps),
+                **({"gaps_analysis": analysis} if analysis is not None else {}),
+            }
+            return gaps
 
     async def get_test_cases(self, project_slug: str, feature_name: str) -> list[dict]:
         return await self._get_items(project_slug, feature_name, "test_case")

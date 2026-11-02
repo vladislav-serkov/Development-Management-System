@@ -1,85 +1,43 @@
-import type { GapsResponse, GapItem, StructuredBusinessLogic, ApplyPreviewData } from "@/types/api"
+import type { GapContext, GapItem, GapsResponse } from "@/types/api"
 import { apiFetch } from "./client"
 
-export async function fetchGaps(projectSlug: string, featureName: string): Promise<GapsResponse> {
-  const res = await apiFetch(`/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/`)
-  if (!res.ok) throw new Error(`Fetch gaps failed: ${res.status}`)
-  return res.json()
+function base(project: string, feature: string) {
+  return `/projects/${encodeURIComponent(project)}/features/${encodeURIComponent(feature.replaceAll("/", "__"))}/gaps`
 }
 
-export async function runGapsAnalysis(projectSlug: string, featureName: string): Promise<{ status: string }> {
-  const res = await apiFetch(
-    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/run`,
-    { method: "POST" }
-  )
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(body.detail || `Run failed: ${res.status}`)
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetch(path, init)
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(typeof body?.detail === "string" ? body.detail : `Ошибка запроса: ${response.status}`)
   }
-  return res.json()
+  return response.json()
 }
 
-export async function deleteGap(projectSlug: string, featureName: string, gapIndex: number): Promise<{ gaps: GapItem[] }> {
-  const res = await apiFetch(
-    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/${gapIndex}`,
-    { method: "DELETE" }
-  )
-  if (!res.ok) throw new Error(`Gap delete failed: ${res.status}`)
-  return res.json()
+export function fetchGaps(project: string, feature: string) {
+  return request<GapsResponse>(`${base(project, feature)}/`)
 }
 
-export async function patchGap(
-  projectSlug: string,
-  featureName: string,
-  gapIndex: number,
-  patch: { status: string; analyst_text?: string | null }
-): Promise<GapItem[]> {
-  const res = await apiFetch(
-    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/${gapIndex}`,
-    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }
-  )
-  if (!res.ok) throw new Error(`Gap patch failed: ${res.status}`)
-  return res.json()
+export function runGapsAnalysis(project: string, feature: string) {
+  return request<{ status: string }>(`${base(project, feature)}/run`, { method: "POST" })
 }
 
-export async function runApplyPreview(
-  projectSlug: string,
-  featureName: string,
-): Promise<{ status: string }> {
-  const res = await apiFetch(
-    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-preview`,
-    { method: "POST" }
-  )
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(body.detail || `Apply preview failed: ${res.status}`)
-  }
-  return res.json()
+export function cancelGapsAnalysis(project: string, feature: string) {
+  return request<{ status: string }>(`${base(project, feature)}/cancel`, { method: "POST" })
 }
 
-export async function fetchApplyPreview(
-  projectSlug: string,
-  featureName: string,
-): Promise<ApplyPreviewData & { status: string }> {
-  const res = await apiFetch(
-    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-preview`,
-  )
-  if (!res.ok) return { status: null } as unknown as ApplyPreviewData & { status: string }
-  return res.json()
+export function patchGap(project: string, feature: string, id: string, patch: { status: string; analyst_text?: string | null }) {
+  return request<{ gaps: GapItem[] }>(`${base(project, feature)}/items/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+  })
 }
 
-export async function applyConfirm(
-  projectSlug: string,
-  featureName: string,
-  proposed: StructuredBusinessLogic,
-): Promise<{ status: string }> {
-  const res = await apiFetch(
-    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/gaps/apply-confirm`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proposed }) }
-  )
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(body.detail || `Apply confirm failed: ${res.status}`)
-  }
-  return res.json()
+export function fetchGapContext(project: string) {
+  return request<GapContext>(`/projects/${encodeURIComponent(project)}/gap-context`)
+}
+
+export function saveGapContext(project: string, context: GapContext) {
+  return request<GapContext>(`/projects/${encodeURIComponent(project)}/gap-context`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context),
+  })
 }

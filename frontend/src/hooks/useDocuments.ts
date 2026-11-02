@@ -96,6 +96,7 @@ export function useSpecUpdates(projectSlug: string | null) {
       // The check persists latest versions on documents AND dependencies — refresh both
       qc.invalidateQueries({ queryKey: ["documents", projectSlug] })
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "dependencies"] })
+      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
       return result
     },
     enabled: projectSlug !== null,

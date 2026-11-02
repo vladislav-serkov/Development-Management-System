@@ -105,7 +105,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `bug_fixer.py` — hands an exported Jira bug to a local Codex SDK job (saved ChatGPT subscription login) inside the service repo resolved from `REPOS_DIRS`; the run follows global/project `AGENTS.md` and the migrated `take-task` bug flow (spec check, red regression test → green fix, MR via push options, Jira transitions) and returns a JSON verdict stored on the bug (`fix_status`/`fix_mr_url`/...). One running fix per service repo (task kind `bug_fix`, target = service); exporting a bug to Jira auto-queues it (`BUG_FIXER_AUTO`), `POST .../bugs/{index}/fix` retries manually
   - `autotest_generator.py` — turns an accepted test case (`status=approved`) into a Java autotest via a local Codex SDK job in the flp-autotests repo (`AUTOTESTS_REPO_DIR`): the agent follows the repo's README conventions (one method per case, `@SpecRef` with the case address + spec page version, MR into main via push options) and returns a JSON verdict stored on the test case (`autotest_status`/`autotest_mr_url`/...). Mirrors bug_fixer's queueing (task kind `autotest_gen`, one per repo) and uses the shared Codex runner; accepting a case auto-queues generation (`AUTOTEST_AUTO`), `POST .../test-cases/{index}/autotest` retries manually
   - `feature_implementer.py` — hands a feature task to the shared Codex SDK runner in a service repo (task kind `implement`, target = service). Uses the global Codex `take-task` new-functionality flow, returns `implemented`/`no_changes_needed`/`failed`, and stores `impl_status`/`impl_mr_url`/logs on the feature
-  - `gaps.py` — Gaps analysis via Claude
+  - `gaps.py` + `gap_sources.py` + `prompts/gap_agent.py` — source-grounded business gap analysis through `agent_runner.analyze` (local Codex SDK, ChatGPT login, no Anthropic/API-key fallback). Uses a private snapshot directory: original imported TЗ, project analyst notes, prior decisions, and an ID-based catalog of imported/linked Confluence pages. The backend loads requested catalog IDs in up to four discovery rounds (default 30 source limit); the agent runs read-only with coding/project instruction discovery disabled and never accesses service code. Two report turns: business/scenario analysis, then source verification. Quotes and source IDs are validated against originals in code; rejected evidence and missing sources make coverage partial. The UI shows business purpose/actors/entities/lifecycle/rules, scenarios, limitations, citations, and review history. Spec-update checks also probe overview pages cited by reports, so their version changes invalidate even empty gap results. Stable gap IDs and atomic `ProjectStore.mutate_gaps` preserve decisions made during a run; absent findings stay in history (partial coverage never declares them fixed). Analyst decisions never silently edit extracted logic; old apply endpoints return 410. `POST .../gaps/cancel` interrupts the SDK job. `Project.gap_context` stores shared analyst notes + overview URLs (`GET/PATCH /projects/{slug}/gap-context`); edits invalidate analyses, including empty results and in-flight runs. Export/import includes optional `gap-context.json`.
   - `test_cases.py` — Test case generation via Claude
   - `bugs.py` — Bug report generation from test case review via Claude
   - `rules.py` — Validation rules management
@@ -128,7 +128,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
 ### Data Storage
 PostgreSQL (SQLAlchemy 2.0 async + asyncpg + Alembic). Moderate normalization: real tables + FKs for the entity graph, JSONB `data` columns for the deeply nested payloads (`structured_logic_json`, `enriched_data`, document source).
 
-Tables: `projects`, `documents` (+ raw `source` JSONB), `features` (+ `apply_preview`), `analysis_items` (one row per gap/test_case/bug, ordered by `position`), `dependencies` (case-insensitive unique per project+type), `rules` (`project_id IS NULL` = global), `tasks` (partial unique index enforces one running task per project+kind+target → `ActiveTaskExistsError` → HTTP 409).
+Tables: `projects` (+ `gap_context` JSONB), `documents` (+ raw `source` JSONB), `features` (+ `apply_preview`), `analysis_items` (one row per gap/test_case/bug, ordered by `position`), `dependencies` (case-insensitive unique per project+type), `rules` (`project_id IS NULL` = global), `tasks` (partial unique index enforces one running task per project+kind+target → `ActiveTaskExistsError` → HTTP 409).
 
 Feature counts (`gap_count`, `pending_gap_count`, …) are plain keys inside the feature's JSONB `data`, updated in the same transaction as `save_gaps`/`save_test_cases`/`save_bugs`.
 
@@ -139,10 +139,10 @@ The `.context/` file layout (project.json, features/{name}/feature.json, gaps/, 
 There is no linked-project registry anymore; the DB is the single source of truth.
 
 ### LLM Integration
-- Uses **Anthropic Claude API** via `anthropic` Python SDK
-- Every LLM call goes through `call_structured` (structured outputs, `output_config.format`); field mappings come from deterministic table parsing, not the LLM. Prompts explain spec conventions only — field semantics live in the Pydantic schema descriptions
+- Extraction, enrichment, test cases and bug reports use **Anthropic Claude API** via `anthropic` Python SDK. Gap analysis uses the local **Codex SDK** with ChatGPT authentication.
+- Every Anthropic LLM call goes through `call_structured` (structured outputs, `output_config.format`); field mappings come from deterministic table parsing, not the LLM. Prompts explain spec conventions only — field semantics live in the Pydantic schema descriptions
 - Document sent as plain-text document block with `cache_control: ephemeral` for prompt caching
-- Models configured in `app/config.py`: `claude_model` (extraction/enrichment), `gaps_model`, `test_cases_model`, `bugs_model` — default `claude-sonnet-5-5` (adaptive thinking on; `extraction_effort` — default `high` — sets the effort of extraction/enrichment calls: `medium` is ~2.5× faster but merges adjacent sub-steps of long specs). Note: Sonnet 5.5 / Opus 5.5 reject forced `tool_choice` and `temperature`, which is why the code uses neither
+- Models configured in `app/config.py`: `claude_model` (extraction/enrichment), `test_cases_model`, `bugs_model` — default `claude-sonnet-5-5` (adaptive thinking on; `extraction_effort` — default `high` — sets the effort of extraction/enrichment calls: `medium` is ~2.5× faster but merges adjacent sub-steps of long specs). Note: Sonnet 5.5 / Opus 5.5 reject forced `tool_choice` and `temperature`, which is why the code uses neither
 
 ### Key Patterns
 - All storage operations are async and go through `ProjectStore` (`app/storage.py`). Routers instantiate their own store; each public method runs in its own transaction with row-level `SELECT ... FOR UPDATE` where read-modify-write is needed, so multiple uvicorn workers are safe. Note: `task_manager` (in-flight asyncio jobs) is still per-process.
@@ -151,8 +151,9 @@ There is no linked-project registry anymore; the DB is the single source of trut
 - **Long-running LLM calls (1-2 min)**: backend MUST use `task_manager.launch()` (wraps `asyncio.create_task()`) + immediate response; frontend MUST poll via `refetchInterval` while a task is `"running"` (see `/projects/{slug}/tasks`). Never block the HTTP request. Loaders must survive navigation (check server status, not just mutation.isPending). Sidebar must show animated dots (`AnimatedDots`) for any feature with running gaps/tests.
 
 ## Environment
-- `ANTHROPIC_API_KEY` — required, set in `.env`
-- `CLAUDE_MODEL` / `GAPS_MODEL` / `TEST_CASES_MODEL` / `BUGS_MODEL` — optional model overrides
+- `ANTHROPIC_API_KEY` — required for extraction/enrichment/test cases/bug reports, set in `.env`; gap analysis does not use it
+- `CLAUDE_MODEL` / `TEST_CASES_MODEL` / `BUGS_MODEL` — optional Anthropic model overrides; legacy `GAPS_MODEL` is accepted but unused
+- `GAPS_LOG_DIR` / `GAPS_TIMEOUT_SECONDS` / `GAPS_MAX_SOURCES` — source snapshots/events, analysis timeout (1200s), and source budget (30); model/auth come from `CODEX_MODEL` and the ChatGPT login
 - `DATABASE_URL` — PostgreSQL DSN (default: `postgresql+asyncpg://extract:extract@localhost:5432/extract_agent`)
 - `CONFLUENCE_BASE_URL` / `CONFLUENCE_PAT` — optional, enable importing Confluence pages as documents (Data Center PAT, Bearer auth)
 - `JIRA_BASE_URL` / `JIRA_PAT` — optional, enable exporting bug reports as Jira issues (Data Center PAT, Bearer auth; a separate Jira token — the Confluence PAT is not accepted). `JIRA_PROJECT_KEY` (default `MTSPAY`) / `JIRA_ISSUE_TYPE` (default `Bug`) pick the target project and issue type for every exported bug

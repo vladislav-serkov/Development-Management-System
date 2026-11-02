@@ -24,6 +24,9 @@ import type {
 const StructuredLogicView = lazy(() =>
   import("@/components/feature/StructuredLogicView").then((module) => ({ default: module.StructuredLogicView }))
 )
+const GapsView = lazy(() =>
+  import("@/components/feature/GapsView").then((module) => ({ default: module.GapsView }))
+)
 const TestCasesView = lazy(() =>
   import("@/components/feature/TestCasesView").then((module) => ({ default: module.TestCasesView }))
 )
@@ -317,7 +320,7 @@ function ProjectContentArea({
 
           {staleTargets.length > 0 && (
             <Notice tone="warning">
-              Спека обновилась{selectedFeature.stale_spec_note ? ` (${selectedFeature.stale_spec_note})` : ""} после того, как посчитаны {staleTargets.join(" и ")}. Перегенерируйте их, чтобы учесть изменения.
+              Источники или контекст изменились{selectedFeature.stale_spec_note ? ` (${selectedFeature.stale_spec_note})` : ""} после проверки: {staleTargets.join(" и ")}. Запустите её повторно, чтобы учесть изменения.
             </Notice>
           )}
 
@@ -362,6 +365,9 @@ function ProjectContentArea({
         <Tabs value={activeFeatureTab} onValueChange={(tab) => onFeatureTabChange(tab as FeatureTab)} className="gap-4">
           <TabsList className="flex-wrap">
             <TabsTrigger value="logic">Логика</TabsTrigger>
+            <TabsTrigger value="gaps">
+              Gap-анализ{selectedFeature.gap_count ? <span className="text-xs tabular-nums opacity-60">{selectedFeature.gap_count}</span> : null}
+            </TabsTrigger>
             <TabsTrigger value="tests">
               Тест-кейсы{selectedFeature.test_case_count ? <span className="text-xs tabular-nums opacity-60">{selectedFeature.test_case_count}</span> : null}
             </TabsTrigger>
@@ -385,6 +391,12 @@ function ProjectContentArea({
                   description="Импортируйте более полную страницу Confluence, чтобы заполнить этот блок."
                 />
               )}
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="gaps">
+            <Suspense fallback={<ContentLoadingState label="Загрузка gap-анализа..." />}>
+              <GapsView key={selectedFeature.name} projectSlug={projectSlug} featureName={selectedFeature.name} />
             </Suspense>
           </TabsContent>
 

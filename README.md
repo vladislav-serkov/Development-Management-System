@@ -1,6 +1,6 @@
 # Extract Agent
 
-AI-powered web platform that extracts structured feature specifications from Confluence pages using the Claude API, then generates gaps analysis, test cases, bug reports, and dependency enrichments. Personal local Codex SDK jobs fix bugs, generate Java autotests, and implement feature tasks in service repositories.
+AI-powered web platform that extracts structured feature specifications from Confluence pages using the Claude API, then generates gaps analysis, test cases, bug reports, and dependency enrichments. Local Codex SDK jobs analyze business gaps in original specifications, fix bugs, generate Java autotests, and implement feature tasks in service repositories.
 
 ## Stack
 
@@ -57,6 +57,44 @@ request matcher and scenario state. Repeated uploads update the same mapping,
 so cases with the same matcher replace its active response. Other mappings
 are preserved. Stubs are loaded into WireMock's runtime, without saving them
 as startup defaults.
+
+## Gap analysis through Codex
+
+The feature's **Gap-анализ** tab checks business scenarios and field mappings
+against original specifications. It uses the host user's saved ChatGPT login
+through the local Codex SDK. Run `codex login` under the same macOS user as the
+backend; no Anthropic or OpenAI API key is used for this analysis.
+
+In **Бизнес-контекст проекта**, add analyst notes and Confluence links explaining
+the product/process. These notes are shared across the project's features.
+Original imported pages must be available (re-import legacy features without
+saved source text). Dependencies do not need to be enriched first: the backend
+loads original linked specifications requested by the analyst agent. Additional
+links must point to `CONFLUENCE_BASE_URL`; fetching needs the configured PAT and
+access from the backend host, including VPN when required.
+
+The report includes business purpose, participants, entities/states, lifecycle,
+rules, checked scenarios, source versions, and findings with verbatim quotes.
+Missing pages, discovery limits or invalid citations produce **partial coverage**,
+even when no findings remain. Unknown business rules are listed separately;
+a gap in a fully inspected specification is an analysis result, not a coverage failure. The original source
+text takes precedence over extracted feature data. Analysis does not read code.
+
+Confirm a finding, dismiss it with a reason, or supply a clarification. Stable
+IDs and history preserve decisions across reruns. Previously reported findings
+that were not rechecked remain available under **Предыдущие**; absence in a
+report is not proof of a fix. Editing project context marks old analyses stale.
+Decisions are stored separately from the source TЗ; the previous automatic
+apply-to-extracted-logic flow is retired.
+
+`CODEX_ENABLED`, `CODEX_MODEL`, and `CODEX_CLI` are shared with other Codex jobs.
+`GAPS_TIMEOUT_SECONDS` defaults to 1200, `GAPS_MAX_SOURCES` to 30, and
+`GAPS_LOG_DIR` to `logs/gaps`. Linked sources are discovered in up to four rounds.
+Jobs share the existing per-process Codex queue. Progress and cancellation are
+available in the tab; a failed or cancelled run preserves the previous report.
+Source snapshots and streamed events stay in private run directories on the host.
+`gap-context.json` preserves shared business notes in `.context`/ZIP exports;
+exports still omit source documents and are not a complete database backup.
 
 ## Running locally
 

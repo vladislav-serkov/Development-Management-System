@@ -58,7 +58,10 @@ async def mark_feature_stale(store, project_slug: str, feature_name: str, note: 
         return False
     now_iso = datetime.now(UTC).isoformat()
     updates: dict = {}
-    if feature.get("gap_count"):
+    if (feature.get("gap_count") or feature.get("gaps_run_at") or feature.get("gaps_analysis")
+            or (feature.get("gaps_job") or {}).get("stage") in (
+                "sources", "queued", "research", "analysis", "verification", "saving",
+            )):
         updates.update(gaps_stale=True, gaps_stale_at=now_iso)
     if feature.get("test_case_count"):
         updates.update(test_cases_stale=True, test_cases_stale_at=now_iso)
