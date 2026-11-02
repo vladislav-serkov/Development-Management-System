@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     anthropic_api_key: str = "sk-ant-xxx"
     claude_model: str = "claude-sonnet-5-5"
+    # Legacy env compatibility only; gap analysis now uses codex_model.
     gaps_model: str = "claude-sonnet-5-5"
     test_cases_model: str = "claude-sonnet-5-5"
     bugs_model: str = "claude-sonnet-5-5"
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
     # Reasoning effort of the extraction/enrichment calls. Measured on a 20KB Kafka
     # spec with Sonnet 5.5: "medium" took 30 s but merged adjacent sub-steps
     # (52 steps where the page has ~100); "high" took 76 s and mirrored the page.
-    # Analysis calls (gaps, test cases, bugs) use the model default.
+    # Anthropic analysis calls (test cases, bugs) use the model default.
     extraction_effort: str = "high"
     database_url: str = "postgresql+asyncpg://extract:extract@localhost:5432/extract_agent"
     # Test stand DB for executing SQL artifacts from test cases (empty = feature off).
@@ -64,6 +65,10 @@ class Settings(BaseSettings):
     # Feature implementer: Codex jobs that implement a feature task
     # ("реализовать/доработать метод") in the service repo. Shares Codex auth.
     implement_log_dir: str = "logs/implement"
+    # Source snapshots and streamed events for read-only specification analysis.
+    gaps_log_dir: str = "logs/gaps"
+    gaps_timeout_seconds: int = 1200
+    gaps_max_sources: int = 30
     cors_origins: str = ""
     # Web UI login (users are issued via `python -m app.cli users add`). Off by default
     # for local dev; scripts/serve.sh turns it on for the published instance.

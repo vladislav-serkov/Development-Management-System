@@ -58,6 +58,9 @@ async def dump_project(store: ProjectStore, project_slug: str) -> dict[str, byte
     files["project.json"] = _dumps(
         {"slug": project["slug"], "name": project["name"], "created_at": project["created_at"]}
     )
+    gap_context = await store.get_gap_context(project_slug)
+    if gap_context and (gap_context.get("notes") or gap_context.get("source_urls")):
+        files["gap-context.json"] = _dumps(gap_context)
 
     rules = await store.get_project_rules(project_slug)
     if any((v or "").strip() for v in rules.values()):
@@ -134,6 +137,20 @@ async def load_context_project(
 
     proj = await store.create_project(project_name)
     slug = proj["slug"]
+
+    gap_context_path = context_dir / "gap-context.json"
+    if gap_context_path.exists():
+        from pydantic import ValidationError
+
+        from app.schemas.gaps import GapContextRequest
+
+        raw_context = _read_json_file(gap_context_path, warnings)
+        if raw_context is not None:
+            try:
+                context = GapContextRequest.model_validate(raw_context)
+                await store.save_gap_context(slug, context.model_dump())
+            except ValidationError:
+                warnings.append("skipped gap-context.json: invalid business context")
 
     # Rules (file first, then wiki fills empty sections)
     rules_data = None

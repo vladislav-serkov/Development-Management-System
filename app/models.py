@@ -23,6 +23,7 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Source .context/ directory this project was imported from (export-context target)
     context_dir: Mapped[str | None] = mapped_column(Text)
+    gap_context: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class Document(Base):

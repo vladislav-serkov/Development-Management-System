@@ -1,84 +1,42 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { fetchGaps, patchGap, deleteGap, runGapsAnalysis, runApplyPreview, fetchApplyPreview, applyConfirm } from "@/api/gaps"
-import type { StructuredBusinessLogic } from "@/types/api"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { cancelGapsAnalysis, fetchGapContext, fetchGaps, patchGap, runGapsAnalysis, saveGapContext } from "@/api/gaps"
+import type { GapContext } from "@/types/api"
 
-export function useFeatureGaps(projectSlug: string | null, featureName: string | null) {
+export function useFeatureGaps(project: string, feature: string) {
   return useQuery({
-    queryKey: ["projects", projectSlug, "features", featureName, "gaps"],
-    queryFn: () => fetchGaps(projectSlug!, featureName!),
-    enabled: !!projectSlug && !!featureName,
-    refetchInterval: (query) => {
-      return query.state.data?.gaps_running ? 2000 : false
-    },
+    queryKey: ["projects", project, "features", feature, "gaps"],
+    queryFn: () => fetchGaps(project, feature),
+    refetchInterval: query => query.state.data?.gaps_running ? 2000 : false,
   })
 }
 
-export function usePatchGap(projectSlug: string, featureName: string) {
+export function useGapActions(project: string, feature: string) {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ gapIndex, status, analyst_text }: { gapIndex: number; status: string; analyst_text?: string | null }) =>
-      patchGap(projectSlug, featureName, gapIndex, { status, analyst_text }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "gaps"] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
-    },
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["projects", project, "features"] })
+    qc.invalidateQueries({ queryKey: ["projects", project, "tasks"] })
+  }
+  const run = useMutation({ mutationFn: () => runGapsAnalysis(project, feature), onSuccess: refresh })
+  const cancel = useMutation({ mutationFn: () => cancelGapsAnalysis(project, feature), onSuccess: refresh })
+  const review = useMutation({
+    mutationFn: ({ id, status, analyst_text }: { id: string; status: string; analyst_text?: string | null }) =>
+      patchGap(project, feature, id, { status, analyst_text }),
+    onSuccess: refresh,
   })
+  return { run, cancel, review }
 }
 
-export function useDeleteGap(projectSlug: string, featureName: string) {
+export function useGapContext(project: string) {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (gapIndex: number) => deleteGap(projectSlug, featureName, gapIndex),
+  const query = useQuery({
+    queryKey: ["projects", project, "gap-context"], queryFn: () => fetchGapContext(project),
+  })
+  const save = useMutation({
+    mutationFn: (context: GapContext) => saveGapContext(project, context),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "gaps"] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
+      qc.invalidateQueries({ queryKey: ["projects", project, "gap-context"] })
+      qc.invalidateQueries({ queryKey: ["projects", project, "features"] })
     },
   })
-}
-
-export function useRunGaps(projectSlug: string, featureName: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => runGapsAnalysis(projectSlug, featureName),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "gaps"] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
-    },
-  })
-}
-
-export function useRunApplyPreview(projectSlug: string, featureName: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => runApplyPreview(projectSlug, featureName),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "apply-preview"] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
-    },
-  })
-}
-
-export function useApplyPreviewData(projectSlug: string | null, featureName: string | null) {
-  return useQuery({
-    queryKey: ["projects", projectSlug, "features", featureName, "apply-preview"],
-    queryFn: () => fetchApplyPreview(projectSlug!, featureName!),
-    enabled: !!projectSlug && !!featureName,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status
-      return status === "running" ? 2000 : false
-    },
-  })
-}
-
-export function useApplyConfirm(projectSlug: string, featureName: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (proposed: StructuredBusinessLogic) => applyConfirm(projectSlug, featureName, proposed),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "gaps"] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "apply-preview"] })
-    },
-  })
+  return { ...query, save }
 }

@@ -91,10 +91,12 @@ async def import_confluence_page(
         "confluence_version": page["version"],
         "title": page["title"],
         "space_key": page["space_key"],
+        "service_name": page.get("service_name"),
         "fetched_at": now_iso,
         "markdown": page["markdown"],
         "links": page["links"],
         "tables": page["tables"],
+        "ancestors": page.get("ancestors", []),
     }
 
     prev_version = prev_text = None
@@ -198,12 +200,22 @@ async def check_spec_updates(project_slug: str = Query(...)):
         if dep.get("enrichment_status") == "enriched" and dep.get("source_page_id")
     ]
 
-    if not docs and not dep_targets:
+    # Gap reports can cite overview/related pages that are neither imported
+    # documents nor enriched dependencies. Track those versions too.
+    gap_targets = [
+        (feature, source)
+        for feature in await store.list_features(project_slug)
+        for source in (feature.get("gaps_analysis") or {}).get("sources", [])
+        if source.get("page_id") and source.get("version")
+    ]
+
+    if not docs and not dep_targets and not gap_targets:
         return SpecUpdatesResponse(checked=0, outdated=0, documents=[])
 
     # One probe per distinct page: many deps routinely share one source page
     page_ids = {str(d["confluence_page_id"]) for d in docs}
     page_ids |= {str(dep["source_page_id"]) for _, dep in dep_targets}
+    page_ids |= {str(source["page_id"]) for _, source in gap_targets}
 
     async def _probe(page_id: str):
         try:
@@ -213,6 +225,13 @@ async def check_spec_updates(project_slug: str = Query(...)):
 
     probed = dict(zip(page_ids, await asyncio.gather(*(_probe(pid) for pid in page_ids))))
     now_iso = datetime.now(UTC).isoformat()
+
+    for feature, source in gap_targets:
+        meta = probed.get(str(source["page_id"]))
+        if isinstance(meta, dict) and meta["version"] > source["version"]:
+            await store.update_feature(project_slug, feature["name"], {
+                "gaps_stale": True, "gaps_stale_at": now_iso,
+            })
 
     doc_results: list[SpecUpdateCheck] = []
     for doc in docs:

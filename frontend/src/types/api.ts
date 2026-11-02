@@ -458,12 +458,43 @@ export interface ExternalDocEnrichment {
 }
 
 // Gaps types (v1.1 Phase 6)
-export type GapStatus = "pending" | "approved" | "clarified" | "applied"
+export type GapStatus = "pending" | "approved" | "clarified" | "rejected" | "applied"
 export type GapType = string
 
 export type GapSeverity = "critical" | "major"
 
+export interface GapEvidence {
+  source_id: string
+  location: string
+  quote: string
+}
+
+export interface GapSource {
+  id: string
+  title: string
+  url: string | null
+  version: number | null
+  content_hash: string
+}
+
+export interface BusinessFact {
+  text: string
+  evidence: GapEvidence[]
+}
+
+export interface BusinessPicture {
+  purpose: string
+  purpose_evidence: GapEvidence[]
+  actors: BusinessFact[]
+  entities_and_states: BusinessFact[]
+  lifecycle: BusinessFact[]
+  business_rules: BusinessFact[]
+  unknowns: string[]
+}
+
 export interface GapItem {
+  id: string
+  kind?: "contradiction" | "missing_logic" | "business_question"
   gap_type: GapType
   severity: GapSeverity
   actionable: boolean
@@ -471,12 +502,42 @@ export interface GapItem {
   suggestion: string
   status: GapStatus
   analyst_text: string | null
+  subject?: string
+  location?: string
+  scenario?: string
+  business_impact?: string
+  evidence?: GapEvidence[]
+  source_snapshots?: GapSource[]
+  presence?: "current" | "not_detected" | "unverified"
+  needs_review?: boolean
+  history?: { at: string; action: string; text: string | null; actor?: string }[]
+}
+
+export interface GapAnalysis {
+  business_picture: BusinessPicture
+  sources: GapSource[]
+  checked_source_ids: string[]
+  checked_scenarios: string[]
+  limitations: string[]
+  coverage: "complete" | "partial"
+  started_at: string
+  finished_at: string
+  engine: "codex"
+}
+
+export interface GapContext {
+  notes: string
+  source_urls: string[]
 }
 
 export interface GapsResponse {
   gaps: GapItem[]
   gaps_running: boolean
   gaps_run_at: string | null
+  analysis: GapAnalysis | null
+  job: { stage: string; error: string | null } | null
+  stale: boolean
+  configured: boolean
 }
 
 export interface ApplyChange {

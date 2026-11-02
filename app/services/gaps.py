@@ -1,367 +1,190 @@
-"""Gaps analysis pipeline: single Claude call with few-shot examples."""
+"""Source-grounded business gap analysis through the local Codex SDK."""
+import asyncio
 import json
-import logging
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 from app.config import settings
-from app.prompts.gaps import (
-    ANALYSIS_PROMPT,
-    APPLY_SYSTEM_PROMPT,
-    FEW_SHOT_EXAMPLES,
-    SYSTEM_PROMPT,
-    build_apply_user_message,
-)
-from app.schemas.extraction import nest_steps
-from app.schemas.gaps import ApplyResult, GapsAnalysisResult
-from app.services.claude_client import call_structured
-from app.services.context_builder import build_feature_context
-from app.services.rules import build_system_prompt
-
-logger = logging.getLogger(__name__)
+from app.prompts.gap_agent import ANALYZE, SELECT, VERIFY
+from app.schemas.gaps import GapReport, SourceSelection
+from app.services import agent_runner
+from app.services.gap_sources import SourceCorpus, digest
 
 
-async def _call_gaps_analysis(
-    model: str,
-    shared_context: str,
-    system_prompt: str = SYSTEM_PROMPT,
-) -> list[dict]:
-    """Single Claude call to find all gap types with few-shot examples."""
-    result = await call_structured(
-        GapsAnalysisResult,
-        label="gaps:analysis",
-        model=model,
-        max_tokens=16000,
-        system=system_prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": shared_context,
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {"type": "text", "text": FEW_SHOT_EXAMPLES},
-                    {"type": "text", "text": ANALYSIS_PROMPT},
-                ],
-            }
-        ],
-    )
-    logger.info("[gaps:analysis] Found %d gap(s)", len(result.gaps))
-
-    return [
-        {
-            "gap_type": g.gap_type,
-            "severity": g.severity,
-            "actionable": g.actionable,
-            "question": g.question,
-            "suggestion": g.suggestion,
-            "status": "pending",
-            "analyst_text": None,
-        }
-        for g in result.gaps
-    ]
+def now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
-def _smart_merge_gaps(existing_gaps: list[dict], new_gaps: list[dict]) -> list[dict]:
-    """Merge new gaps with existing, preserving analyst decisions.
-
-    Rules:
-    - Approved/clarified gaps matching new results: keep existing (preserve decision).
-    - New gaps not matching existing approved/clarified: add as pending.
-    - Approved/clarified gaps not in new results: keep (don't delete stale reviewed gaps).
-    - Pending gaps not in new results: remove (stale unreviewed).
-    """
-    merged: list[dict] = []
-
-    # Pass 1: keep existing approved/clarified gaps (whether in new results or not)
-    for existing in existing_gaps:
-        if existing.get("status") in ("approved", "clarified"):
-            merged.append(existing)
-
-    # Pass 2: add new gaps that are NOT already covered by an approved/clarified entry
-    approved_clarified_identities = {
-        (g["gap_type"], g["question"][:80]) for g in merged
-    }
-    for new_gap in new_gaps:
-        identity = (new_gap["gap_type"], new_gap["question"][:80])
-        if identity not in approved_clarified_identities:
-            merged.append(new_gap)
-
-    return merged
-
-
-async def run_gaps_pipeline(
-    project_slug: str,
-    feature_name: str,
-    store,
-    *,
-    task_id: str | None = None,
-) -> list[dict]:
-    """Run single-call gap analysis and return merged gaps list.
-
-    On success: gaps.json is saved, task (if any) is finished with status=done.
-    On error: task is finished with status=error.
-    """
-    try:
-        result = await _run_gaps_pipeline_inner(project_slug, feature_name, store)
-    except Exception as exc:
-        if task_id:
-            await store.finish_task(
-                project_slug, task_id, status="error", error_message=str(exc),
-            )
-        raise
-    if task_id:
-        await store.finish_task(project_slug, task_id, status="done")
+def with_ids(gaps: list[dict]) -> list[dict]:
+    """Give legacy entries a deterministic ID without dropping review state."""
+    result = []
+    used = {g["id"] for g in gaps if g.get("id")}
+    for gap in gaps:
+        gid = gap.get("id")
+        if not gid:
+            base = "legacy-" + digest([gap.get("gap_type"), gap.get("question")])[:20]
+            gid, duplicate = base, 0
+            while gid in used:
+                duplicate += 1
+                gid = f"{base}-{duplicate}"
+            used.add(gid)
+        result.append({**gap, "id": gid})
     return result
 
 
-async def _run_gaps_pipeline_inner(
-    project_slug: str,
-    feature_name: str,
-    store,
-) -> list[dict]:
-    """Core pipeline without task handling (caller wraps for task lifecycle)."""
-    run_started_at = datetime.now(UTC).isoformat()
-    # Load feature
-    feature = await store.get_feature(project_slug, feature_name)
-    if feature is None:
-        raise ValueError(f"Feature '{feature_name}' not found in project '{project_slug}'")
-
-    # Enrichment gate: all dependencies must be enriched
-    all_deps_by_type = await store.list_dependencies(project_slug)
-    flat_deps: dict[str, dict] = {}
-    for dep_list in all_deps_by_type.values():
-        for dep in dep_list:
-            flat_deps[dep["name"]] = dep
-
-    # Get feature's used dependencies from structured_logic
-    sl = feature.get("structured_logic_json") or feature.get("structured_logic") or {}
-    used_deps = sl.get("used_dependencies", []) if isinstance(sl, dict) else []
-
-    # Normalize name for matching (lowercase, spaces to underscores)
-    def _norm(n: str) -> str:
-        return n.lower().replace(" ", "_").replace("-", "_")
-
-    # Build normalized flat_deps lookup
-    norm_flat: dict[str, dict] = {_norm(name): dep for name, dep in flat_deps.items()}
-
-    # Build lookup for external_api by service_name+path
-    api_deps = [d for d in flat_deps.values() if d.get("dep_type") == "external_api"]
-
-    unenriched: list[str] = []
-    for dep in used_deps:
-        if not isinstance(dep, dict):
+def merge_findings(existing: list[dict], findings: list[dict], report: dict) -> list[dict]:
+    previous = {g["id"]: g for g in with_ids(existing)}
+    merged = []
+    seen = set()
+    for finding in findings:
+        finding = dict(finding)
+        requested_id = finding.pop("existing_gap_id", None)
+        identity = digest([
+            finding["gap_type"], finding["subject"].casefold().strip(), finding["location"].casefold().strip(),
+            sorted({e["source_id"] for e in finding["evidence"]}),
+        ])[:24]
+        gid = requested_id if requested_id in previous else "gap-" + identity
+        if gid in seen:
             continue
-        dep_name = dep.get("name", "")
-        if not dep_name:
-            continue
+        seen.add(gid)
+        old = previous.get(gid, {})
+        fingerprint = {e["source_id"]: next(s["content_hash"] for s in report["sources"] if s["id"] == e["source_id"])
+                       for e in finding["evidence"]}
+        changed = bool(old.get("source_hashes")) and old["source_hashes"] != fingerprint
+        history = list(old.get("history", []))
+        if changed:
+            history.append({"at": report["finished_at"], "action": "sources_changed", "text": "Изменились источники замечания"})
+        merged.append({
+            **old, **finding, "id": gid, "presence": "current", "source_hashes": fingerprint,
+            "source_snapshots": [s for s in report["sources"] if s["id"] in fingerprint],
+            "status": old.get("status", "pending"), "analyst_text": old.get("analyst_text"),
+            "history": history, "needs_review": changed or old.get("needs_review", False),
+            "first_seen_at": old.get("first_seen_at", report["started_at"]), "last_seen_at": report["finished_at"],
+            "actionable": False,
+        })
+    for gid, old in previous.items():
+        if gid not in seen:
+            checked = set(report["checked_source_ids"])
+            evidence_ids = {e["source_id"] for e in old.get("evidence", [])}
+            # Absence in partial coverage says nothing about resolution.
+            absent = report["coverage"] == "complete" and bool(evidence_ids) and evidence_ids <= checked
+            merged.append({**old, "presence": "not_detected" if absent else "unverified"})
+    return merged
 
-        # For external_api: match by service_name + path fields
-        if dep.get("type") == "external_api" and dep.get("service_name"):
-            matched = next(
-                (d for d in api_deps
-                 if _norm(d.get("service_name") or "") == _norm(dep.get("service_name") or "")
-                 and _norm(d.get("path") or "") == _norm(dep.get("path") or "")),
-                None,
-            )
-            display = f"{dep['service_name']}/{(dep.get('path') or '').lstrip('/')}"
-            if matched is None or matched.get("enrichment_status") != "enriched":
-                unenriched.append(display)
-            continue
 
-        norm_name = _norm(dep_name)
-        if norm_name in norm_flat:
-            if norm_flat[norm_name].get("enrichment_status") != "enriched":
-                unenriched.append(dep_name)
+def validate_report(report: dict, corpus: SourceCorpus, started: str) -> dict:
+    limitations = [*corpus.limitations, *report["limitations"]]
+    checked = set(report["checked_source_ids"])
+    if not checked <= corpus.sources.keys():
+        limitations.append("Отчёт ссылается на непрочитанные источники")
+    checked &= corpus.sources.keys()
+    if corpus.primary_id not in checked:
+        limitations.append("Не подтверждено чтение основного ТЗ")
+    valid_gaps = []
+    for gap in report["gaps"]:
+        valid = corpus.validate_evidence(gap["evidence"])
+        if gap["kind"] == "contradiction" and len({(e["source_id"], e["quote"]) for e in gap["evidence"]}) < 2:
+            valid = False
+        if not {e["source_id"] for e in gap["evidence"]} <= checked:
+            valid = False
+        if valid:
+            valid_gaps.append(gap)
         else:
-            unenriched.append(dep_name)
-
-    if unenriched:
-        raise ValueError(
-            f"Cannot run gaps analysis: the following dependencies are not enriched: "
-            f"{', '.join(unenriched)}"
-        )
-
-    # Build enriched dependency context (only enriched ones)
-    enriched_deps = {name: dep for name, dep in flat_deps.items()
-                     if dep.get("enrichment_status") == "enriched"}
-
-    shared_ctx = build_feature_context(feature, enriched_deps)
-
-    model = settings.gaps_model
-
-    global_rules = await store.get_global_rules()
-    project_rules = await store.get_project_rules(project_slug)
-    system_prompt = build_system_prompt(
-        base=SYSTEM_PROMPT,
-        global_rules=global_rules.get("gaps", ""),
-        project_rules=project_rules.get("gaps", ""),
-    )
-
-    all_new_gaps = await _call_gaps_analysis(model, shared_ctx, system_prompt)
-
-    # Smart merge with existing gaps
-    existing_gaps = await store.get_gaps(project_slug, feature_name)
-    merged_gaps = _smart_merge_gaps(existing_gaps, all_new_gaps)
-
-    # Save gaps; timestamp stays on feature.json as a last-run marker
-    await store.save_gaps(project_slug, feature_name, merged_gaps)
-    # Clears the stale flag only if no spec/source change landed while the run
-    # was in flight (that change is not reflected in this run's output)
-    await store.clear_stale(project_slug, feature_name, "gaps", run_started_at, "gaps_run_at")
-
-    return merged_gaps
-
-
-
-
-async def generate_apply_preview(
-    project_slug: str,
-    feature_name: str,
-    store,
-) -> dict:
-    """Generate proposed structured_logic from approved/clarified gaps via Claude.
-
-    Returns {"original": ..., "proposed": ..., "changes": [...]}.
-    Raises ValueError if no approved/clarified gaps exist.
-    """
-    feature = await store.get_feature(project_slug, feature_name)
-    if feature is None:
-        raise ValueError(f"Feature '{feature_name}' not found in project '{project_slug}'")
-
-    current_sl = feature.get("structured_logic_json") or {}
-
-    gaps = await store.get_gaps(project_slug, feature_name)
-    actionable_gaps = [g for g in gaps if g.get("status") in ("approved", "clarified")]
-
-    if not actionable_gaps:
-        raise ValueError("No approved or clarified gaps to apply")
-
-    # Build gap descriptions with indices for change tracking
-    gap_lines = []
-    for i, gap in enumerate(actionable_gaps):
-        lines = [f"Gap #{i} [{gap.get('gap_type')}]: {gap.get('question')}"]
-        lines.append(f"  Рекомендация: {gap.get('suggestion')}")
-        if gap.get("status") == "clarified" and gap.get("analyst_text"):
-            lines.append(f"  Уточнение аналитика: {gap.get('analyst_text')}")
-        gap_lines.append("\n".join(lines))
-
-    gaps_text = "\n\n".join(gap_lines)
-
-    # The model edits the logic steps and dependencies; parameter/mapping tables
-    # mirror the spec verbatim and are carried over by code (mapping tables are
-    # re-attached to the steps by number). Steps go in flat, without the tables.
-    flat_steps = _flatten_steps(current_sl.get("logic_steps") or [])
-    editable = {
-        "logic_steps": [{k: v for k, v in s.items() if k not in ("children", "mapping_tables")} for s in flat_steps],
-        "used_dependencies": current_sl.get("used_dependencies") or [],
+            limitations.append("Часть замечаний исключена: цитаты или источники не подтверждены")
+    picture = report["business_picture"]
+    if (not corpus.validate_evidence(picture["purpose_evidence"])
+            or not {e["source_id"] for e in picture["purpose_evidence"]} <= checked):
+        picture["purpose"] = "Назначение операции не подтверждено источниками"
+        picture["purpose_evidence"] = []
+        limitations.append("Не подтверждено назначение бизнес-операции")
+    for section in ("actors", "entities_and_states", "lifecycle", "business_rules"):
+        facts = picture[section]
+        picture[section] = [f for f in facts if corpus.validate_evidence(f["evidence"])
+                            and {e["source_id"] for e in f["evidence"]} <= checked]
+        if len(facts) != len(picture[section]):
+            limitations.append("Часть бизнес-картины исключена: цитаты не подтверждены")
+    if not report["checked_scenarios"]:
+        limitations.append("Не перечислены проверенные сценарии")
+    limitations = list(dict.fromkeys(limitations))
+    return {
+        **report, "gaps": valid_gaps, "business_picture": picture,
+        "checked_source_ids": sorted(checked), "sources": corpus.source_metadata(),
+        "limitations": limitations, "coverage": "partial" if limitations else "complete",
+        "started_at": started, "finished_at": now(), "engine": "codex",
+        "context_hash": digest(corpus.context),
     }
-    user_message = build_apply_user_message(json.dumps(editable, ensure_ascii=False, indent=2), gaps_text)
-
-    global_rules = await store.get_global_rules()
-    project_rules = await store.get_project_rules(project_slug)
-    apply_system_prompt = build_system_prompt(
-        base=APPLY_SYSTEM_PROMPT,
-        global_rules=global_rules.get("gaps", ""),
-        project_rules=project_rules.get("gaps", ""),
-    )
-    result = await call_structured(
-        ApplyResult,
-        label="gaps:apply_preview",
-        model=settings.gaps_model,
-        max_tokens=32000,
-        system=apply_system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    )
-
-    tables_by_number = {s["number"]: s.get("mapping_tables") or [] for s in flat_steps}
-    for step in result.logic_steps:
-        if step.mapping_table_ids and not step.mapping_tables:
-            step.mapping_tables = tables_by_number.get(step.number, [])
-    proposed_dict = {
-        "input_tables": current_sl.get("input_tables") or [],
-        "response_tables": current_sl.get("response_tables") or [],
-        "logic_steps": [s.model_dump(mode="json") for s in nest_steps(result.logic_steps)],
-        "used_dependencies": [d.model_dump(mode="json") for d in result.used_dependencies],
-    }
-    changes_list = [c.model_dump(mode="json") for c in result.changes]
-
-    # Sanity check: proposed should have at least as many items as original
-    if len(result.logic_steps) < len(flat_steps):
-        logger.warning(
-            "[gaps:apply_preview] logic_steps shrunk: %d → %d — Claude may have dropped steps",
-            len(flat_steps), len(result.logic_steps),
-        )
-    if len(result.used_dependencies) < len(editable["used_dependencies"]):
-        logger.warning(
-            "[gaps:apply_preview] used_dependencies shrunk: %d → %d — Claude may have dropped items",
-            len(editable["used_dependencies"]), len(result.used_dependencies),
-        )
-
-    logger.info(
-        "[gaps:apply_preview] Generated proposed logic with %d changes for feature '%s'",
-        len(changes_list), feature_name,
-    )
-
-    return {"original": current_sl, "proposed": proposed_dict, "changes": changes_list}
 
 
-def _flatten_steps(steps: list[dict]) -> list[dict]:
-    """Depth-first list of step dicts (children included in order)."""
-    out: list[dict] = []
-    for step in steps:
-        out.append(step)
-        out.extend(_flatten_steps(step.get("children") or []))
-    return out
+async def run_gaps_pipeline(project_slug: str, feature_name: str, store, *, task_id: str | None = None) -> list[dict]:
+    started = now()
+    run_id = uuid.uuid4().hex
+    workspace = Path(settings.gaps_log_dir).resolve() / run_id
 
+    async def stage(name: str, error: str | None = None):
+        await store.update_feature(project_slug, feature_name, {
+            "gaps_job": {"id": run_id, "stage": name, "error": error, "started_at": started},
+        })
 
-async def run_apply_preview_background(
-    project_slug: str,
-    feature_name: str,
-    store,
-    *,
-    task_id: str | None = None,
-) -> None:
-    """Background task: generate apply preview and save to storage."""
     try:
-        result = await generate_apply_preview(project_slug, feature_name, store)
-        await store.save_apply_preview(project_slug, feature_name, {
-            "status": "done",
-            **result,
-        })
-    except Exception as exc:
-        logger.error("Apply preview failed for feature '%s': %s", feature_name, exc)
-        await store.save_apply_preview(project_slug, feature_name, {
-            "status": "error",
-            "error": str(exc),
-        })
+        workspace.mkdir(parents=True, mode=0o700)
+        await stage("sources")
+        feature = await store.get_feature(project_slug, feature_name)
+        if feature is None:
+            raise ValueError("Фича не найдена")
+        context = await store.get_gap_context(project_slug) or {}
+        corpus = SourceCorpus(store, project_slug, feature, workspace, context)
+        await corpus.prepare()
+        corpus.previous = with_ids(corpus.previous)
+        corpus.write_manifest()
+        await stage("queued")
+
+        async def execute(ask):
+            await stage("research")
+            for _ in range(4):
+                selection = await ask(SELECT, SourceSelection)
+                ids = [sid for sid in selection["requested_source_ids"] if sid not in corpus.sources]
+                if not ids:
+                    break
+                await corpus.load(ids)
+            else:
+                corpus.limitations.append("Достигнут лимит этапов поиска связанных источников")
+                corpus.write_manifest()
+            await stage("analysis")
+            draft = await ask(ANALYZE, GapReport)
+            # Preserve the draft for inspection; the verification turn has the
+            # same conversation and reads the same immutable original sources.
+            (workspace / "draft.json").write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
+            await stage("verification")
+            final = await ask(VERIFY, GapReport)
+            return validate_report(final, corpus, started)
+
+        result = await agent_runner.analyze(workspace, workspace / "events.jsonl", execute, lambda: stage("research"))
+        if digest(await store.get_gap_context(project_slug) or {}) != result["context_hash"]:
+            result["limitations"].append("Бизнес-контекст изменился во время анализа; нужен повторный запуск")
+            result["coverage"] = "partial"
+        findings = result.pop("gaps")
+        await stage("saving")
+        merged = await store.mutate_gaps(
+            project_slug, feature_name,
+            lambda current: merge_findings(current, findings, result), analysis=result,
+        )
+        if result["coverage"] == "complete":
+            await store.clear_stale(project_slug, feature_name, "gaps", started, "gaps_run_at")
+        else:
+            await store.update_feature(project_slug, feature_name, {"gaps_run_at": now()})
+        await stage("done")
         if task_id:
-            await store.finish_task(
-                project_slug, task_id, status="error", error_message=str(exc),
-            )
-        return
-    if task_id:
-        await store.finish_task(project_slug, task_id, status="done")
-
-
-async def confirm_apply(
-    project_slug: str,
-    feature_name: str,
-    proposed: dict,
-    store,
-) -> None:
-    """Save proposed structured_logic and mark approved/clarified gaps as applied."""
-    await store.update_feature(project_slug, feature_name, {"structured_logic_json": proposed})
-
-    gaps = await store.get_gaps(project_slug, feature_name)
-    for gap in gaps:
-        if gap.get("status") in ("approved", "clarified"):
-            gap["status"] = "applied"
-
-    await store.save_gaps(project_slug, feature_name, gaps)
-    await store.delete_apply_preview(project_slug, feature_name)
-    logger.info(
-        "[gaps:confirm_apply] Applied proposed logic to feature '%s'",
-        feature_name,
-    )
+            await store.finish_task(project_slug, task_id, status="done")
+        return merged
+    except asyncio.CancelledError:
+        await stage("cancelled")
+        if task_id:
+            await store.finish_task(project_slug, task_id, status="error", error_message="Анализ остановлен пользователем")
+        raise
+    except Exception as exc:
+        message = str(exc) if isinstance(exc, (ValueError, agent_runner.AgentError)) else "Не удалось завершить анализ"
+        await stage("error", message)
+        if task_id:
+            await store.finish_task(project_slug, task_id, status="error", error_message=message)
+        raise

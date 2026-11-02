@@ -226,3 +226,85 @@ async def test_workflow_specific_verdicts(sdk, status):
     result = {**VERDICT, "status": status, "reason": "Нужно решение пользователя" if status == "failed" else None}
     sdk.thread.turn.return_value = FakeTurn(completed_events(json.dumps(result)))
     assert await agent_runner.run("task", sdk.repo, sdk.log, statuses=(status,)) == result
+
+
+async def test_analyst_uses_read_only_subscription_session_without_coding_instructions(sdk):
+    called = []
+
+    async def execute(ask):
+        first = await ask("Выбери источники", AgentOutput)
+        called.append(first)
+        return await ask("Перепроверь вывод", AgentOutput)
+
+    started = AsyncMock()
+    result = await agent_runner.analyze(sdk.repo, sdk.log, execute, started)
+    assert result == VERDICT and called == [VERDICT]
+    started.assert_awaited_once()
+    options = sdk.client.thread_start.call_args.kwargs
+    assert options["sandbox"] == Sandbox.read_only
+    assert options["approval_mode"] == ApprovalMode.deny_all
+    assert options["ephemeral"] is True
+    assert options["config"]["project_doc_max_bytes"] == 0
+    assert "take-task" not in options["developer_instructions"]
+    assert sdk.configs[0].env["OPENAI_API_KEY"] == ""
+    assert sdk.thread.turn.await_count == 2
+    sdk.client.close.assert_awaited_once()
+
+
+class AgentOutput(BaseModel):
+    status: str
+    branch: str | None
+    mr_url: str | None
+    summary: str
+    reason: str | None
+
+
+async def test_analyst_repairs_json_once(sdk):
+    sdk.thread.turn.side_effect = [FakeTurn(completed_events("not json")), FakeTurn(completed_events(json.dumps(VERDICT)))]
+
+    async def execute(ask):
+        return await ask("Проверка", AgentOutput)
+
+    assert await agent_runner.analyze(sdk.repo, sdk.log, execute, AsyncMock()) == VERDICT
+    assert sdk.thread.turn.await_count == 2
+
+
+async def test_analyst_never_retries_failed_turn(sdk):
+    sdk.thread.turn.return_value = FakeTurn(completed_events("", status="failed", error={"message": "Usage limit"}))
+
+    async def execute(ask):
+        return await ask("Проверка", AgentOutput)
+
+    with pytest.raises(agent_runner.AgentError, match="Usage limit"):
+        await agent_runner.analyze(sdk.repo, sdk.log, execute, AsyncMock())
+    assert sdk.thread.turn.await_count == 1
+    sdk.client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("auth", [None, "apiKey"])
+async def test_analyst_rejects_api_billing(sdk, auth):
+    sdk.client.account.return_value.account = None if auth is None else SimpleNamespace(root=SimpleNamespace(type=auth))
+    with pytest.raises(agent_runner.AgentError, match="ChatGPT"):
+        await agent_runner.analyze(sdk.repo, sdk.log, AsyncMock(), AsyncMock())
+    sdk.client.thread_start.assert_not_awaited()
+    sdk.client.close.assert_awaited_once()
+
+
+async def test_analyst_timeout_interrupts_tools(sdk, monkeypatch):
+    monkeypatch.setattr(settings, "gaps_timeout_seconds", 0.02)
+    turn = FakeTurn([])
+
+    async def waiting():
+        await asyncio.Event().wait()
+        yield
+
+    turn.stream = waiting
+    sdk.thread.turn.return_value = turn
+
+    async def execute(ask):
+        return await ask("Проверка", AgentOutput)
+
+    with pytest.raises(agent_runner.AgentError, match="таймаут"):
+        await agent_runner.analyze(sdk.repo, sdk.log, execute, AsyncMock())
+    turn.interrupt.assert_awaited_once()
+    sdk.client.close.assert_awaited_once()

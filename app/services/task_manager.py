@@ -26,7 +26,8 @@ class TaskManager:
         self._tasks[key] = task
 
         def _on_done(t: asyncio.Task) -> None:
-            self._tasks.pop(key, None)
+            if self._tasks.get(key) is t:
+                self._tasks.pop(key, None)
             if t.cancelled():
                 logger.warning("Task cancelled: %s", key)
             elif t.exception() is not None:
@@ -40,6 +41,17 @@ class TaskManager:
         """Check if a task is currently running."""
         task = self._tasks.get(key)
         return task is not None and not task.done()
+
+    async def cancel(self, key: str) -> bool:
+        task = self._tasks.get(key)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return True
 
 
 # Singleton instance — import and use across routers

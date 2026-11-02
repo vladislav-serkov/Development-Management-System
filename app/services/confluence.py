@@ -158,6 +158,10 @@ def _page_result(data: dict) -> dict:
         "markdown": markdown,
         "links": links,
         "tables": tables,
+        "ancestors": [
+            {"page_id": str(a["id"]), "title": a.get("title", "")}
+            for a in data.get("ancestors", []) if a.get("id")
+        ],
     }
 
 

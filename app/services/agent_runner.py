@@ -177,3 +177,66 @@ async def run(
                 raise AgentError(f"Ошибка Codex: {str(exc)[:400]}") from exc
             finally:
                 await client.close()
+
+
+async def analyze(workspace: Path, log_path: Path, execute, on_started) -> dict:
+    """Run a multi-stage, read-only analyst on the shared subscription queue.
+
+    execute(ask) controls the protocol and source fetching server-side. ask accepts
+    a Pydantic result model; coding workflows retain their existing verdict schema.
+    No service repository, coding instructions or API-key fallback is involved.
+    """
+    from app.prompts.gap_agent import INSTRUCTIONS
+
+    if not is_configured():
+        raise AgentError("Codex отключён: установите CODEX_ENABLED=true")
+    async with _run_lock:
+        await on_started()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w", encoding="utf-8") as log:
+            log_path.chmod(0o600)
+            client = AsyncCodex(CodexConfig(
+                codex_bin=settings.codex_cli or None, cwd=str(workspace.resolve()),
+                env={"CODEX_API_KEY": "", "OPENAI_API_KEY": "", "CLAUDE_CODE_OAUTH_TOKEN": ""},
+                client_name="extract_agent", client_title="Extract Agent — Gap analysis",
+            ))
+            try:
+                async with asyncio.timeout(settings.gaps_timeout_seconds):
+                    account = await client.account()
+                    if account.account is None or account.account.root.type != "chatgpt":
+                        raise AgentError("Codex не авторизован через ChatGPT. Выполните codex login")
+                    model = settings.codex_model
+                    if not model:
+                        catalog = await client.models()
+                        available = [m for m in catalog.data if not m.hidden]
+                        if not available:
+                            raise AgentError("У аккаунта Codex нет доступных моделей")
+                        model = next((m.model for m in available if m.is_default), available[0].model)
+                    thread = await client.thread_start(
+                        cwd=str(workspace.resolve()), model=model, model_provider="openai",
+                        sandbox=Sandbox.read_only, approval_mode=ApprovalMode.deny_all,
+                        base_instructions=INSTRUCTIONS, developer_instructions=INSTRUCTIONS,
+                        ephemeral=True,
+                        config={"project_doc_max_bytes": 0, "web_search": "disabled"},
+                    )
+                    _write_log(log, "thread.started", {"thread_id": thread.id, "model": model, "kind": "gaps"})
+
+                    async def ask(prompt: str, result_type: type[BaseModel]) -> dict:
+                        schema = result_type.model_json_schema()
+                        for attempt in range(2):
+                            raw = await _turn(thread, prompt, schema, log)
+                            try:
+                                return result_type.model_validate_json(raw).model_dump()
+                            except ValidationError:
+                                if attempt:
+                                    raise AgentError("Codex не вернул корректный отчёт по заданной схеме") from None
+                                prompt = "Верни предыдущий результат строго по JSON-схеме. Не повторяй исследование."
+                        raise AssertionError("unreachable")
+
+                    return await execute(ask)
+            except TimeoutError as exc:
+                raise AgentError(f"Анализ остановлен по таймауту {settings.gaps_timeout_seconds}с") from exc
+            except (CodexError, OSError, RuntimeError, ValueError) as exc:
+                raise AgentError("Ошибка запуска Codex; проверьте вход ChatGPT и журнал задачи") from exc
+            finally:
+                await client.close()

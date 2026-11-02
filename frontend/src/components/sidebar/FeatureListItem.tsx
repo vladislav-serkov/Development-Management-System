@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { AnimatedDots } from "@/components/dependency/AnimatedDots"
 import { cn } from "@/lib/utils"
 import { countLabel } from "@/lib/plural"
 import { MethodBadge } from "./MethodBadge"
@@ -47,6 +48,8 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
               <span className="text-amber-600 dark:text-amber-400">извлечение…</span>
             ) : (
               <>
+                {feature.gaps_running && <span>gap-анализ<AnimatedDots /></span>}
+                {!feature.gaps_running && !!feature.gap_count && <span>{countLabel(feature.gap_count, ["пробел", "пробела", "пробелов"])}</span>}
                 <span>{countLabel(feature.test_case_count ?? 0, ["кейс", "кейса", "кейсов"])}</span>
                 <span>{countLabel(feature.bug_count ?? 0, ["баг", "бага", "багов"])}</span>
               </>
@@ -60,9 +63,9 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
             {stale && (
               <span
                 className="font-medium text-amber-600 dark:text-amber-400"
-                title={`Анализ посчитан до изменений в спеке или её источниках${feature.stale_spec_note ? ` (${feature.stale_spec_note})` : ""}`}
+                title={`Анализ посчитан до изменений в источниках или бизнес-контексте${feature.stale_spec_note ? ` (${feature.stale_spec_note})` : ""}`}
               >
-                спека обновилась
+                анализ устарел
               </span>
             )}
           </div>
