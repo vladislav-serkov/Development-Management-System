@@ -459,10 +459,6 @@ export interface ExternalDocEnrichment {
 
 // Gaps types (v1.1 Phase 6)
 export type GapStatus = "pending" | "approved" | "clarified" | "rejected" | "applied"
-export type GapType = string
-
-export type GapSeverity = "critical" | "major"
-
 export interface GapEvidence {
   source_id: string
   location: string
@@ -479,33 +475,18 @@ export interface GapSource {
 
 export interface GapItem {
   id: string
-  kind?: "contradiction" | "missing_logic" | "business_question"
-  gap_type: GapType
-  severity: GapSeverity
-  actionable: boolean
-  question: string
-  suggestion: string
+  text: string
   status: GapStatus
   analyst_text: string | null
-  subject?: string
-  location?: string
-  scenario?: string
-  business_impact?: string
-  evidence?: GapEvidence[]
-  source_snapshots?: GapSource[]
+  evidence: GapEvidence[]
+  source_snapshots: GapSource[]
   presence?: "current" | "not_detected" | "unverified"
   needs_review?: boolean
-  reconsideration_reason?: string | null
-  history?: { at: string; action: string; text: string | null; actor?: string }[]
 }
 
 export interface GapAnalysis {
-  sources: GapSource[]
-  limitations: string[]
   coverage: "complete" | "partial"
-  started_at: string
   finished_at: string
-  engine: "codex"
 }
 
 export interface GapsResponse {

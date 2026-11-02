@@ -65,9 +65,10 @@ against original specifications. It uses the host user's saved ChatGPT login
 through the local Codex SDK. Run `codex login` under the same macOS user as the
 backend; no Anthropic or OpenAI API key is used for this analysis.
 
-The user runs analysis for a selected feature and sees a compact list of
-substantiated findings. Each card explains the problem, its location, consequence,
-and what to clarify in Confluence; citations and source links are collapsed.
+The user runs analysis for a selected feature and sees a list of remarks.
+Each remark is one short paragraph explaining the problem and what to clarify,
+with source links and Accept/Reject actions. Source link tooltips show the exact
+supporting quotes. Reviewed/previous remarks are available through one filter.
 The agent prefers fewer, well-supported findings to speculative questions or
 generic advice. Original imported pages must be available (re-import legacy
 features without saved source text). Dependencies need not be enriched first:
@@ -78,7 +79,7 @@ Users can accept or reject a finding. A rejection reason is optional and is
 considered on subsequent runs, including rejection without a reason. Acceptance
 means “take into account”, not “fixed”; the analyst edits Confluence manually.
 Stable IDs preserve decisions through reruns. A dismissed finding is raised
-again only with an explanation and new cited evidence from changed/new source
+again only with new grounds explained in the remark and new cited evidence from changed/new source
 material; wording changes and unrelated page edits do not reopen it. Previous
 findings not rechecked remain under **Предыдущие**, without claiming a fix.
 
@@ -101,12 +102,21 @@ only to the agent, not returned in API results, quoted as evidence or included i
 `.context`/ZIP exports. Legacy `gap-context.json` files are ignored on import.
 Editing the context directly in the DB is detected when results are loaded or
 an analysis finishes; affected results require a rerun. An empty context never
-blocks analysis. Internal business reasoning remains in the backend report.
+blocks analysis. The agent produces only `gaps`: each item has `text`, `evidence`
+(source ID, location, verbatim quote), and nullable `existing_gap_id` for matching
+previous decisions. It does not produce business pictures, actor/entity/state
+inventories, unknown rules, categories, severity, scenarios, impacts or separate
+recommendations. Its input contains the original specification and a compact
+catalog of related pages, optional context/guidance and prior decisions; extracted
+logic, duplicate table data and internal review history are not sent.
 
-Missing pages, discovery limits or invalid citations produce **partial coverage**,
-even if no findings remain. The UI distinguishes this from a completed check with
-**Обоснованных замечаний не найдено**. A gap in a fully inspected specification is
-an analysis result, not a coverage failure.
+Only sources needed for the selected feature are requested. Optional overview
+links are catalogued without eager loading; missing optional pages do not make
+analysis partial. A failed requested contract, discovery limit or invalid quote
+makes the result partial. The user sees one line: **Не удалось проверить часть ТЗ**.
+Technical diagnostics and source inventories remain in private run logs/backend
+metadata, never in the agent response or public analysis response. A completed
+empty check shows **Обоснованных замечаний не найдено**.
 
 `CODEX_ENABLED`, `CODEX_MODEL`, and `CODEX_CLI` are shared with other Codex jobs.
 `GAPS_TIMEOUT_SECONDS` defaults to 1200, `GAPS_MAX_SOURCES` to 30, and

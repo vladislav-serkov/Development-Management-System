@@ -73,7 +73,8 @@ async def dump_project(store: ProjectStore, project_slug: str) -> dict[str, byte
         safe = ProjectStore._sanitize_feature_name(name)
         files[f"features/{safe}/feature.json"] = _dumps(_export_feature(feature))
 
-        gaps = public_gaps(await store.get_gaps(project_slug, name, include_archived=True))
+        gaps = public_gaps(await store.get_gaps(project_slug, name, include_archived=True),
+                           (feature.get("gaps_analysis") or {}).get("sources", []))
         if gaps:
             files[f"gaps/{safe}.json"] = _dumps({"gaps": gaps})
         test_cases = await store.get_test_cases(project_slug, name)

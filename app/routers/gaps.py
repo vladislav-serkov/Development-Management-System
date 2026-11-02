@@ -79,7 +79,7 @@ async def list_gaps(project_slug: str, feature_name: str):
                            analysis["context_hash"] != digest(await store.get_gap_context(project_slug) or {}))
     return {
         "gaps": public_gaps([g for g in with_ids(await store.get_gaps(project_slug, feature_name, include_archived=True))
-                             if not g.get("archived")]),
+                             if not g.get("archived")], (analysis or {}).get("sources", [])),
         "gaps_running": active is not None, "gaps_run_at": feature.get("gaps_run_at"),
         "analysis": public_analysis(feature.get("gaps_analysis")), "job": feature.get("gaps_job"),
         "stale": bool(feature.get("gaps_stale")) or context_changed, "configured": agent_runner.is_configured(),
@@ -106,7 +106,8 @@ async def review_gap(project_slug: str, feature_name: str, gap_id: str, body: Ga
         return items
 
     gaps = await store.mutate_gaps(project_slug, feature["name"], mutate)
-    return {"gaps": public_gaps([g for g in gaps if not g.get("archived")])}
+    return {"gaps": public_gaps([g for g in gaps if not g.get("archived")],
+                               (feature.get("gaps_analysis") or {}).get("sources", []))}
 
 
 # The previous flow silently edited the extracted copy of a specification.

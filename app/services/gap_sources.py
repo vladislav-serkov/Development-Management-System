@@ -5,13 +5,16 @@ arbitrary URLs or credentials. Imported originals remain reproducible snapshots.
 """
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 from urllib.parse import urlparse
 
 from app.config import settings
 from app.services import confluence
-from app.services.gap_results import PRIVATE_SOURCE_IDS
+from app.services.gap_results import PRIVATE_SOURCE_IDS, gap_text
+
+logger = logging.getLogger(__name__)
 
 
 def digest(value) -> str:
@@ -44,7 +47,7 @@ class SourceCorpus:
         self.limitations: list[str] = []
         self.primary_id: str | None = None
         self.previous: list[dict] = []
-        self.dependencies: list[dict] = []
+        self.guidance = ""
 
     def add_ref(self, ref: dict, title: str = "", *, doc_slug: str | None = None) -> str:
         key = {k: str(v) for k, v in ref.items() if k in ("page_id", "space", "title") and v}
@@ -62,7 +65,7 @@ class SourceCorpus:
             elif (link.get("space_key") or default_space) and link.get("title"):
                 ref = {"space": link.get("space_key") or default_space, "title": link["title"]}
             elif link.get("title"):
-                self.limitations.append(f"Не определено пространство Confluence для ссылки: {link['title']}")
+                logger.warning("Cannot resolve Confluence space for link: %s", link["title"])
                 continue
             else:
                 continue
@@ -96,7 +99,8 @@ class SourceCorpus:
         self.catalog[sid].update(title=item["title"], loaded=True)
         (self.workspace / "sources").mkdir(exist_ok=True)
         (self.workspace / "sources" / f"{sid}.json").write_text(
-            json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8",
+            json.dumps({k: item[k] for k in ("id", "title", "service_name", "markdown")},
+                       ensure_ascii=False, indent=2), encoding="utf-8",
         )
         self.add_links(item["links"], source.get("space_key"))
         self.add_links(source.get("ancestors", []))
@@ -119,24 +123,20 @@ class SourceCorpus:
         await self.load([self.primary_id])
         if self.primary_id not in self.sources:
             raise ValueError("Оригинал ТЗ недоступен. Повторно импортируйте исходную страницу")
-        context_ids = [self.add_ref(validate_source_url(url), url) for url in self.context.get("source_urls", [])]
-        await self.load(context_ids)
+        for url in self.context.get("source_urls", []):
+            try:
+                self.add_ref(validate_source_url(url), url)
+            except ValueError:
+                logger.warning("Ignored invalid optional business context link")
         deps_by_type = await self.store.list_dependencies(self.project)
         for deps in deps_by_type.values():
             for dep in deps:
-                # An index for discovery, not evidence of a schema or business rule.
-                self.dependencies.append({k: dep.get(k) for k in (
-                    "name", "dep_type", "description", "service_name", "path", "source_page_id", "source_page_version",
-                )})
                 if dep.get("source_page_id"):
-                    self.add_ref({"page_id": dep["source_page_id"]}, dep["name"])
+                    sid = self.add_ref({"page_id": dep["source_page_id"]}, dep["name"])
+                    self.catalog[sid]["service_name"] = dep.get("service_name")
         global_rules = await self.store.get_global_rules()
         project_rules = await self.store.get_project_rules(self.project)
-        rules = "\n\n".join(x for x in (global_rules.get("gaps", ""), project_rules.get("gaps", "")) if x)
-        if rules:
-            sid = "analysis-rules"
-            self.catalog[sid] = {"id": sid, "title": "Правила анализа проекта"}
-            self.put(sid, {"markdown": rules})
+        self.guidance = "\n\n".join(x for x in (global_rules.get("gaps", ""), project_rules.get("gaps", "")) if x)
         self.previous = await self.store.get_gaps(self.project, self.feature["name"], include_archived=True)
         self.write_manifest()
 
@@ -173,15 +173,20 @@ class SourceCorpus:
     def write_manifest(self) -> None:
         data = {
             "feature": {key: self.feature.get(key) for key in (
-                "name", "type", "method", "endpoint", "summary", "source_document", "structured_logic_json",
+                "name", "method", "endpoint",
             )},
             "primary_source_id": self.primary_id,
-            "catalog": list(self.catalog.values()),
-            "dependency_index": self.dependencies,
-            "business_context": self.context.get("notes", ""),
-            "previous_decisions": self.previous,
-            "limitations": self.limitations,
+            "catalog": [{k: v for k, v in entry.items() if k in {"id", "title", "service_name", "loaded", "error"}}
+                        for entry in self.catalog.values()],
+            "previous_decisions": [{
+                "id": gap.get("id"), "text": gap_text(gap), "status": gap.get("status"),
+                "analyst_text": gap.get("analyst_text"), "evidence": gap.get("evidence", []),
+            } for gap in self.previous if not gap.get("archived")],
         }
+        if self.context.get("notes"):
+            data["business_context"] = self.context["notes"]
+        if self.guidance:
+            data["review_guidance"] = self.guidance
         (self.workspace / "manifest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def validate_evidence(self, evidence: list[dict]) -> bool:

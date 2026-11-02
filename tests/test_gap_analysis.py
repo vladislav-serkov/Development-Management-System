@@ -22,24 +22,12 @@ def evidence(sid=SID, quote=PRIMARY):
 
 
 def report():
-    fact = {"text": "Операция сохраняет идентификатор внешнего платежа", "evidence": [evidence()]}
-    return {
-        "business_picture": {
-            "purpose": "Зарегистрировать платёж", "purpose_evidence": [evidence()],
-            "actors": [fact], "entities_and_states": [],
-            "lifecycle": [fact], "business_rules": [], "unknowns": [],
-        },
-        "checked_source_ids": [SID, TABLE_SID], "checked_scenarios": ["Успешная регистрация платежа"],
-        "limitations": [],
-        "gaps": [{
-            "existing_gap_id": None, "kind": "contradiction", "gap_type": "field_not_in_schema",
-            "severity": "critical", "subject": "payment.external_id", "location": "Шаг 5",
-            "question": "Где хранить внешний идентификатор?", "scenario": "Успешный ответ внешнего сервиса",
-            "business_impact": "Не получится связать платёж с внешней операцией",
-            "suggestion": "Согласовать место хранения идентификатора", "evidence": [evidence(), evidence(TABLE_SID, SCHEMA)],
-            "reconsideration_reason": None,
-        }],
-    }
+    return {"gaps": [{
+        "existing_gap_id": None,
+        "text": "В шаге 5 требуется сохранить payment.external_id, но в полной схеме payment такого поля нет. "
+                "Уточните место хранения идентификатора, чтобы платёж можно было связать с внешней операцией.",
+        "evidence": [evidence(), evidence(TABLE_SID, SCHEMA)],
+    }]}
 
 
 @pytest.fixture
@@ -62,7 +50,7 @@ async def setup_project(store, monkeypatch, tmp_path):
     return store
 
 
-def fake_agent(monkeypatch, final=None, during=None):
+def fake_agent(monkeypatch, final=None, during=None, source_ids=None):
     calls = []
 
     async def analyze(workspace, log, execute, on_started):
@@ -73,9 +61,9 @@ def fake_agent(monkeypatch, final=None, during=None):
             nonlocal selected
             calls.append(schema)
             if schema is SourceSelection:
-                ids = [] if selected else [TABLE_SID]
+                ids = [] if selected else source_ids if source_ids is not None else [TABLE_SID]
                 selected = True
-                return {"requested_source_ids": ids, "rationale": "Нужна схема таблицы"}
+                return schema.model_validate({"requested_source_ids": ids}).model_dump()
             if during and calls.count(GapReport) == 2:
                 await during()
             return schema.model_validate(copy.deepcopy(final if final is not None else report())).model_dump()
@@ -114,7 +102,7 @@ async def test_same_gap_preserves_concurrent_review_and_stable_id(setup_project,
     first = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
     gid = first[0]["id"]
     final = report()
-    final["gaps"][0].update(existing_gap_id=gid, question="Новая формулировка той же проблемы")
+    final["gaps"][0].update(existing_gap_id=gid, text="Новая формулировка той же проблемы")
 
     async def review():
         def mutate(items):
@@ -134,8 +122,14 @@ async def test_partial_run_preserves_previous_findings(setup_project, monkeypatc
     fake_agent(monkeypatch)
     await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
     final = report()
-    final.update(gaps=[], limitations=["Нет описания жизненного цикла"])
-    fake_agent(monkeypatch, final)
+    final["gaps"] = []
+    # A requested contract could not be loaded; an absent old remark is unverified.
+    source = await setup_project.get_document_source("p", "spec")
+    source["links"].append({"page_id": "999", "title": "Необходимый контракт"})
+    await setup_project.save_document_source("p", "spec", source)
+    missing_sid = "source-" + digest({"page_id": "999"})[:16]
+    monkeypatch.setattr(confluence, "fetch_page_by_ref", AsyncMock(side_effect=confluence.ConfluenceError("unavailable")))
+    fake_agent(monkeypatch, final, source_ids=[TABLE_SID, missing_sid])
     second = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
     assert second[0]["presence"] == "unverified"
     assert second[0]["status"] == "pending"
@@ -197,7 +191,7 @@ async def test_http_review_optional_reason_and_keeps_history(client, setup_proje
     result = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
     url = "/projects/p/features/POST%20__payments/gaps"
     r = await client.get(url + "/")
-    assert r.status_code == 200 and r.json()["analysis"]["engine"] == "codex"
+    assert r.status_code == 200 and r.json()["analysis"]["coverage"] == "complete"
     gid = result[0]["id"]
     r = await client.patch(url + f"/items/{gid}", json={"status": "rejected"})
     assert r.status_code == 200
@@ -275,9 +269,12 @@ async def test_business_context_is_private_in_export_and_import(setup_project, t
     secret = "Внутреннее описание назначения микросервиса"
     await setup_project.save_gap_context("p", {"notes": secret, "source_urls": []})
     final = report()
-    final["business_picture"]["purpose"] = secret
     fake_agent(monkeypatch, final)
     await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
+    stored = await setup_project.get_feature("p", "POST /payments")
+    await setup_project.update_feature("p", "POST /payments", {
+        "gaps_analysis": {**stored["gaps_analysis"], "business_picture": {"purpose": secret}},
+    })
     files = await dump_project(setup_project, "p")
     assert "gap-context.json" not in files
     assert all(secret not in content.decode() for content in files.values())
@@ -342,7 +339,7 @@ async def test_changed_sources_surface_dismissed_gap_for_reconsideration(setup_p
     await setup_project.save_document_source("p", "spec", source)
     final = report()
     final["gaps"][0]["existing_gap_id"] = first[0]["id"]
-    final["gaps"][0]["reconsideration_reason"] = "В ТЗ добавлена обязательность идентификатора для возврата"
+    final["gaps"][0]["text"] += " Теперь ТЗ требует идентификатор для возврата — это новое основание для проверки."
     final["gaps"][0]["evidence"].append(evidence(quote="Теперь идентификатор обязателен для возврата."))
     fake_agent(monkeypatch, final)
     second = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
@@ -398,7 +395,6 @@ async def test_http_results_and_review_never_return_internal_report(client, setu
     secret = "Внутреннее описание сервиса только для агента"
     await setup_project.save_gap_context("p", {"notes": secret, "source_urls": []})
     final = report()
-    final["business_picture"]["purpose"] = secret
     fake_agent(monkeypatch, final)
     items = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
     # Simulate a previously stored report citing private context.
@@ -416,7 +412,7 @@ async def test_http_results_and_review_never_return_internal_report(client, setu
     assert len(response.json()["gaps"]) == 1
     assert secret not in response.text
     stored = await setup_project.get_feature("p", "POST /payments")
-    assert stored["gaps_analysis"]["business_picture"]["purpose"] == secret
+    assert "business_picture" not in stored["gaps_analysis"]
     assert stored["structured_logic_json"]["logic_steps"] == []
     assert (await setup_project.get_document_source("p", "spec"))["markdown"] == PRIMARY
 
@@ -455,13 +451,14 @@ async def test_rejected_gap_does_not_return_without_new_grounds(setup_project, m
         await setup_project.save_document_source("p", "spec", source)
     final = report()
     # No existing_gap_id, different wording and location: must still respect dismissal.
-    final["gaps"][0].update(question="Иная формулировка", location="Другой заголовок")
+    final["gaps"][0]["text"] = "Иная формулировка той же проблемы"
+    final["gaps"][0]["evidence"][0]["location"] = "Другой заголовок"
     fake_agent(monkeypatch, final)
     second = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
     assert len(second) == 1
     assert second[0]["id"] == first[0]["id"]
     assert second[0]["status"] == "rejected" and not second[0]["needs_review"]
-    assert second[0]["question"] == first[0]["question"]
+    assert second[0]["text"] == first[0]["text"]
     assert (await setup_project.get_feature("p", "POST /payments"))["pending_gap_count"] == 0
 
 
@@ -471,16 +468,16 @@ async def test_new_words_without_changed_sources_cannot_reopen_dismissal(setup_p
     first[0].update(status="rejected")
     await setup_project.save_gaps("p", "POST /payments", first)
     final = report()
-    final["gaps"][0].update(existing_gap_id=first[0]["id"], reconsideration_reason="Другое объяснение прежнего ТЗ")
+    final["gaps"][0].update(existing_gap_id=first[0]["id"], text="Другое объяснение прежнего ТЗ")
     final["gaps"][0]["evidence"][0] = evidence(quote="После сохранения вернуть успех.")
     fake_agent(monkeypatch, final)
     second = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
     assert not second[0]["needs_review"]
 
 
-async def test_empty_business_impact_is_not_a_quality_finding(setup_project, monkeypatch):
+async def test_whitespace_only_remark_is_not_a_quality_finding(setup_project, monkeypatch):
     final = report()
-    final["gaps"][0]["business_impact"] = " "
+    final["gaps"][0]["text"] = " "
     fake_agent(monkeypatch, final)
     assert await gaps.run_gaps_pipeline("p", "POST /payments", setup_project) == []
 
@@ -492,3 +489,71 @@ def test_gap_agent_schemas_require_all_fields_including_nullable_ones(model):
         if definition.get("type") == "object":
             assert definition["additionalProperties"] is False
             assert set(definition["required"]) == set(definition["properties"])
+
+
+async def test_optional_overview_is_catalogued_without_loading_or_partial_coverage(setup_project, monkeypatch):
+    await setup_project.save_gap_context("p", {
+        "notes": "Микросервис исполняет платежи", "source_urls": ["https://confluence.example/pages/viewpage.action?pageId=999"],
+    })
+    fetch = AsyncMock(side_effect=confluence.ConfluenceError("Empty optional overview"))
+    monkeypatch.setattr(confluence, "fetch_page_by_ref", fetch)
+    fake_agent(monkeypatch)
+    await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
+    fetch.assert_not_awaited()
+    analysis = (await setup_project.get_feature("p", "POST /payments"))["gaps_analysis"]
+    assert analysis["coverage"] == "complete"
+    assert not analysis["limitations"]
+
+
+async def test_agent_only_receives_originals_and_compact_decisions(setup_project, tmp_path):
+    import json
+    old = report()["gaps"][0]
+    await setup_project.save_gaps("p", "POST /payments", [{**old, "id": "known", "status": "rejected", "analyst_text": None,
+        "business_impact": "Лишнее поле старого формата", "history": [{"action": "rejected"}], "source_hashes": {SID: "old"}}])
+    corpus = SourceCorpus(setup_project, "p", await setup_project.get_feature("p", "POST /payments"), tmp_path, {})
+    await corpus.prepare()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert set(manifest) == {"feature", "primary_source_id", "catalog", "previous_decisions"}
+    assert set(manifest["previous_decisions"][0]) == {"id", "text", "status", "analyst_text", "evidence"}
+    assert manifest["previous_decisions"][0]["status"] == "rejected"
+    source = json.loads((tmp_path / "sources" / f"{SID}.json").read_text())
+    assert source["markdown"] == PRIMARY
+    assert "structured_logic_json" not in str(manifest)
+    assert not {"tables", "links", "content_hash", "version"} & source.keys()
+
+
+async def test_legacy_remarks_are_one_paragraph_without_old_report_fields(client, setup_project):
+    legacy = {"question": "Нет статуса при отказе.", "scenario": "В шаге 4 описан отказ.",
+              "suggestion": "Уточнить статус.", "severity": "critical", "kind": "missing_logic", "status": "approved"}
+    await setup_project.save_gaps("p", "POST /payments", [legacy])
+    await setup_project.update_feature("p", "POST /payments", {"gaps_analysis": {
+        "coverage": "partial", "finished_at": "2026-11-02T10:00:00Z",
+        "business_picture": {"unknowns": ["Лишние правила"]},
+        "limitations": ["source-secret: manifest: internal diagnostics"], "sources": [],
+    }})
+    data = (await client.get("/projects/p/features/POST%20__payments/gaps/")).json()
+    assert data["analysis"] == {"coverage": "partial", "finished_at": "2026-11-02T10:00:00Z"}
+    remark = data["gaps"][0]
+    assert remark["text"] == "Нет статуса при отказе. В шаге 4 описан отказ. Уточнить статус."
+    assert remark["status"] == "approved"
+    assert not {"question", "scenario", "suggestion", "severity", "kind", "business_impact"} & remark.keys()
+    assert "internal diagnostics" not in str(data)
+
+
+def test_model_returns_only_remarks_without_a_business_report():
+    schema = GapReport.model_json_schema()
+    assert set(schema["properties"]) == {"gaps"}
+    assert set(schema["$defs"]["Finding"]["properties"]) == {"existing_gap_id", "text", "evidence"}
+
+
+async def test_legacy_dismissal_without_source_baseline_cannot_claim_new_grounds(setup_project, monkeypatch):
+    await setup_project.save_gaps("p", "POST /payments", [{
+        "id": "legacy-dismissed", "question": "Где хранить внешний идентификатор?", "status": "rejected",
+    }])
+    final = report()
+    final["gaps"][0]["existing_gap_id"] = "legacy-dismissed"
+    fake_agent(monkeypatch, final)
+    items = await gaps.run_gaps_pipeline("p", "POST /payments", setup_project)
+    assert len(items) == 1 and items[0]["status"] == "rejected"
+    assert not items[0].get("needs_review")
+    assert (await setup_project.get_feature("p", "POST /payments"))["gap_count"] == 0
