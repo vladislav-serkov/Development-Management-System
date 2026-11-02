@@ -477,21 +477,6 @@ export interface GapSource {
   content_hash: string
 }
 
-export interface BusinessFact {
-  text: string
-  evidence: GapEvidence[]
-}
-
-export interface BusinessPicture {
-  purpose: string
-  purpose_evidence: GapEvidence[]
-  actors: BusinessFact[]
-  entities_and_states: BusinessFact[]
-  lifecycle: BusinessFact[]
-  business_rules: BusinessFact[]
-  unknowns: string[]
-}
-
 export interface GapItem {
   id: string
   kind?: "contradiction" | "missing_logic" | "business_question"
@@ -510,24 +495,17 @@ export interface GapItem {
   source_snapshots?: GapSource[]
   presence?: "current" | "not_detected" | "unverified"
   needs_review?: boolean
+  reconsideration_reason?: string | null
   history?: { at: string; action: string; text: string | null; actor?: string }[]
 }
 
 export interface GapAnalysis {
-  business_picture: BusinessPicture
   sources: GapSource[]
-  checked_source_ids: string[]
-  checked_scenarios: string[]
   limitations: string[]
   coverage: "complete" | "partial"
   started_at: string
   finished_at: string
   engine: "codex"
-}
-
-export interface GapContext {
-  notes: string
-  source_urls: string[]
 }
 
 export interface GapsResponse {

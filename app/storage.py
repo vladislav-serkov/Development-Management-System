@@ -24,6 +24,7 @@ from sqlalchemy.sql import func
 
 from app.db import get_session_factory
 from app.models import AnalysisItem, Dependency, Document, Feature, Project, Rules, Task
+from app.services.gap_results import PRIVATE_SOURCE_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,8 @@ AGENT_NAMES = ["extraction", "gaps", "test_cases", "bugs", "enrichment"]
 
 def _gap_counts(gaps: list[dict]) -> dict[str, int]:
     active = [g for g in gaps if not g.get("archived") and (g.get("status") != "rejected" or g.get("needs_review"))
-              and g.get("presence", "current") == "current"]
+              and g.get("presence", "current") == "current"
+              and not any(e.get("source_id") in PRIVATE_SOURCE_IDS for e in g.get("evidence", []))]
     return {"gap_count": len(active), "pending_gap_count": sum(
         g.get("status") == "pending" or bool(g.get("needs_review")) for g in active
     )}

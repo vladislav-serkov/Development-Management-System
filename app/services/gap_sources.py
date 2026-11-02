@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from app.config import settings
 from app.services import confluence
+from app.services.gap_results import PRIVATE_SOURCE_IDS
 
 
 def digest(value) -> str:
@@ -118,10 +119,6 @@ class SourceCorpus:
         await self.load([self.primary_id])
         if self.primary_id not in self.sources:
             raise ValueError("Оригинал ТЗ недоступен. Повторно импортируйте исходную страницу")
-        if self.context.get("notes", "").strip():
-            sid = "project-notes"
-            self.catalog[sid] = {"id": sid, "title": "Бизнес-контекст от аналитика"}
-            self.put(sid, {"markdown": self.context["notes"]})
         context_ids = [self.add_ref(validate_source_url(url), url) for url in self.context.get("source_urls", [])]
         await self.load(context_ids)
         deps_by_type = await self.store.list_dependencies(self.project)
@@ -141,13 +138,6 @@ class SourceCorpus:
             self.catalog[sid] = {"id": sid, "title": "Правила анализа проекта"}
             self.put(sid, {"markdown": rules})
         self.previous = await self.store.get_gaps(self.project, self.feature["name"], include_archived=True)
-        decisions = [g for g in self.previous if g.get("analyst_text") and g.get("status") in ("clarified", "rejected")]
-        if decisions:
-            sid = "analyst-decisions"
-            self.catalog[sid] = {"id": sid, "title": "Уточнения и решения аналитика"}
-            self.put(sid, {"markdown": "\n\n".join(
-                f"Замечание: {g.get('question', '')}\nРешение ({g['status']}): {g['analyst_text']}" for g in decisions
-            )})
         self.write_manifest()
 
     async def load(self, ids: list[str]) -> None:
@@ -188,6 +178,7 @@ class SourceCorpus:
             "primary_source_id": self.primary_id,
             "catalog": list(self.catalog.values()),
             "dependency_index": self.dependencies,
+            "business_context": self.context.get("notes", ""),
             "previous_decisions": self.previous,
             "limitations": self.limitations,
         }
@@ -195,7 +186,9 @@ class SourceCorpus:
 
     def validate_evidence(self, evidence: list[dict]) -> bool:
         return bool(evidence) and all(
-            e["source_id"] in self.sources and normalize(e["quote"]) in normalize(self.sources[e["source_id"]]["markdown"])
+            e["source_id"] not in PRIVATE_SOURCE_IDS and e["source_id"] in self.sources
+            and bool(normalize(e["quote"]))
+            and normalize(e["quote"]) in normalize(self.sources[e["source_id"]]["markdown"])
             for e in evidence
         )
 

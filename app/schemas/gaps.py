@@ -22,14 +22,9 @@ class GapsAnalysisResult(BaseModel):
 
 
 class GapReviewRequest(BaseModel):
-    """PATCH body for approving/clarifying/resetting a gap."""
-    status: str = Field(pattern="^(pending|approved|clarified|rejected)$")
+    """A decision about a finding; never a change to the source specification."""
+    status: Literal["approved", "rejected"]
     analyst_text: str | None = Field(default=None, max_length=20000)
-
-
-class GapContextRequest(BaseModel):
-    notes: str = Field(default="", max_length=20000)
-    source_urls: list[str] = Field(default_factory=list, max_length=20)
 
 
 class AnalysisModel(BaseModel):
@@ -74,6 +69,9 @@ class Finding(AnalysisModel):
     business_impact: str
     suggestion: str = Field(description="Обоснованное уточнение ТЗ или вопрос; не выдумывай бизнес-решение")
     evidence: list[Evidence] = Field(min_length=1)
+    reconsideration_reason: str | None = Field(
+        description="Только для отклонённого замечания: какие новые требования ТЗ дают основание вернуть его; иначе null",
+    )
 
 
 class GapReport(AnalysisModel):
