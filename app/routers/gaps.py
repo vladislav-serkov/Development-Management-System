@@ -1,16 +1,16 @@
 """Gap analysis jobs, evidence reports and analyst decisions."""
 from fastapi import APIRouter, HTTPException, Request
 
-from app.schemas.gaps import GapContextRequest, GapReviewRequest
+from app.schemas.gaps import GapReviewRequest
 from app.services import agent_runner
-from app.services.gap_sources import validate_source_url
+from app.services.gap_results import public_analysis, public_gaps
+from app.services.gap_sources import digest
 from app.services.gaps import now, run_gaps_pipeline, with_ids
 from app.services.task_manager import task_manager
 from app.storage import ActiveTaskExistsError, ProjectStore
 
 store = ProjectStore()
 router = APIRouter(prefix="/projects/{project_slug}/features/{feature_name}/gaps", tags=["gaps"])
-context_router = APIRouter(prefix="/projects/{project_slug}/gap-context", tags=["gaps"])
 
 
 async def get_feature(project_slug: str, feature_name: str) -> dict:
@@ -74,12 +74,15 @@ async def list_gaps(project_slug: str, feature_name: str):
     feature_name = feature["name"]
     active = await active_task(project_slug, feature_name)
     feature = await get_feature(project_slug, feature_name)
+    analysis = feature.get("gaps_analysis")
+    context_changed = bool(analysis and analysis.get("context_hash") and
+                           analysis["context_hash"] != digest(await store.get_gap_context(project_slug) or {}))
     return {
-        "gaps": [g for g in with_ids(await store.get_gaps(project_slug, feature_name, include_archived=True))
-                 if not g.get("archived")],
+        "gaps": public_gaps([g for g in with_ids(await store.get_gaps(project_slug, feature_name, include_archived=True))
+                             if not g.get("archived")], (analysis or {}).get("sources", [])),
         "gaps_running": active is not None, "gaps_run_at": feature.get("gaps_run_at"),
-        "analysis": feature.get("gaps_analysis"), "job": feature.get("gaps_job"),
-        "stale": bool(feature.get("gaps_stale")), "configured": agent_runner.is_configured(),
+        "analysis": public_analysis(feature.get("gaps_analysis")), "job": feature.get("gaps_job"),
+        "stale": bool(feature.get("gaps_stale")) or context_changed, "configured": agent_runner.is_configured(),
     }
 
 
@@ -87,8 +90,6 @@ async def list_gaps(project_slug: str, feature_name: str):
 async def review_gap(project_slug: str, feature_name: str, gap_id: str, body: GapReviewRequest, request: Request):
     feature = await get_feature(project_slug, feature_name)
     text = (body.analyst_text or "").strip() or None
-    if body.status in ("clarified", "rejected") and not text:
-        raise HTTPException(422, "Укажите уточнение или причину отклонения")
     user = getattr(request.state, "user", None)
     actor = user.get("username", "Аналитик") if isinstance(user, dict) else "Аналитик"
 
@@ -98,35 +99,15 @@ async def review_gap(project_slug: str, feature_name: str, gap_id: str, body: Ga
         if gap is None:
             raise HTTPException(404, "Замечание не найдено; обновите список")
         gap.update(status=body.status, analyst_text=text, needs_review=False)
+        gap["review_source_hashes"] = dict(gap.get("source_hashes", {}))
         gap["history"] = [*gap.get("history", []), {
             "at": now(), "action": body.status, "text": text, "actor": actor,
         }]
         return items
 
     gaps = await store.mutate_gaps(project_slug, feature["name"], mutate)
-    return {"gaps": [g for g in gaps if not g.get("archived")]}
-
-
-@context_router.get("")
-async def get_context(project_slug: str):
-    context = await store.get_gap_context(project_slug)
-    if context is None:
-        raise HTTPException(404, "Проект не найден")
-    return context
-
-
-@context_router.patch("")
-async def save_context(project_slug: str, body: GapContextRequest):
-    urls = list(dict.fromkeys(url.strip() for url in body.source_urls if url.strip()))
-    try:
-        for url in urls:
-            validate_source_url(url)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    context = await store.save_gap_context(project_slug, {"notes": body.notes.strip(), "source_urls": urls})
-    if context is None:
-        raise HTTPException(404, "Проект не найден")
-    return context
+    return {"gaps": public_gaps([g for g in gaps if not g.get("archived")],
+                               (feature.get("gaps_analysis") or {}).get("sources", []))}
 
 
 # The previous flow silently edited the extracted copy of a specification.

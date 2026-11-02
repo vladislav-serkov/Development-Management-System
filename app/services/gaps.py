@@ -9,7 +9,8 @@ from app.config import settings
 from app.prompts.gap_agent import ANALYZE, SELECT, VERIFY
 from app.schemas.gaps import GapReport, SourceSelection
 from app.services import agent_runner
-from app.services.gap_sources import SourceCorpus, digest
+from app.services.gap_results import REVIEW_FIELDS, gap_text
+from app.services.gap_sources import SourceCorpus, digest, normalize
 
 
 def now() -> str:
@@ -23,7 +24,7 @@ def with_ids(gaps: list[dict]) -> list[dict]:
     for gap in gaps:
         gid = gap.get("id")
         if not gid:
-            base = "legacy-" + digest([gap.get("gap_type"), gap.get("question")])[:20]
+            base = "legacy-" + digest([gap.get("gap_type"), gap_text(gap)])[:20]
             gid, duplicate = base, 0
             while gid in used:
                 duplicate += 1
@@ -33,86 +34,87 @@ def with_ids(gaps: list[dict]) -> list[dict]:
     return result
 
 
+def _quotes(item: dict) -> set[tuple[str, str]]:
+    return {(e["source_id"], normalize(e["quote"])) for e in item.get("evidence", [])}
+
+
 def merge_findings(existing: list[dict], findings: list[dict], report: dict) -> list[dict]:
     previous = {g["id"]: g for g in with_ids(existing)}
-    merged = []
-    seen = set()
+    merged, seen = [], set()
     for finding in findings:
         finding = dict(finding)
         requested_id = finding.pop("existing_gap_id", None)
-        identity = digest([
-            finding["gap_type"], finding["subject"].casefold().strip(), finding["location"].casefold().strip(),
-            sorted({e["source_id"] for e in finding["evidence"]}),
-        ])[:24]
-        gid = requested_id if requested_id in previous else "gap-" + identity
+        quotes = _quotes(finding)
+        gid = requested_id if requested_id in previous else "gap-" + digest([sorted(quotes), normalize(finding["text"])])[:24]
+        if gid not in previous:
+            # Citation overlap keeps decisions stable even if wording changes or
+            # a model forgets the prior ID. Ambiguous matches are never guessed.
+            matches = [old for old in previous.values() if old["id"] not in seen and
+                       (quotes & _quotes(old) or normalize(gap_text(old)) == normalize(finding["text"]))]
+            if len(matches) == 1:
+                gid = matches[0]["id"]
         if gid in seen:
             continue
         seen.add(gid)
         old = previous.get(gid, {})
+        state = {k: v for k, v in old.items() if k in REVIEW_FIELDS}
         fingerprint = {e["source_id"]: next(s["content_hash"] for s in report["sources"] if s["id"] == e["source_id"])
                        for e in finding["evidence"]}
         changed = bool(old.get("source_hashes")) and old["source_hashes"] != fingerprint
+        baseline = old.get("review_source_hashes", old.get("source_hashes", {}))
+        old_quotes = _quotes(old)
+        new_evidence = bool(baseline) and any(
+            baseline.get(sid) != fingerprint[sid]
+            and not any(old_sid == sid and quote in old_quote for old_sid, old_quote in old_quotes)
+            for sid, quote in quotes
+        )
+        needs_review = old.get("needs_review", False) or (
+            new_evidence if old.get("status") == "rejected" else changed
+        )
+        if old.get("status") == "rejected" and not needs_review:
+            merged.append({**state, "text": gap_text(old), "evidence": old.get("evidence", []),
+                           "source_snapshots": old.get("source_snapshots", []),
+                           "presence": "current", "last_seen_at": report["finished_at"]})
+            continue
         history = list(old.get("history", []))
         if changed:
             history.append({"at": report["finished_at"], "action": "sources_changed", "text": "Изменились источники замечания"})
         merged.append({
-            **old, **finding, "id": gid, "presence": "current", "source_hashes": fingerprint,
+            **state, **finding, "id": gid, "presence": "current", "source_hashes": fingerprint,
             "source_snapshots": [s for s in report["sources"] if s["id"] in fingerprint],
             "status": old.get("status", "pending"), "analyst_text": old.get("analyst_text"),
-            "history": history, "needs_review": changed or old.get("needs_review", False),
+            "history": history, "needs_review": needs_review,
             "first_seen_at": old.get("first_seen_at", report["started_at"]), "last_seen_at": report["finished_at"],
-            "actionable": False,
         })
     for gid, old in previous.items():
         if gid not in seen:
+            # Only source availability is tracked by the backend. An absent
+            # remark never claims that the source TЗ has been fixed.
             checked = set(report["checked_source_ids"])
             evidence_ids = {e["source_id"] for e in old.get("evidence", [])}
-            # Absence in partial coverage says nothing about resolution.
             absent = report["coverage"] == "complete" and bool(evidence_ids) and evidence_ids <= checked
-            merged.append({**old, "presence": "not_detected" if absent else "unverified"})
+            merged.append({**{k: v for k, v in old.items() if k in REVIEW_FIELDS},
+                           "text": gap_text(old), "evidence": old.get("evidence", []),
+                           "source_snapshots": old.get("source_snapshots", []),
+                           "presence": "not_detected" if absent else "unverified"})
     return merged
 
 
 def validate_report(report: dict, corpus: SourceCorpus, started: str) -> dict:
-    limitations = [*corpus.limitations, *report["limitations"]]
-    checked = set(report["checked_source_ids"])
-    if not checked <= corpus.sources.keys():
-        limitations.append("Отчёт ссылается на непрочитанные источники")
-    checked &= corpus.sources.keys()
-    if corpus.primary_id not in checked:
-        limitations.append("Не подтверждено чтение основного ТЗ")
+    # The model returns only remarks. Runtime diagnostics and source inventory
+    # are application metadata, never another report the model must produce.
+    limitations = list(corpus.limitations)
     valid_gaps = []
     for gap in report["gaps"]:
-        valid = corpus.validate_evidence(gap["evidence"])
-        if gap["kind"] == "contradiction" and len({(e["source_id"], e["quote"]) for e in gap["evidence"]}) < 2:
-            valid = False
-        if not {e["source_id"] for e in gap["evidence"]} <= checked:
-            valid = False
-        if valid:
-            valid_gaps.append(gap)
+        if gap["text"].strip() and corpus.validate_evidence(gap["evidence"]):
+            valid_gaps.append({**gap, "text": normalize(gap["text"])})
         else:
-            limitations.append("Часть замечаний исключена: цитаты или источники не подтверждены")
-    picture = report["business_picture"]
-    if (not corpus.validate_evidence(picture["purpose_evidence"])
-            or not {e["source_id"] for e in picture["purpose_evidence"]} <= checked):
-        picture["purpose"] = "Назначение операции не подтверждено источниками"
-        picture["purpose_evidence"] = []
-        limitations.append("Не подтверждено назначение бизнес-операции")
-    for section in ("actors", "entities_and_states", "lifecycle", "business_rules"):
-        facts = picture[section]
-        picture[section] = [f for f in facts if corpus.validate_evidence(f["evidence"])
-                            and {e["source_id"] for e in f["evidence"]} <= checked]
-        if len(facts) != len(picture[section]):
-            limitations.append("Часть бизнес-картины исключена: цитаты не подтверждены")
-    if not report["checked_scenarios"]:
-        limitations.append("Не перечислены проверенные сценарии")
-    limitations = list(dict.fromkeys(limitations))
+            limitations.append("Часть замечаний исключена: текст или цитаты не подтверждены")
     return {
-        **report, "gaps": valid_gaps, "business_picture": picture,
-        "checked_source_ids": sorted(checked), "sources": corpus.source_metadata(),
-        "limitations": limitations, "coverage": "partial" if limitations else "complete",
-        "started_at": started, "finished_at": now(), "engine": "codex",
-        "context_hash": digest(corpus.context),
+        "gaps": valid_gaps, "checked_source_ids": sorted(corpus.sources),
+        "sources": corpus.source_metadata(), "limitations": list(dict.fromkeys(limitations)),
+        "coverage": "partial" if limitations else "complete",
+        "started_at": started, "finished_at": now(), "context_hash": digest(corpus.context),
     }
 
 
@@ -161,8 +163,9 @@ async def run_gaps_pipeline(project_slug: str, feature_name: str, store, *, task
 
         result = await agent_runner.analyze(workspace, workspace / "events.jsonl", execute, lambda: stage("research"))
         if digest(await store.get_gap_context(project_slug) or {}) != result["context_hash"]:
-            result["limitations"].append("Бизнес-контекст изменился во время анализа; нужен повторный запуск")
+            result["limitations"].append("Исходные материалы изменились во время анализа; нужен повторный запуск")
             result["coverage"] = "partial"
+        (workspace / "report.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         findings = result.pop("gaps")
         await stage("saving")
         merged = await store.mutate_gaps(

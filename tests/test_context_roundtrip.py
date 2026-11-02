@@ -72,7 +72,7 @@ async def test_round_trip(store, tmp_path: Path):
     assert feat["summary"] == "Creates an order"
     assert feat["gap_count"] == 1
 
-    assert (await store.get_gaps(new_slug, "create-order"))[0]["question"] == "q1"
+    assert (await store.get_gaps(new_slug, "create-order"))[0]["text"] == "q1"
     assert (await store.get_test_cases(new_slug, "create-order"))[0]["name"] == "t1"
     assert (await store.get_bugs(new_slug, "create-order"))[0]["title"] == "b1"
 

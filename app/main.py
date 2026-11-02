@@ -13,7 +13,6 @@ from app.routers.auth import store as auth_store
 from app.routers.bugs import router as bugs_router
 from app.routers.dependencies import router as dependencies_router
 from app.routers.documents import router as documents_router
-from app.routers.gaps import context_router as gap_context_router
 from app.routers.gaps import router as gaps_router
 from app.routers.projects import router as projects_router
 from app.routers.rules import router as rules_router
@@ -92,7 +91,6 @@ app.include_router(projects_router)
 app.include_router(documents_router)
 app.include_router(dependencies_router)
 app.include_router(gaps_router)
-app.include_router(gap_context_router)
 app.include_router(test_cases_router)
 app.include_router(bugs_router)
 app.include_router(rules_router)

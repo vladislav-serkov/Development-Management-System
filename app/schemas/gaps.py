@@ -22,14 +22,9 @@ class GapsAnalysisResult(BaseModel):
 
 
 class GapReviewRequest(BaseModel):
-    """PATCH body for approving/clarifying/resetting a gap."""
-    status: str = Field(pattern="^(pending|approved|clarified|rejected)$")
+    """A decision about a finding; never a change to the source specification."""
+    status: Literal["approved", "rejected"]
     analyst_text: str | None = Field(default=None, max_length=20000)
-
-
-class GapContextRequest(BaseModel):
-    notes: str = Field(default="", max_length=20000)
-    source_urls: list[str] = Field(default_factory=list, max_length=20)
 
 
 class AnalysisModel(BaseModel):
@@ -42,45 +37,17 @@ class Evidence(AnalysisModel):
     quote: str = Field(min_length=12, description="Дословная непрерывная цитата из markdown источника")
 
 
-class BusinessFact(AnalysisModel):
-    text: str
-    evidence: list[Evidence] = Field(min_length=1)
-
-
-class BusinessPicture(AnalysisModel):
-    purpose: str
-    purpose_evidence: list[Evidence] = Field(min_length=1)
-    actors: list[BusinessFact]
-    entities_and_states: list[BusinessFact]
-    lifecycle: list[BusinessFact]
-    business_rules: list[BusinessFact]
-    unknowns: list[str]
-
-
 class SourceSelection(AnalysisModel):
     requested_source_ids: list[str]
-    rationale: str
 
 
 class Finding(AnalysisModel):
     existing_gap_id: str | None = Field(description="ID того же замечания из предыдущего анализа, иначе null")
-    kind: Literal["contradiction", "missing_logic", "business_question"]
-    gap_type: str
-    severity: Literal["critical", "major"]
-    subject: str = Field(description="Стабильный предмет: payment.external_id или переход RESERVED→CANCELLED")
-    location: str
-    question: str
-    scenario: str = Field(description="Конкретные входные условия и ход проблемного сценария")
-    business_impact: str
-    suggestion: str = Field(description="Обоснованное уточнение ТЗ или вопрос; не выдумывай бизнес-решение")
+    text: str = Field(min_length=1, description="Один короткий абзац: где проблема в ТЗ, почему она существенна и что уточнить")
     evidence: list[Evidence] = Field(min_length=1)
 
 
 class GapReport(AnalysisModel):
-    business_picture: BusinessPicture
-    checked_source_ids: list[str]
-    checked_scenarios: list[str]
-    limitations: list[str]
     gaps: list[Finding]
 
 

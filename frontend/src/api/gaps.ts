@@ -1,4 +1,4 @@
-import type { GapContext, GapItem, GapsResponse } from "@/types/api"
+import type { GapItem, GapsResponse } from "@/types/api"
 import { apiFetch } from "./client"
 
 function base(project: string, feature: string) {
@@ -26,18 +26,8 @@ export function cancelGapsAnalysis(project: string, feature: string) {
   return request<{ status: string }>(`${base(project, feature)}/cancel`, { method: "POST" })
 }
 
-export function patchGap(project: string, feature: string, id: string, patch: { status: string; analyst_text?: string | null }) {
+export function patchGap(project: string, feature: string, id: string, patch: { status: "approved" | "rejected"; analyst_text?: string | null }) {
   return request<{ gaps: GapItem[] }>(`${base(project, feature)}/items/${encodeURIComponent(id)}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
-  })
-}
-
-export function fetchGapContext(project: string) {
-  return request<GapContext>(`/projects/${encodeURIComponent(project)}/gap-context`)
-}
-
-export function saveGapContext(project: string, context: GapContext) {
-  return request<GapContext>(`/projects/${encodeURIComponent(project)}/gap-context`, {
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context),
   })
 }

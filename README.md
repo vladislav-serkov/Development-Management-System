@@ -65,27 +65,58 @@ against original specifications. It uses the host user's saved ChatGPT login
 through the local Codex SDK. Run `codex login` under the same macOS user as the
 backend; no Anthropic or OpenAI API key is used for this analysis.
 
-In **Бизнес-контекст проекта**, add analyst notes and Confluence links explaining
-the product/process. These notes are shared across the project's features.
-Original imported pages must be available (re-import legacy features without
-saved source text). Dependencies do not need to be enriched first: the backend
-loads original linked specifications requested by the analyst agent. Additional
-links must point to `CONFLUENCE_BASE_URL`; fetching needs the configured PAT and
-access from the backend host, including VPN when required.
+The user runs analysis for a selected feature and sees a list of remarks.
+Each remark is one short paragraph explaining the problem and what to clarify,
+with source links and Accept/Reject actions. Source link tooltips show the exact
+supporting quotes. Reviewed/previous remarks are available through one filter.
+The agent prefers fewer, well-supported findings to speculative questions or
+generic advice. Original imported pages must be available (re-import legacy
+features without saved source text). Dependencies need not be enriched first:
+the backend loads original linked specifications requested by the agent.
+Analysis never reads service code or changes the source TЗ.
 
-The report includes business purpose, participants, entities/states, lifecycle,
-rules, checked scenarios, source versions, and findings with verbatim quotes.
-Missing pages, discovery limits or invalid citations produce **partial coverage**,
-even when no findings remain. Unknown business rules are listed separately;
-a gap in a fully inspected specification is an analysis result, not a coverage failure. The original source
-text takes precedence over extracted feature data. Analysis does not read code.
+Users can accept or reject a finding. A rejection reason is optional and is
+considered on subsequent runs, including rejection without a reason. Acceptance
+means “take into account”, not “fixed”; the analyst edits Confluence manually.
+Stable IDs preserve decisions through reruns. A dismissed finding is raised
+again only with new grounds explained in the remark and new cited evidence from changed/new source
+material; wording changes and unrelated page edits do not reopen it. Previous
+findings not rechecked remain under **Предыдущие**, without claiming a fix.
 
-Confirm a finding, dismiss it with a reason, or supply a clarification. Stable
-IDs and history preserve decisions across reruns. Previously reported findings
-that were not rechecked remain available under **Предыдущие**; absence in a
-report is not proof of a fix. Editing project context marks old analyses stale.
-Decisions are stored separately from the source TЗ; the previous automatic
-apply-to-extracted-logic flow is retired.
+Business context is an optional, private description of the microservice's
+purpose, responsibility and features. It is not a specification or evidence of
+missing requirements. Operators maintain `projects.gap_context` directly in
+PostgreSQL; there is no public context API or editor. For example (replace the
+slug and text):
+
+```sql
+UPDATE projects
+SET gap_context = '{"notes": "Сервис исполняет одобренные платежи. Фича отмены освобождает резерв.", "source_urls": []}'::jsonb
+WHERE slug = 'bnpl-payment';
+```
+
+`notes` is the internal description. Optional `source_urls` are links to original
+Confluence specifications, restricted to `CONFLUENCE_BASE_URL`; fetching requires
+the configured PAT and backend network access. The private description is passed
+only to the agent, not returned in API results, quoted as evidence or included in
+`.context`/ZIP exports. Legacy `gap-context.json` files are ignored on import.
+Editing the context directly in the DB is detected when results are loaded or
+an analysis finishes; affected results require a rerun. An empty context never
+blocks analysis. The agent produces only `gaps`: each item has `text`, `evidence`
+(source ID, location, verbatim quote), and nullable `existing_gap_id` for matching
+previous decisions. It does not produce business pictures, actor/entity/state
+inventories, unknown rules, categories, severity, scenarios, impacts or separate
+recommendations. Its input contains the original specification and a compact
+catalog of related pages, optional context/guidance and prior decisions; extracted
+logic, duplicate table data and internal review history are not sent.
+
+Only sources needed for the selected feature are requested. Optional overview
+links are catalogued without eager loading; missing optional pages do not make
+analysis partial. A failed requested contract, discovery limit or invalid quote
+makes the result partial. The user sees one line: **Не удалось проверить часть ТЗ**.
+Technical diagnostics and source inventories remain in private run logs/backend
+metadata, never in the agent response or public analysis response. A completed
+empty check shows **Обоснованных замечаний не найдено**.
 
 `CODEX_ENABLED`, `CODEX_MODEL`, and `CODEX_CLI` are shared with other Codex jobs.
 `GAPS_TIMEOUT_SECONDS` defaults to 1200, `GAPS_MAX_SOURCES` to 30, and
@@ -93,8 +124,8 @@ apply-to-extracted-logic flow is retired.
 Jobs share the existing per-process Codex queue. Progress and cancellation are
 available in the tab; a failed or cancelled run preserves the previous report.
 Source snapshots and streamed events stay in private run directories on the host.
-`gap-context.json` preserves shared business notes in `.context`/ZIP exports;
-exports still omit source documents and are not a complete database backup.
+Exports omit source documents and private business context and are not a complete
+database backup.
 
 ## Running locally
 

@@ -20,6 +20,7 @@ import json
 import logging
 from pathlib import Path
 
+from app.services.gap_results import public_analysis, public_gaps
 from app.services.import_context import adapt_feature, load_wiki_sections, merge_wiki_into_rules
 from app.storage import DEP_TYPE_FILE, ProjectStore
 
@@ -35,6 +36,8 @@ def _dumps(data) -> bytes:
 
 def _export_feature(feature: dict) -> dict:
     out = {k: v for k, v in feature.items() if k not in _FEATURE_UI_FIELDS}
+    if "gaps_analysis" in out:
+        out["gaps_analysis"] = public_analysis(out["gaps_analysis"])
     if "structured_logic_json" in out:
         out["structured_logic"] = out.pop("structured_logic_json")
     if "dependencies_json" in out:
@@ -58,9 +61,6 @@ async def dump_project(store: ProjectStore, project_slug: str) -> dict[str, byte
     files["project.json"] = _dumps(
         {"slug": project["slug"], "name": project["name"], "created_at": project["created_at"]}
     )
-    gap_context = await store.get_gap_context(project_slug)
-    if gap_context and (gap_context.get("notes") or gap_context.get("source_urls")):
-        files["gap-context.json"] = _dumps(gap_context)
 
     rules = await store.get_project_rules(project_slug)
     if any((v or "").strip() for v in rules.values()):
@@ -73,7 +73,8 @@ async def dump_project(store: ProjectStore, project_slug: str) -> dict[str, byte
         safe = ProjectStore._sanitize_feature_name(name)
         files[f"features/{safe}/feature.json"] = _dumps(_export_feature(feature))
 
-        gaps = await store.get_gaps(project_slug, name, include_archived=True)
+        gaps = public_gaps(await store.get_gaps(project_slug, name, include_archived=True),
+                           (feature.get("gaps_analysis") or {}).get("sources", []))
         if gaps:
             files[f"gaps/{safe}.json"] = _dumps({"gaps": gaps})
         test_cases = await store.get_test_cases(project_slug, name)
@@ -138,19 +139,7 @@ async def load_context_project(
     proj = await store.create_project(project_name)
     slug = proj["slug"]
 
-    gap_context_path = context_dir / "gap-context.json"
-    if gap_context_path.exists():
-        from pydantic import ValidationError
-
-        from app.schemas.gaps import GapContextRequest
-
-        raw_context = _read_json_file(gap_context_path, warnings)
-        if raw_context is not None:
-            try:
-                context = GapContextRequest.model_validate(raw_context)
-                await store.save_gap_context(slug, context.model_dump())
-            except ValidationError:
-                warnings.append("skipped gap-context.json: invalid business context")
+    # Business context is operator-managed in the DB, never a user import/export.
 
     # Rules (file first, then wiki fills empty sections)
     rules_data = None
