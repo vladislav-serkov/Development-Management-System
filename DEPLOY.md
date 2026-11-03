@@ -15,7 +15,7 @@ The code in this checkout is production code. Develop source changes in a separa
 
 Requires Docker Desktop/Compose, Python ≥3.12, Node ≥22/npm, `autossh` at `/opt/homebrew/bin/autossh`, the configured SSH tunnel key, and the VPS nginx/TLS setup above. Optional agent workflows also require a local ChatGPT login (`codex login`) under the app's macOS user and access to their target repositories. The SDK installs its pinned Codex runtime with the Python dependencies.
 
-From the main checkout, create `.venv`, install `.[dev]`, copy `.env.example` to `.env`, and configure the Anthropic key and integrations. The host database URL is `postgresql+asyncpg://extract:extract@localhost:5432/extract_agent` for the bundled Compose database.
+From the main checkout, create `.venv`, install `.[dev]`, copy `.env.example` to `.env`, and configure the Codex ChatGPT login and integrations. The host database URL is `postgresql+asyncpg://extract:extract@localhost:5432/extract_agent` for the bundled Compose database.
 
 ```bash
 docker compose up -d db
@@ -91,7 +91,7 @@ Password reset invalidates that user's sessions. `scripts/launchd.sh uninstall` 
 
 PostgreSQL data lives in the development Compose stack's `pgdata` named volume. Back up the database before deployments with schema/data changes; `.context/` and ZIP exports omit documents and are not full backups. Do not remove the database volume during routine updates.
 
-Extraction, enrichment, test cases and bug reports use `ANTHROPIC_API_KEY`. Business gap analysis, personal bug fixing, autotest generation, and feature implementation use the Codex Python SDK and the host user's saved ChatGPT login. Run `codex login status` under the same macOS account as the LaunchAgents. `CODEX_ENABLED` controls these jobs, `CODEX_MODEL` optionally overrides the account catalog default, and `CODEX_CLI` optionally overrides the SDK's bundled runtime. Configure `REPOS_DIRS` and `AUTOTESTS_REPO_DIR` as before. No OAuth token needs copying into `.env`; legacy Claude Code settings are accepted but ignored. Coding jobs follow global/project `AGENTS.md` and the migrated skills in `~/.codex/skills`. Gap jobs use a separate read-only source workspace and analyst instructions; they do not inherit coding flows or read service repositories. Their private snapshots and events are under `GAPS_LOG_DIR` (default `logs/gaps`), with `GAPS_TIMEOUT_SECONDS=1200` and `GAPS_MAX_SOURCES=30`. Migration `ab72c0e419d3` adds nullable `projects.gap_context`; apply it through the normal requested-deployment startup. They run sequentially within the single backend worker and stop with an explanation when blocked or rate-limited.
+All AI workflows (extraction, enrichment, test cases, bug reports, gaps, bug fixing, autotests and implementation) use the Codex Python SDK and the host user's saved ChatGPT login. Run `codex login status` under the same macOS account as the LaunchAgents. `CODEX_ENABLED` controls these jobs, `CODEX_MODEL` optionally overrides the account catalog default, and `CODEX_CLI` optionally overrides the SDK's bundled runtime. Configure `REPOS_DIRS` and `AUTOTESTS_REPO_DIR` as before. No OAuth token needs copying into `.env`; legacy Claude Code settings are accepted but ignored. Coding jobs follow global/project `AGENTS.md` and the migrated skills in `~/.codex/skills`. Gap jobs use a separate read-only source workspace and analyst instructions; they do not inherit coding flows or read service repositories. Their private snapshots and events are under `GAPS_LOG_DIR` (default `logs/gaps`), with `GAPS_TIMEOUT_SECONDS=1200` and `GAPS_MAX_SOURCES=30`. Migration `ab72c0e419d3` adds nullable `projects.gap_context`; apply it through the normal requested-deployment startup. They run sequentially within the single backend worker and stop with an explanation when blocked or rate-limited.
 
 ## Alternative: Docker production stack
 
@@ -99,7 +99,7 @@ Extraction, enrichment, test cases and bug reports use `ANTHROPIC_API_KEY`. Busi
 
 This stack is an alternative to the published host setup. Its frontend binds ports 80/443 and expects existing certificates under `/etc/letsencrypt/live/24dms.ru/`, with `/var/www/certbot` mounted for ACME challenges. `deploy/nginx.conf` contains that domain and certificate paths; adapt them before deploying under another domain. Certificate issuance and renewal must be configured separately.
 
-Create `.env` from `.env.example`, set the Anthropic key/integrations, and enable production login:
+Create `.env` from `.env.example`, configure the Codex login/integrations, and enable production login:
 
 ```env
 AUTH_ENABLED=true
@@ -117,3 +117,14 @@ docker compose -f docker-compose.prod.yml logs --tail=100 backend frontend
 ```
 
 For updates, pull tested, merged code in the deployment checkout and rerun `up -d --build`. Startup applies migrations. The SDK includes its runtime, but the stock Docker stack does not mount a Codex login or service repositories. Personal coding jobs require those resources under the container user, or use the host deployment. Auth files must remain outside the image and repository.
+
+Structured document jobs use isolated ephemeral read-only sessions and share the
+Codex queue with gaps and coding jobs. `STRUCTURED_TIMEOUT_SECONDS` defaults to
+1200 per active call; private JSONL logs are in `STRUCTURED_LOG_DIR`
+(`logs/structured`). `EXTRACTION_MODEL`, `TEST_CASES_MODEL`, `BUGS_MODEL` override
+`CODEX_MODEL` per workflow. Empty selects the account default; obsolete
+`claude-*` values are ignored. Existing Anthropic secrets are unused and can be
+removed from `.env`. No database migration is required for this provider change.
+After deploying, verify `codex login status` as the LaunchAgent user and run a
+Confluence import and test-case generation. Docker deployments now require a
+mounted Codex login for every AI workflow; the stock image has no credentials.

@@ -20,9 +20,8 @@ it as the single source rather than copying it into this file.
 - Start or restart the published service and apply production migrations only
   as part of an explicitly requested deployment. Dev server startup also runs
   migrations; use a separate development database in a worktree.
-- Preserve the app's Anthropic API and local Codex SDK integrations unless
-  the task explicitly requests changing them. Using Codex to develop this repo
-  does not require changing the app's model provider or agent runner.
+- All AI workflows use the local Codex SDK with ChatGPT authentication. Preserve
+  this integration; do not add API-key billing fallbacks.
 
 ## Keeping instructions current
 

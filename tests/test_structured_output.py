@@ -3,12 +3,9 @@ object keys), flat LLM lists are rebuilt into trees, and call_structured
 validates the answer or fails loudly."""
 import json
 import re
-from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 
-import app.services.claude_client as claude_client
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
 from app.schemas.bugs import BugReportResult
 from app.schemas.extraction import (
@@ -21,7 +18,8 @@ from app.schemas.extraction import (
 )
 from app.schemas.gaps import ApplyResult, GapsAnalysisResult
 from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
-from app.services.claude_client import TruncatedOutputError, call_structured, output_schema
+from app.services import agent_runner, codex_client
+from app.services.codex_client import call_structured, output_schema
 
 ALL_SCHEMAS = [
     FeatureDetectionResult, ApplyResult, GapsAnalysisResult,
@@ -114,46 +112,49 @@ def test_detected_feature_nest_derives_dependencies():
     assert feature.structured_logic.logic_steps[0].children[0].number == "1.1"
 
 
-def _fake_response(text: str, stop_reason: str = "end_turn"):
-    return SimpleNamespace(
-        content=[SimpleNamespace(type="text", text=text)],
-        usage=SimpleNamespace(),
-        stop_reason=stop_reason,
-    )
-
-
-async def test_call_structured_validates_and_passes_schema(monkeypatch):
+async def test_call_structured_preserves_sources_and_task_instructions(monkeypatch, tmp_path):
     captured = {}
 
-    async def fake(*, label="", **kwargs):
-        captured.update(kwargs)
-        return _fake_response('{"gaps": [{"gap_type": "x", "severity": "major", "question": "q", "suggestion": "s", "actionable": true}]}')
+    async def analyze(workspace, log_path, execute, on_started, **options):
+        captured.update(options)
+        assert workspace.is_dir()
+        assert not (workspace / "AGENTS.md").exists()
 
-    monkeypatch.setattr(claude_client, "call_claude", fake)
+        async def ask(prompt, schema):
+            captured["prompt"] = json.loads(prompt.split("\n", 1)[1])
+            assert schema is GapsAnalysisResult
+            return {"gaps": []}
+
+        return await execute(ask)
+
+    monkeypatch.setattr(agent_runner, "analyze", analyze)
+    monkeypatch.setattr(codex_client.settings, "structured_log_dir", str(tmp_path))
     result = await call_structured(
-        GapsAnalysisResult, label="t", model="m", max_tokens=10, system="sys", effort="low",
-        messages=[{"role": "user", "content": "hi"}],
+        GapsAnalysisResult, label="extract", model="claude-old", max_tokens=10,
+        system="Keep tables verbatim", effort="high", messages=[{"role": "user", "content": [
+            {"type": "document", "source": {"type": "text", "data": "|id|uuid|"}},
+            {"type": "text", "text": "Extract", "cache_control": {"type": "ephemeral"}},
+        ]}],
     )
-    assert result.gaps[0].severity == "major"
-    assert captured["output_config"]["format"]["type"] == "json_schema"
-    assert captured["output_config"]["effort"] == "low"
-    assert captured["system"] == "sys"
-    assert "tools" not in captured and "tool_choice" not in captured
+    assert result.gaps == []
+    assert captured["prompt"] == [{"role": "user", "text": "|id|uuid|\n\nExtract"}]
+    assert captured["model"] == ""
+    assert captured["effort"] == "high"
+    assert "Keep tables verbatim" in captured["instructions"]
+    assert captured["kind"] == "extract"
 
 
-async def test_call_structured_raises_on_truncation(monkeypatch):
-    async def fake(*, label="", **kwargs):
-        return _fake_response('{"gaps": [', stop_reason="max_tokens")
+def test_every_object_requires_all_properties():
+    def check(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node["additionalProperties"] is False
+                assert set(node["required"]) == set(node["properties"])
+            for child in node.values():
+                check(child)
+        elif isinstance(node, list):
+            for child in node:
+                check(child)
 
-    monkeypatch.setattr(claude_client, "call_claude", fake)
-    with pytest.raises(TruncatedOutputError):
-        await call_structured(GapsAnalysisResult, label="t", model="m", max_tokens=10, messages=[])
-
-
-async def test_call_structured_raises_on_invalid_output(monkeypatch):
-    async def fake(*, label="", **kwargs):
-        return _fake_response('{"gaps": [{"gap_type": "x", "severity": "huge"}]}')
-
-    monkeypatch.setattr(claude_client, "call_claude", fake)
-    with pytest.raises(ValidationError):
-        await call_structured(GapsAnalysisResult, label="t", model="m", max_tokens=10, messages=[])
+    for schema in ALL_SCHEMAS:
+        check(output_schema(schema))

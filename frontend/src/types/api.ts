@@ -133,6 +133,7 @@ export type TaskKind =
   | "test_cases"
   | "enrichment"
   | "implement"
+  | "bugs"
   | "bug_fix"
   | "autotest_gen"
 export type TaskStatus = "running" | "done" | "error"
@@ -638,6 +639,8 @@ export interface BugItem {
 }
 
 export interface BugsResponse {
+  bugs_running?: boolean
+  generation_error?: string | null
   bugs: BugItem[]
   bug_count: number
   jira_configured?: boolean

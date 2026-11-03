@@ -46,11 +46,8 @@ async def lifespan(application: FastAPI):
     # Alembic's env.py opens its own (sync-wrapped async) connection; run it
     # in a thread so it doesn't collide with the running event loop.
     await asyncio.to_thread(_run_migrations)
-    if settings.anthropic_api_key in ("", "sk-ant-xxx"):
-        logger.warning(
-            "ANTHROPIC_API_KEY is not configured — Claude-backed features will fail. "
-            "Set it in .env before serving traffic."
-        )
+    if not settings.codex_enabled:
+        logger.warning("CODEX_ENABLED=false — all AI workflows are disabled")
     yield
     from app.db import dispose_engine
 

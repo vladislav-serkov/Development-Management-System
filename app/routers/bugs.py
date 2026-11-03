@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Path
@@ -6,7 +7,8 @@ from app.config import settings
 from app.schemas.bugs import BugExportRequest, BugGenerateRequest, BugPatchRequest
 from app.services import bug_fixer, jira
 from app.services.bugs import generate_bug_report
-from app.storage import ProjectStore
+from app.services.task_manager import task_manager
+from app.storage import ActiveTaskExistsError, ProjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -24,29 +26,43 @@ async def generate_bug(
     feature_name: str,
     body: BugGenerateRequest,
 ):
-    """Generate a bug report from a test case using Claude. Synchronous (fast, single call)."""
+    """Queue a Codex report; return immediately and expose progress via GET /."""
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_name}' not found")
     feature_name = feature["name"]
+    cases = await store.get_test_cases(project_slug, feature_name)
+    if not 0 <= body.tc_index < len(cases):
+        raise HTTPException(status_code=404, detail="Test case not found")
+    key = f"bugs:{project_slug}/{feature_name}"
+    active = await store.get_active_task(project_slug, kind="bugs", target_id=feature_name)
+    if active:
+        if task_manager.is_running(key):
+            return {"status": "already_running"}
+        await store.finish_task(project_slug, active["id"], status="error",
+                                error_message="Server restarted before task completed")
+    try:
+        task = await store.create_task(project_slug, kind="bugs", target_type="feature", target_id=feature_name)
+    except ActiveTaskExistsError:
+        return {"status": "already_running"}
+    task_manager.launch(key, _generate_report(project_slug, feature_name, body, task["id"]))
+    return {"status": "started"}
 
+
+async def _generate_report(project_slug: str, feature_name: str, body: BugGenerateRequest, task_id: str):
     try:
         bug = await generate_bug_report(
-            project_slug=project_slug,
-            feature_name=feature_name,
-            tc_index=body.tc_index,
-            analyst_text=body.analyst_text,
-            store=store,
+            project_slug=project_slug, feature_name=feature_name,
+            tc_index=body.tc_index, analyst_text=body.analyst_text, store=store,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-    bugs = await store.get_bugs(project_slug, feature_name)
-    bugs.append(bug)
-    await store.save_bugs(project_slug, feature_name, bugs)
-
-    logger.info("generate_bug: project=%s, feature=%s, tc_index=%d", project_slug, feature_name, body.tc_index)
-    return {"bugs": bugs}
+        await store.append_bug(project_slug, feature_name, bug)
+        await store.finish_task(project_slug, task_id, status="done", result_message="Баг-репорт создан")
+    except asyncio.CancelledError:
+        await store.finish_task(project_slug, task_id, status="error", error_message="Генерация отменена")
+        raise
+    except Exception as exc:
+        await store.finish_task(project_slug, task_id, status="error", error_message=str(exc))
+        logger.exception("Bug generation failed")
 
 
 @router.get("/")
@@ -63,7 +79,15 @@ async def list_bugs(
         )
     feature_name = feature["name"]
     bugs = await store.get_bugs(project_slug, feature_name)
-    return {"bugs": bugs, "bug_count": len(bugs), "jira_configured": jira.is_configured()}
+    tasks = await store.list_tasks(project_slug, kind="bugs", target_id=feature_name)
+    latest = tasks[0] if tasks else {}
+    running = latest.get("status") == "running" and task_manager.is_running(f"bugs:{project_slug}/{feature_name}")
+    if latest.get("status") == "running" and not running:
+        await store.finish_task(project_slug, latest["id"], status="error",
+                                error_message="Server restarted before task completed")
+        latest = {**latest, "error_message": "Server restarted before task completed"}
+    return {"bugs": bugs, "bug_count": len(bugs), "jira_configured": jira.is_configured(),
+            "bugs_running": running, "generation_error": latest.get("error_message") if not running else None}
 
 
 async def _source_doc_info(project_slug: str, feature: dict) -> tuple[str | None, str | None]:

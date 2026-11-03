@@ -7,7 +7,7 @@ re-fetching from Confluence.
     # save a page as a fixture (one Confluence round-trip)
     python scripts/eval_extraction.py fetch <confluence-url> penalty-tariff
 
-    # run detection on it and score (one Claude call), then again after a change
+    # run detection on it and score (one Codex call), then again after a change
     python scripts/eval_extraction.py run fixtures/penalty-tariff.json
 
 The scores are gap detectors, not vanity metrics:
@@ -138,7 +138,7 @@ def _report(score: dict) -> None:
 
 async def cmd_run(fixture: Path) -> None:
     page = json.loads(fixture.read_text(encoding="utf-8"))
-    features = await _detect_features(page["markdown"], settings.claude_model)
+    features = await _detect_features(page["markdown"], settings.extraction_model)
 
     tables_by_id = {t["id"].upper(): t for t in page["tables"]}
     for feature in features:

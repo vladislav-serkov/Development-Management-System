@@ -106,7 +106,7 @@ async def auto_enrich_from_links(
     )
     pages: dict[tuple, dict | BaseException] = dict(zip(refs, fetched))
 
-    # (page, dep_type) → the dependencies to enrich from that page with one Claude call.
+    # (page, dep_type) → the dependencies to enrich from that page with one Codex call.
     groups: dict[tuple, list[str]] = {}
     refreshing: set[tuple[str, str]] = set()
     for dep_type, dep, ref_key, _ in candidates:
@@ -181,7 +181,7 @@ async def _enrich_group(
     page: dict | BaseException,
     store,
 ) -> list[tuple[str, str, str, str]]:
-    """Enrich every dependency of one (page, dep_type) group with a single Claude call.
+    """Enrich every dependency of one (page, dep_type) group with a single Codex call.
 
     Returns failures as (dep_type, dep_name, task_id, error_message) — the caller
     finalizes them after ALL groups finish, so another page can still rescue a dep.

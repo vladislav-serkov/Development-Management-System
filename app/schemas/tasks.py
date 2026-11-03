@@ -13,6 +13,7 @@ class TaskKind(str, Enum):
     test_cases = "test_cases"
     enrichment = "enrichment"
     implement = "implement"
+    bugs = "bugs"
     bug_fix = "bug_fix"
     autotest_gen = "autotest_gen"
 

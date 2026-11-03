@@ -1,4 +1,4 @@
-"""Bug report generation service: single Claude call to create structured bug report from test case."""
+"""Bug report generation service: single Codex call to create structured bug report from test case."""
 import json
 import logging
 from datetime import UTC, datetime
@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from app.config import settings
 from app.prompts.bugs import SYSTEM_PROMPT
 from app.schemas.bugs import BugReportResult
-from app.services.claude_client import call_structured
+from app.services.codex_client import call_structured
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ async def generate_bug_report(
     analyst_text: str | None,
     store,
 ) -> dict:
-    """Generate a structured bug report from a test case using Claude.
+    """Generate a structured bug report from a test case using Codex.
 
     Returns a bug dict ready for storage (all BugItem fields populated).
     """
