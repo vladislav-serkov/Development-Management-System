@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useAskTestCase, useRequestAutotest } from "@/hooks/useTestCases"
-import { useGenerateBug } from "@/hooks/useBugs"
+import { useFeatureBugs, useGenerateBug } from "@/hooks/useBugs"
 import { useExecuteSql, useTestDbStatus } from "@/hooks/useTestDb"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -152,6 +152,8 @@ function TestCaseCard({
   const patchMut = usePatchTestCase(projectSlug, featureName)
   const deleteMut = useDeleteTestCase(projectSlug, featureName)
   const generateBugMut = useGenerateBug(projectSlug, featureName)
+  const { data: bugsData } = useFeatureBugs(projectSlug, featureName)
+  const bugGenerating = generateBugMut.isPending || !!bugsData?.bugs_running
   const autotestMut = useRequestAutotest(projectSlug, featureName)
   const [showBugForm, setShowBugForm] = useState(false)
   const [bugComment, setBugComment] = useState("")
@@ -181,16 +183,8 @@ function TestCaseCard({
       { tcIndex: index, analystText: bugComment || null },
       {
         onSuccess: () => {
-          patchMut.mutate(
-            { tcIndex: index, status: "edited", analyst_text: bugComment || null },
-            {
-              onSuccess: () => {
-                setShowBugForm(false)
-                setBugComment("")
-                onResolved(index)
-              },
-            }
-          )
+          setShowBugForm(false)
+          setBugComment("")
         },
       }
     )
@@ -204,6 +198,8 @@ function TestCaseCard({
         isOpen ? "border-foreground/20 shadow-sm" : "hover:border-foreground/15"
       )}
     >
+      {bugsData?.bugs_running && <p className="px-4 pt-2 text-xs text-muted-foreground">Codex создаёт баг-репорт…</p>}
+      {bugsData?.generation_error && <p className="px-4 pt-2 text-xs text-destructive">{bugsData.generation_error}</p>}
       <div
         className={cn(
           "flex items-center gap-3 px-4 py-2.5",
@@ -404,14 +400,14 @@ function TestCaseCard({
                 value={bugComment}
                 onChange={(e) => setBugComment(e.target.value)}
                 className="mt-3 min-h-[5.25rem] text-sm"
-                disabled={generateBugMut.isPending}
+                disabled={bugGenerating}
               />
               {generateBugMut.error && (
                 <p className="mt-2 text-[0.75rem] text-destructive">{(generateBugMut.error as Error).message}</p>
               )}
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button size="sm" variant="destructive" onClick={handleCreateBug} disabled={generateBugMut.isPending}>
-                  {generateBugMut.isPending ? (
+                <Button size="sm" variant="destructive" onClick={handleCreateBug} disabled={bugGenerating}>
+                  {bugGenerating ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       Создание<AnimatedDots />
@@ -420,7 +416,7 @@ function TestCaseCard({
                       "Создать баг-репорт"
                   )}
                 </Button>
-                <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => { setShowBugForm(false); setBugComment("") }} disabled={generateBugMut.isPending}>
+                <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => { setShowBugForm(false); setBugComment("") }} disabled={bugGenerating}>
                   Отмена
                 </Button>
               </div>

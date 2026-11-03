@@ -13,7 +13,7 @@ class BugStep(BaseModel):
 
 
 class BugReportResult(BaseModel):
-    """Claude tool output schema for bug report generation."""
+    """Codex tool output schema for bug report generation."""
     title: str
     severity: Literal["critical", "major", "minor", "trivial"]
     steps: list[BugStep]

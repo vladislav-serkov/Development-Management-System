@@ -12,7 +12,7 @@ from app.schemas.extraction import (
     FeatureDetectionResult,
     GenericTable,
 )
-from app.services.claude_client import call_structured
+from app.services.codex_client import call_structured
 from app.services.dep_impact import mark_feature_stale
 from app.services.rules import build_system_prompt
 from app.services.spec_diff import _names_contain, compute_spec_diff, merge_reextracted_feature
@@ -112,7 +112,7 @@ def _enforce_spec_identity(
 
 
 def _build_document_block(text: str, cache: bool = False) -> dict:
-    """Plain-text document block for Claude (markdown from Confluence)."""
+    """Plain-text document block for Codex (markdown from Confluence)."""
     block = {
         "type": "document",
         "source": {"type": "text", "media_type": "text/plain", "data": text},
@@ -132,7 +132,7 @@ def _strip_doc_refs(steps, removed: set[str]) -> None:
 def _dedupe_external_docs(structured_logic) -> list[str]:
     """Drop external_doc deps that duplicate an executable dependency.
 
-    Claude sometimes records one linked page twice: as external_api and as
+    Codex sometimes records one linked page twice: as external_api and as
     external_doc (page title "getWallet.do — Получение клиента" vs path
     "/api/{partner}/getWallet.do"). Keep the executable entry, drop the doc
     stub and its external_doc_refs in steps.
@@ -200,7 +200,7 @@ def _annotate_dep_link_keys(structured_logic: dict, links_by_id: dict[str, dict]
 
 
 def _build_link_resolver(used_dependencies) -> Callable[[str], tuple[str, str] | None]:
-    """[LINK:Ln] → the dependency Claude attached that link to.
+    """[LINK:Ln] → the dependency Codex attached that link to.
 
     Both sides key off the same marker ids, so a source cell linking to the
     "[flp-credit-line] DB" page resolves to the exact db_table dependency without
@@ -290,9 +290,7 @@ async def _detect_features(
     return multiple for scheduled_task documents that describe N independent tasks.
     """
     logger.info("[Detect] Detecting features (model=%s, doc_size=%.1fKB)", model, len(doc_content) / 1024)
-    # NOTE: current Claude models removed the sampling params (temperature/top_p/
-    # top_k return 400), so run-to-run extraction variance cannot be pinned at the
-    # API level. The spec diff neutralizes it structurally (app/services/spec_diff.py).
+    # Run-to-run model variance is handled structurally by spec_diff.
     result = await call_structured(
         FeatureDetectionResult,
         label="detect_features",
@@ -312,7 +310,7 @@ async def _detect_features(
     )
     if not result.features:
         raise ValueError(
-            "Claude не нашёл ни одной feature в документе. "
+            "Codex не нашёл ни одной feature в документе. "
             "Возможно, документ не содержит технического задания."
         )
     features = [f.nest() for f in result.features]
@@ -609,7 +607,7 @@ async def run_extraction_pipeline(
     keeps the old version, so the "spec updated" badge stays until it is redone.
 
     Contract:
-      - Claude detects N features (1 for kafka/rest, N for scheduled_task docs).
+      - Codex detects N features (1 for kafka/rest, N for scheduled_task docs).
       - For each feature: fill mappings from tables, save, upsert dependency stubs.
       - Per-feature failure is isolated: that feature is deleted, others continue.
       - Document status:
@@ -661,7 +659,7 @@ async def run_extraction_pipeline(
         target_id=doc_slug,
     )
 
-    model = settings.claude_model
+    model = settings.extraction_model
     global_rules = await store.get_global_rules()
     project_rules = await store.get_project_rules(project_slug)
     extraction_system_prompt = build_system_prompt(

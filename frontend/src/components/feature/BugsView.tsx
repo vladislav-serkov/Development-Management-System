@@ -726,6 +726,8 @@ export function BugsView({ projectSlug, featureName }: { projectSlug: string; fe
       )}
 
       {/* Loading */}
+      {bugsData?.bugs_running && <p className="text-sm text-muted-foreground">Codex создаёт баг-репорт…</p>}
+      {bugsData?.generation_error && <p className="text-sm text-destructive">{bugsData.generation_error}</p>}
       {isLoading && bugs.length === 0 && (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />

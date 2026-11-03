@@ -15,14 +15,14 @@ from app.prompts.test_cases import (
 )
 from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
 from app.services import sql_runner
-from app.services.claude_client import call_structured
+from app.services.codex_client import call_structured
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
 
 logger = logging.getLogger(__name__)
 
 
-# How many plan items to detail per Claude call — keeps each response short enough
+# How many plan items to detail per Codex call — keeps each response short enough
 # that late cases stay as thorough as early ones.
 DETAIL_BATCH_SIZE = 10
 
@@ -316,7 +316,7 @@ async def _call_plan_tool(label: str, model: str, system_prompt: str, user_block
     Returns plan items, or None when the model returned an empty list —
     the caller decides whether empty is an error (plan) or "nothing to add" (critic).
     """
-    # Adaptive thinking counts against max_tokens — keep the budget generous.
+    # Plan and detail remain separate to keep coverage explicit and responses focused.
     result = await call_structured(
         TestCasePlanResult,
         label=label,
@@ -350,7 +350,7 @@ async def _call_plan_phase(
         ],
     )
     if not plan_items:
-        raise RuntimeError("[test_cases_plan] Claude returned an empty plan — no test cases planned")
+        raise RuntimeError("[test_cases_plan] Codex returned an empty plan — no test cases planned")
 
     logger.info("[test_cases:plan] Planned %d test case(s)", len(plan_items))
     return plan_items
@@ -446,7 +446,7 @@ async def _call_detail_phase(
             ],
         )
         if not result.test_cases:
-            raise RuntimeError(f"[{label}] Claude returned no test cases for the batch")
+            raise RuntimeError(f"[{label}] Codex returned no test cases for the batch")
         if len(result.test_cases) != len(batch):
             logger.warning(
                 "[%s] batch size mismatch: plan had %d, generated %d",
@@ -586,7 +586,7 @@ async def run_test_cases_pipeline(
     *,
     task_id: str | None = None,
 ) -> list[dict]:
-    """Run 2 sequential Claude calls (plan + detail with few-shot) and return merged test cases."""
+    """Run 2 sequential Codex calls (plan + detail with few-shot) and return merged test cases."""
     try:
         result = await _run_test_cases_pipeline_inner(project_slug, feature_name, store)
     except Exception as exc:
@@ -739,7 +739,7 @@ async def _call_ask_phase(
     feature_type: str = "",
     system_prompt: str = ASK_SYSTEM_PROMPT,
 ) -> TestCaseAskResult:
-    """Single Claude call: tester's free-text ask → 0..N detailed test cases + comment."""
+    """Single Codex call: tester's free-text ask → 0..N detailed test cases + comment."""
     return await call_structured(
         TestCaseAskResult,
         label="test_cases_ask",

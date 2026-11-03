@@ -1,8 +1,7 @@
 """Tests for the on-demand test case ask pipeline (tester asks for a case on a spec item)."""
 import json
-from types import SimpleNamespace
 
-import app.services.claude_client as claude_client
+from app.services import agent_runner
 from app.services.test_cases import run_test_case_ask_pipeline
 
 FEATURE = {
@@ -23,27 +22,26 @@ CASE = {
 }
 
 
-def _mock_claude(monkeypatch, output):
+def _mock_codex(monkeypatch, output):
     """Fake the API call under call_structured with a structured-output answer;
     returns the list of captured request kwargs."""
     calls = []
 
-    async def fake_call_claude(*, label="", **kwargs):
-        calls.append(kwargs)
-        return SimpleNamespace(
-            content=[SimpleNamespace(type="text", text=json.dumps(output, ensure_ascii=False))],
-            usage=SimpleNamespace(),
-            stop_reason="end_turn",
-        )
+    async def analyze(workspace, log_path, execute, on_started, **options):
+        async def ask(prompt, schema):
+            turns = json.loads(prompt.split("\n", 1)[1])
+            calls.append({"messages": [{"content": [{"text": t["text"]} for t in turns]}]})
+            return output
+        return await execute(ask)
 
-    monkeypatch.setattr(claude_client, "call_claude", fake_call_claude)
+    monkeypatch.setattr(agent_runner, "analyze", analyze)
     return calls
 
 
 async def test_ask_adds_pending_case_and_finishes_task(store, monkeypatch):
     await store.create_project("P")
     await store.save_feature("p", dict(FEATURE))
-    calls = _mock_claude(monkeypatch, {"test_cases": [CASE], "comment": "Кейс на валидацию amount"})
+    calls = _mock_codex(monkeypatch, {"test_cases": [CASE], "comment": "Кейс на валидацию amount"})
 
     task = await store.create_task("p", kind="test_cases", target_type="feature", target_id="create-order")
     result = await run_test_case_ask_pipeline(
@@ -79,7 +77,7 @@ async def test_ask_already_covered_adds_nothing(store, monkeypatch):
     await store.save_feature("p", dict(FEATURE))
     existing = dict(CASE, status="approved", analyst_text=None)
     await store.save_test_cases("p", "create-order", [existing])
-    calls = _mock_claude(monkeypatch, {
+    calls = _mock_codex(monkeypatch, {
         "test_cases": [],
         "comment": "Пункт уже покрыт существующим кейсом",
         # one real #N ref (twice) + one out of range — dupes and the latter are dropped
@@ -109,7 +107,7 @@ async def test_ask_dedupes_against_existing(store, monkeypatch):
     existing = dict(CASE, status="approved", analyst_text=None)
     await store.save_test_cases("p", "create-order", [existing])
     # Model ignores instructions and regenerates the same case — must not duplicate
-    _mock_claude(monkeypatch, {"test_cases": [CASE], "comment": None})
+    _mock_codex(monkeypatch, {"test_cases": [CASE], "comment": None})
 
     result = await run_test_case_ask_pipeline("p", "create-order", "кейс на валидацию amount", store)
 
@@ -122,10 +120,10 @@ async def test_ask_failure_marks_task_error(store, monkeypatch):
     await store.create_project("P")
     await store.save_feature("p", dict(FEATURE))
 
-    async def boom(*, label="", **kwargs):
+    async def boom(*args, **kwargs):
         raise RuntimeError("api down")
 
-    monkeypatch.setattr(claude_client, "call_claude", boom)
+    monkeypatch.setattr(agent_runner, "analyze", boom)
     task = await store.create_task("p", kind="test_cases", target_type="feature", target_id="create-order")
 
     try:

@@ -308,3 +308,26 @@ async def test_analyst_timeout_interrupts_tools(sdk, monkeypatch):
         await agent_runner.analyze(sdk.repo, sdk.log, execute, AsyncMock())
     turn.interrupt.assert_awaited_once()
     sdk.client.close.assert_awaited_once()
+
+
+async def test_document_runner_preserves_json_string_fields_and_explicit_options(sdk):
+    from pydantic import Json
+
+    class JsonOutput(BaseModel):
+        value: Json[dict]
+
+    sdk.thread.turn.return_value = FakeTurn(completed_events('{"value": "{\\"id\\": 1}"}'))
+
+    async def execute(ask):
+        return await ask("Extract", JsonOutput)
+
+    result = await agent_runner.analyze(
+        sdk.repo, sdk.log, execute, AsyncMock(), instructions="Document task",
+        model="document-model", effort="high", timeout=30, kind="extraction",
+    )
+    assert JsonOutput.model_validate(result).value == {"id": 1}
+    options = sdk.client.thread_start.call_args.kwargs
+    assert options["model"] == "document-model"
+    assert options["config"]["model_reasoning_effort"] == "high"
+    assert options["developer_instructions"] == "Document task"
+    assert options["approval_mode"] == ApprovalMode.deny_all

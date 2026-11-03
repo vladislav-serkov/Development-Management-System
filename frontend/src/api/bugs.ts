@@ -12,7 +12,7 @@ export async function generateBug(
   featureName: string,
   tcIndex: number,
   analystText?: string | null,
-): Promise<{ bugs: BugItem[] }> {
+): Promise<{ status: "started" | "already_running" }> {
   const res = await apiFetch(
     `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/bugs/generate`,
     {

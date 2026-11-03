@@ -18,6 +18,7 @@ const KIND_LABELS: Record<TaskKind, string> = {
   test_cases: "Тест-кейсы",
   enrichment: "Обогащение",
   implement: "Реализация",
+  bugs: "Баг-репорт",
   bug_fix: "Исправление бага",
   autotest_gen: "Автотест",
 }
@@ -29,6 +30,7 @@ const KIND_ICONS: Record<TaskKind, typeof FileText> = {
   test_cases: TestTube,
   enrichment: Network,
   implement: Code2,
+  bugs: Bug,
   bug_fix: Bug,
   autotest_gen: Bot,
 }
@@ -237,6 +239,7 @@ export default function BackgroundTasksPage() {
                   { value: "extraction", label: "Извлечение" },
                   { value: "test_cases", label: "Тест-кейсы" },
                   { value: "enrichment", label: "Обогащение" },
+                  { value: "bugs", label: "Баг-репорт" },
                   { value: "bug_fix", label: "Исправление бага" },
                   { value: "autotest_gen", label: "Автотест" },
                 ]}

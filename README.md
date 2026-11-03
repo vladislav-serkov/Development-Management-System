@@ -1,10 +1,10 @@
 # Extract Agent
 
-AI-powered web platform that extracts structured feature specifications from Confluence pages using the Claude API, then generates gaps analysis, test cases, bug reports, and dependency enrichments. Local Codex SDK jobs analyze business gaps in original specifications, fix bugs, generate Java autotests, and implement feature tasks in service repositories.
+AI-powered web platform that extracts structured feature specifications from Confluence pages using the local Codex SDK with ChatGPT authentication, then generates gaps analysis, test cases, bug reports, and dependency enrichments. Local Codex SDK jobs analyze business gaps in original specifications, fix bugs, generate Java autotests, and implement feature tasks in service repositories.
 
 ## Stack
 
-- **Backend:** Python 3.12+ · FastAPI · SQLAlchemy 2 async · asyncpg · Alembic · Anthropic SDK
+- **Backend:** Python 3.12+ · FastAPI · SQLAlchemy 2 async · asyncpg · Alembic · Codex Python SDK
 - **Storage:** PostgreSQL 16; relational entities with JSONB payloads
 - **Frontend:** React 19 · TypeScript · Vite · TanStack Query · Zustand · shadcn/ui · Tailwind v4
 - **Published instance:** macOS host serving API + built SPA, reverse SSH tunnel to a VPS with nginx/TLS
@@ -30,7 +30,7 @@ cp .env.example .env
 docker compose up -d db
 ```
 
-Set `ANTHROPIC_API_KEY` in `.env`. If this PostgreSQL instance also serves production, create a separate development database, for example:
+Run `codex login` on the backend host; no Anthropic or OpenAI API key is needed. If this PostgreSQL instance also serves production, create a separate development database, for example:
 
 ```bash
 docker compose exec db psql -U extract -d postgres -c 'CREATE DATABASE extract_agent_dev;'
@@ -188,9 +188,9 @@ deploy/nginx.conf         Alternative Docker production nginx configuration
 
 - All project persistence goes through async `ProjectStore` methods. PostgreSQL is the source of truth; JSON files are an interchange format.
 - `.context/` import copies data into a new database project and remembers its source path. Writing back requires an explicit export; there is no live file synchronization. ZIP import/export uses the same layout and is not a complete database backup.
-- Spec tables are parsed deterministically and preserve original columns and contents. The LLM classifies tables and extracts logic; all API calls go through `app/services/claude_client.py`.
+- Spec tables are parsed deterministically and preserve original columns and contents. The LLM classifies tables and extracts logic; all API calls go through `app/services/codex_client.py`.
 - Long LLM/agent jobs run through `task_manager.launch()` with persisted task status and frontend polling. The in-memory task registry is per process; the published app uses one worker.
-- Bug fixing, autotest generation, and feature implementation use `openai-codex` (`AsyncCodex`) through `app/services/agent_runner.py`. They reuse the local ChatGPT login; Anthropic API calls for extraction and analysis remain separate.
+- Bug fixing, autotest generation, and feature implementation use `openai-codex` (`AsyncCodex`) through `app/services/agent_runner.py`. All AI workflows reuse the local ChatGPT login and share one subscription queue.
 
 ## Personal coding jobs (Codex subscription)
 
@@ -202,7 +202,7 @@ codex login
 codex login status
 ```
 
-`CODEX_ENABLED=true` enables coding jobs (default). Set `AUTOTESTS_REPO_DIR` for
+`CODEX_ENABLED=true` enables all AI workflows (default). Set `AUTOTESTS_REPO_DIR` for
 Java autotests and `REPOS_DIRS` for bug fixing/feature implementation. No Codex
 token belongs in `.env`; the runner requires ChatGPT authentication and never
 falls back to API-key billing. Existing `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CLI`
@@ -234,3 +234,24 @@ See [DEPLOY.md](DEPLOY.md) for the published macOS/VPS setup, updates, user admi
 ## License
 
 Not yet specified — all rights reserved by the author.
+
+## Structured document workflows
+
+Extraction, dependency enrichment, test-case planning/detail/on-demand requests,
+and bug reports use `codex_client.call_structured` and the shared Codex runner.
+Each call gets an ephemeral read-only session in an empty temporary workspace,
+with task-specific instructions and a strict JSON schema. Original document
+text, tables and test artifacts are preserved; deterministic parsing and
+Pydantic validation remain in place. Invalid JSON gets one correction turn;
+failed turns, authentication errors and usage limits stop the job.
+
+`EXTRACTION_MODEL`, `TEST_CASES_MODEL`, and `BUGS_MODEL` optionally override
+`CODEX_MODEL`; empty means the account catalog default. Old `claude-*` overrides
+are ignored. Legacy Anthropic keys/model settings may remain in existing `.env`
+files but are never used. `EXTRACTION_EFFORT` configures extraction/enrichment
+reasoning; `STRUCTURED_TIMEOUT_SECONDS` bounds each active call (default 1200).
+`EXTRACTION_MAX_TOKENS` is accepted only for compatibility; Codex owns its output
+budget. Private streamed logs go to `STRUCTURED_LOG_DIR` (default
+`logs/structured`), with mode 0600. All workflows share a process-wide queue,
+so waiting for another Codex job is expected. Bug-report generation returns
+immediately and exposes progress/errors via the bugs tab and background tasks.

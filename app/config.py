@@ -2,20 +2,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    anthropic_api_key: str = "sk-ant-xxx"
-    claude_model: str = "claude-sonnet-5-5"
-    # Legacy env compatibility only; gap analysis now uses codex_model.
-    gaps_model: str = "claude-sonnet-5-5"
-    test_cases_model: str = "claude-sonnet-5-5"
-    bugs_model: str = "claude-sonnet-5-5"
-    # Feature detection of a large spec easily emits >16K output tokens (thinking
-    # counts against the limit too), so keep a generous ceiling.
-    extraction_max_tokens: int = 32000
-    # Reasoning effort of the extraction/enrichment calls. Measured on a 20KB Kafka
-    # spec with Sonnet 5.5: "medium" took 30 s but merged adjacent sub-steps
-    # (52 steps where the page has ~100); "high" took 76 s and mirrored the page.
-    # Anthropic analysis calls (test cases, bugs) use the model default.
+    # Legacy Anthropic settings are accepted but never used (existing .env files).
+    anthropic_api_key: str = ""
+    claude_model: str = ""
+    gaps_model: str = ""
+    # Empty overrides use CODEX_MODEL, then the signed-in account's default.
+    extraction_model: str = ""
+    test_cases_model: str = ""
+    bugs_model: str = ""
     extraction_effort: str = "high"
+    # Compatibility only: Codex controls its output budget.
+    extraction_max_tokens: int = 32000
+    structured_timeout_seconds: int = 1200
+    structured_log_dir: str = "logs/structured"
     database_url: str = "postgresql+asyncpg://extract:extract@localhost:5432/extract_agent"
     # Test stand DB for executing SQL artifacts from test cases (empty = feature off).
     # Artifacts are generated with explicit schema prefixes (schema == service name),

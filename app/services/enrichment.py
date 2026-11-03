@@ -6,7 +6,7 @@ from app.config import settings
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
 from app.schemas.enrichment import DependencyResponse
 from app.schemas.extraction import nest_message_fields
-from app.services.claude_client import call_structured
+from app.services.codex_client import call_structured
 from app.services.dep_impact import mark_dependents_stale
 from app.services.extraction import (
     _build_document_block,
@@ -165,7 +165,7 @@ async def _extract_enrichment(
     source_name: str,
     store,
 ):
-    """Single Claude tool_use call: document markdown → validated batch schema for dep_type."""
+    """Single structured Codex call: document markdown → validated batch schema for dep_type."""
     if dep_type not in ENRICHMENT_SCHEMAS:
         raise ValueError(f"Invalid dep_type: {dep_type}. Must be one of: {list(ENRICHMENT_SCHEMAS)}")
 
@@ -180,7 +180,7 @@ async def _extract_enrichment(
         len(text_content) / 1024,
     )
 
-    model = settings.claude_model
+    model = settings.extraction_model
 
     global_rules = await store.get_global_rules()
     project_rules = await store.get_project_rules(project_slug)
@@ -235,7 +235,7 @@ async def enrich_group_from_page(
     store,
     source_page: dict | None = None,
 ) -> tuple[dict[str, DependencyResponse | None], list[str]]:
-    """One Claude call over a page → enrich EVERY dependency of ``dep_type`` pointing at it.
+    """One Codex call over a page → enrich EVERY dependency of ``dep_type`` pointing at it.
 
     Several dependencies routinely share one page: eight tables documented in a single
     "[flp-order] DB" page, four config parameters anchored on one service-configuration
@@ -322,7 +322,7 @@ async def run_enrichment_pipeline(
     target_dep_name: str | None = None,
     source_page: dict | None = None,
 ) -> list[DependencyResponse]:
-    """Run Claude tool_use enrichment for a dependency document (markdown text)."""
+    """Run structured Codex enrichment for a dependency document (markdown text)."""
     result = await _extract_enrichment(project_slug, dep_type, text_content, source_name, store)
 
     now = datetime.now(UTC)

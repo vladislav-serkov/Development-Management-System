@@ -25,7 +25,7 @@ class DbTableEnrichment(BaseModel):
 
 
 class DbEnrichmentBatch(BaseModel):
-    """1 PDF -> N tables. Used as Claude tool schema for db_table enrichment."""
+    """1 PDF -> N tables. Used as Codex tool schema for db_table enrichment."""
     tables: list[DbTableEnrichment]
 
 
@@ -51,7 +51,7 @@ class ApiEndpointInfo(BaseModel):
 
 
 class ExternalApiEnrichment(BaseModel):
-    """1 PDF -> 1 API. Used as Claude tool schema for external_api enrichment."""
+    """1 PDF -> 1 API. Used as Codex tool schema for external_api enrichment."""
     api_name: str
     base_url: str | None = None
     description: str = ""
@@ -75,7 +75,7 @@ class CacheEnrichment(BaseModel):
 
 
 class CacheEnrichmentBatch(BaseModel):
-    """1 PDF -> N cache structures. Used as Claude tool schema for cache enrichment."""
+    """1 PDF -> N cache structures. Used as Codex tool schema for cache enrichment."""
     caches: list[CacheEnrichment]
 
 
@@ -91,7 +91,7 @@ class KafkaTopicEnrichment(BaseModel):
 
 
 class KafkaTopicEnrichmentBatch(BaseModel):
-    """1 PDF -> N topics. Used as Claude tool schema for kafka_topic enrichment."""
+    """1 PDF -> N topics. Used as Codex tool schema for kafka_topic enrichment."""
     topics: list[KafkaTopicEnrichment]
 
 

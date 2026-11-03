@@ -179,7 +179,11 @@ async def run(
                 await client.close()
 
 
-async def analyze(workspace: Path, log_path: Path, execute, on_started) -> dict:
+async def analyze(
+    workspace: Path, log_path: Path, execute, on_started, *,
+    instructions: str | None = None, model: str = "", effort: str | None = None,
+    timeout: int | None = None, kind: str = "gaps",
+) -> dict:
     """Run a multi-stage, read-only analyst on the shared subscription queue.
 
     execute(ask) controls the protocol and source fetching server-side. ask accepts
@@ -188,6 +192,8 @@ async def analyze(workspace: Path, log_path: Path, execute, on_started) -> dict:
     """
     from app.prompts.gap_agent import INSTRUCTIONS
 
+    instructions = instructions if instructions is not None else INSTRUCTIONS
+    timeout = timeout if timeout is not None else settings.gaps_timeout_seconds
     if not is_configured():
         raise AgentError("Codex отключён: установите CODEX_ENABLED=true")
     async with _run_lock:
@@ -198,14 +204,14 @@ async def analyze(workspace: Path, log_path: Path, execute, on_started) -> dict:
             client = AsyncCodex(CodexConfig(
                 codex_bin=settings.codex_cli or None, cwd=str(workspace.resolve()),
                 env={"CODEX_API_KEY": "", "OPENAI_API_KEY": "", "CLAUDE_CODE_OAUTH_TOKEN": ""},
-                client_name="extract_agent", client_title="Extract Agent — Gap analysis",
+                client_name="extract_agent", client_title=f"Extract Agent — {kind}",
             ))
             try:
-                async with asyncio.timeout(settings.gaps_timeout_seconds):
+                async with asyncio.timeout(timeout):
                     account = await client.account()
                     if account.account is None or account.account.root.type != "chatgpt":
                         raise AgentError("Codex не авторизован через ChatGPT. Выполните codex login")
-                    model = settings.codex_model
+                    model = model or settings.codex_model
                     if not model:
                         catalog = await client.models()
                         available = [m for m in catalog.data if not m.hidden]
@@ -215,18 +221,21 @@ async def analyze(workspace: Path, log_path: Path, execute, on_started) -> dict:
                     thread = await client.thread_start(
                         cwd=str(workspace.resolve()), model=model, model_provider="openai",
                         sandbox=Sandbox.read_only, approval_mode=ApprovalMode.deny_all,
-                        base_instructions=INSTRUCTIONS, developer_instructions=INSTRUCTIONS,
+                        base_instructions=instructions, developer_instructions=instructions,
                         ephemeral=True,
-                        config={"project_doc_max_bytes": 0, "web_search": "disabled"},
+                        config={"project_doc_max_bytes": 0, "web_search": "disabled",
+                                 **({"model_reasoning_effort": effort} if effort else {})},
                     )
-                    _write_log(log, "thread.started", {"thread_id": thread.id, "model": model, "kind": "gaps"})
+                    _write_log(log, "thread.started", {"thread_id": thread.id, "model": model, "kind": kind})
 
                     async def ask(prompt: str, result_type: type[BaseModel]) -> dict:
-                        schema = result_type.model_json_schema()
+                        from app.services.codex_client import output_schema
+
+                        schema = output_schema(result_type)
                         for attempt in range(2):
                             raw = await _turn(thread, prompt, schema, log)
                             try:
-                                return result_type.model_validate_json(raw).model_dump()
+                                return result_type.model_validate_json(raw).model_dump(round_trip=True)
                             except ValidationError:
                                 if attempt:
                                     raise AgentError("Codex не вернул корректный отчёт по заданной схеме") from None
@@ -235,7 +244,7 @@ async def analyze(workspace: Path, log_path: Path, execute, on_started) -> dict:
 
                     return await execute(ask)
             except TimeoutError as exc:
-                raise AgentError(f"Анализ остановлен по таймауту {settings.gaps_timeout_seconds}с") from exc
+                raise AgentError(f"Анализ остановлен по таймауту {timeout}с") from exc
             except (CodexError, OSError, RuntimeError, ValueError) as exc:
                 raise AgentError("Ошибка запуска Codex; проверьте вход ChatGPT и журнал задачи") from exc
             finally:

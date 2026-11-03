@@ -651,6 +651,30 @@ class ProjectStore:
     async def get_bugs(self, project_slug: str, feature_name: str) -> list[dict]:
         return await self._get_items(project_slug, feature_name, "bug")
 
+    async def append_bug(self, project_slug: str, feature_name: str, bug: dict) -> None:
+        """Append a generated report without overwriting reviews made during its run."""
+        async with self._sf().begin() as session:
+            row = await self._project_and_feature(session, project_slug, feature_name, for_update=True)
+            if row is None:
+                raise ValueError("Feature not found")
+            items = (await session.execute(select(AnalysisItem.data).where(
+                AnalysisItem.feature_id == row.id, AnalysisItem.kind == "bug",
+            ).order_by(AnalysisItem.position))).scalars().all()
+            bugs = [dict(item) for item in items] + [bug]
+            await self._replace_items(session, row.id, "bug", bugs)
+            case = (await session.execute(select(AnalysisItem).where(
+                AnalysisItem.feature_id == row.id, AnalysisItem.kind == "test_case",
+                AnalysisItem.position == bug.get("tc_index"),
+            ))).scalar_one_or_none()
+            pending_delta = 0
+            if case is not None and case.data.get("name") == bug.get("test_case_name"):
+                pending_delta = int(case.data.get("status") == "pending")
+                case.data = {**case.data, "status": "edited", "analyst_text": bug.get("analyst_text")}
+            row.data = {
+                **row.data, "bug_count": len(bugs),
+                "pending_test_case_count": max(0, row.data.get("pending_test_case_count", 0) - pending_delta),
+            }
+
     async def save_bugs(self, project_slug: str, feature_name: str, bugs: list[dict]) -> None:
         await self._save_items(project_slug, feature_name, "bug", bugs, {"bug_count": len(bugs)})
 
