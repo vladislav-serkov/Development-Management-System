@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { fetchTestCases, patchTestCase, deleteTestCase, runTestCases, requestAutotest } from "@/api/test-cases"
+import { fetchTestCases, patchTestCase, deleteTestCase, runTestCases, requestScript } from "@/api/test-cases"
 
 export function useFeatureTestCases(projectSlug: string | null, featureName: string | null) {
   return useQuery({
@@ -9,18 +9,18 @@ export function useFeatureTestCases(projectSlug: string | null, featureName: str
     refetchInterval: (query) => {
       const data = query.state.data
       if (data?.test_cases_running) return 2000
-      const autotestActive = data?.test_cases.some(
-        (tc) => tc.autotest_status === "queued" || tc.autotest_status === "running"
+      const scriptActive = data?.test_cases.some(
+        (tc) => tc.script_status === "queued" || tc.script_status === "running"
       )
-      return autotestActive ? 5000 : false
+      return scriptActive ? 5000 : false
     },
   })
 }
 
-export function useRequestAutotest(projectSlug: string, featureName: string) {
+export function useRequestScript(projectSlug: string, featureName: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (tcIndex: number) => requestAutotest(projectSlug, featureName, tcIndex),
+    mutationFn: (tcIndex: number) => requestScript(projectSlug, featureName, tcIndex),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "test-cases"] })
     },

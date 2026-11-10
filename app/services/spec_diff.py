@@ -21,7 +21,7 @@ import re
 from datetime import UTC, datetime
 
 # Keys the extraction pipeline owns: on re-extraction these come from the new
-# run, everything else (analysis counts, impl/autotest state, stale flags) is
+# run, everything else (analysis counts, impl state, stale flags) is
 # carried over from the prior feature record so re-import doesn't erase it.
 EXTRACTION_OWNED_KEYS = {
     "name",

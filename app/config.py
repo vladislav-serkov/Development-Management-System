@@ -55,11 +55,16 @@ class Settings(BaseSettings):
     bug_fixer_auto: bool = True  # enqueue a fix as soon as a bug is exported to Jira
     bug_fix_timeout_seconds: int = 3600
     bug_fix_log_dir: str = "logs/bug-fixer"
-    # Autotest generator: Codex SDK jobs that turn accepted test cases
-    # into Java autotests in the flp-autotests repo (empty dir = feature off).
+    # ru-dsl script generator: Codex SDK jobs that turn accepted test cases into
+    # Russian Gherkin scenarios in the ru-dsl-v2 repo (empty dir = feature off).
     # Shares the Codex login and timeout settings with the bug fixer.
+    ru_dsl_repo_dir: str = ""
+    dsl_script_auto: bool = True  # queue generation as soon as a test case is accepted
+    dsl_script_log_dir: str = "logs/dsl-script"
+    # Deprecated (Java autotests in flp-autotests, replaced by ru-dsl scripts):
+    # accepted so existing .env files still load; never used.
     autotests_repo_dir: str = ""
-    autotest_auto: bool = True  # queue generation as soon as a test case is approved
+    autotest_auto: bool = True
     autotest_log_dir: str = "logs/autotest-gen"
     # Feature implementer: Codex jobs that implement a feature task
     # ("реализовать/доработать метод") in the service repo. Shares Codex auth.

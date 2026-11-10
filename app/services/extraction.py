@@ -335,7 +335,7 @@ async def _process_single_feature(
     """Fill mappings from document tables, save the feature, upsert dependency stubs.
 
     The saved record is merged with the live row (``store.merge_feature``), so
-    analysis state (counts, impl/autotest status, stale flags) survives even if it
+    analysis state (counts, impl status, stale flags) survives even if it
     was written while the LLM call ran.
 
     Raises on fatal errors; caller decides per-feature rollback.

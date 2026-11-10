@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.config import settings
-from app.services import agent_runner, autotest_generator, bug_fixer, feature_implementer
-from tests.test_autotest_generator import DOC, FEATURE, TEST_CASE
+from app.services import agent_runner, bug_fixer, dsl_script_generator, feature_implementer
+from tests.test_dsl_script_generator import DOC, FEATURE, TEST_CASE
 from tests.test_jira import BUG
 
 
@@ -16,9 +16,9 @@ async def workflow_data(store, monkeypatch, tmp_path):
     (repo / ".git").mkdir(parents=True)
     monkeypatch.setattr(settings, "codex_enabled", True)
     monkeypatch.setattr(settings, "repos_dirs", str(tmp_path))
-    monkeypatch.setattr(settings, "autotests_repo_dir", str(repo))
+    monkeypatch.setattr(settings, "ru_dsl_repo_dir", str(repo))
     monkeypatch.setattr(settings, "bug_fix_log_dir", str(tmp_path / "bug-logs"))
-    monkeypatch.setattr(settings, "autotest_log_dir", str(tmp_path / "test-logs"))
+    monkeypatch.setattr(settings, "dsl_script_log_dir", str(tmp_path / "script-logs"))
     monkeypatch.setattr(settings, "implement_log_dir", str(tmp_path / "impl-logs"))
     await store.create_project("P")
     await store.save_document("p", dict(DOC))
@@ -31,7 +31,7 @@ async def workflow_data(store, monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("workflow,prefix,status", [
     ("bug", "fix", "fix_proposed"),
-    ("autotest", "autotest", "generated"),
+    ("script", "script", "generated"),
     ("feature", "impl", "implemented"),
 ])
 @pytest.mark.parametrize("failed", [False, True])
@@ -50,8 +50,8 @@ async def test_workflows_persist_sdk_result_or_failure(store, workflow_data, mon
         bug = (await store.get_bugs("p", FEATURE["name"]))[0]
         await bug_fixer._fix_one(store, "p", FEATURE["name"], 0, bug, feature, DOC["service_name"])
         result = (await store.get_bugs("p", FEATURE["name"]))[0]
-    elif workflow == "autotest":
-        await autotest_generator._generate_one(store, "p", FEATURE["name"], 0, TEST_CASE, feature)
+    elif workflow == "script":
+        await dsl_script_generator._generate_one(store, "p", FEATURE["name"], dict(TEST_CASE), feature)
         result = (await store.get_test_cases("p", FEATURE["name"]))[0]
     else:
         await feature_implementer._implement_one(store, "p", FEATURE["name"], feature, DOC["service_name"])

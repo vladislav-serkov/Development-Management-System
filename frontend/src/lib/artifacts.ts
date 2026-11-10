@@ -3,6 +3,7 @@ export const ARTIFACT_BADGE = {
   KAFKA: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
   SQL: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
   MOCK: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  DSL: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400",
 } as const
 
 export function prettyJsonOrRaw(s: string): string {
