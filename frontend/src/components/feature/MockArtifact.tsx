@@ -1,10 +1,17 @@
-import { Check, Loader2, Upload } from "lucide-react"
+import { Check, Loader2, Sparkles, Upload } from "lucide-react"
 import { useTestWireMockStatus, useUploadMock } from "@/hooks/useTestWireMock"
 import { Button } from "@/components/ui/button"
 import { ARTIFACT_BADGE, prettyJsonOrRaw } from "@/lib/artifacts"
 import { ArtifactHead, CodeBlock, MetaChip, TypeBadge } from "./artifact-ui"
 
-export function MockArtifact({ value }: { value: string }) {
+export function MockArtifact({
+  value,
+  onDiscuss,
+}: {
+  value: string
+  /** Hand a failed upload to the test-case assistant */
+  onDiscuss?: (error: string) => void
+}) {
   const { data: stand, error: statusError } = useTestWireMockStatus()
   const upload = useUploadMock()
   let method: string | null = null
@@ -47,6 +54,12 @@ export function MockArtifact({ value }: { value: string }) {
         <p role="alert" className="whitespace-pre-wrap break-words text-[0.75rem] text-destructive">
           {(upload.error ?? statusError)?.message}
         </p>
+      )}
+      {upload.error && onDiscuss && (
+        <Button size="sm" variant="outline" onClick={() => onDiscuss(upload.error.message)}>
+          <Sparkles />
+          Разобрать с ассистентом
+        </Button>
       )}
       {upload.data && !upload.isPending && (
         <div role="status" className="space-y-1 rounded-lg border border-emerald-200 p-3 dark:border-emerald-900">

@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     gaps_log_dir: str = "logs/gaps"
     gaps_timeout_seconds: int = 1200
     gaps_max_sources: int = 30
+    # Test-case assistant: a read-only Codex analyst whose stand actions (SQL, HTTP,
+    # WireMock) are executed by the backend. Rounds = answers that may request actions.
+    assistant_log_dir: str = "logs/assistant"
+    assistant_timeout_seconds: int = 1200
+    assistant_max_rounds: int = 10
     cors_origins: str = ""
     # Web UI login (users are issued via `python -m app.cli users add`). Off by default
     # for local dev; scripts/serve.sh turns it on for the published instance.

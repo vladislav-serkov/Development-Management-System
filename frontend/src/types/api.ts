@@ -131,6 +131,7 @@ export type TaskKind =
   | "gaps"
   | "apply_gaps"
   | "test_cases"
+  | "tc_assistant"
   | "enrichment"
   | "implement"
   | "bugs"
@@ -527,6 +528,8 @@ export interface TestStep {
 }
 
 export interface TestCaseItem {
+  /** Stable id: list positions shift when a case is deleted */
+  id: string
   category: TestCaseCategory
   name: string
   preconditions: string
@@ -554,6 +557,119 @@ export interface TestCasesResponse {
   last_ask_message: string | null
   last_ask_at: string | null
   last_ask_covered_by: string[]
+}
+
+// Test-case assistant (chat about one feature's cases)
+export type AssistantTurnStatus = "queued" | "running" | "done" | "error" | "cancelled"
+
+/** Context pinned to a message: a case, or a failed run of one of its artifacts. */
+export interface AssistantAttachment {
+  kind: "case" | "sql_error" | "http_result" | "mock_error"
+  case_id: string
+  error?: string | null
+  failed_statement?: number | null
+  status_code?: number | null
+  reason?: string | null
+  url?: string | null
+  body?: string | null
+}
+
+/** One thing the assistant did on the stand. */
+export interface AssistantAction {
+  id: string
+  kind: "sql" | "http" | "wiremock_upload" | "wiremock_mappings" | "wiremock_requests"
+  title: string
+  case_id: string | null
+  /** true = the action changed the stand */
+  write: boolean
+  status: "ok" | "error" | "blocked"
+  summary: string
+  detail: string
+  duration_ms: number | null
+  at: string
+}
+
+export interface AssistantChange {
+  id: string
+  kind: "edit" | "add"
+  case_id: string
+  case_name: string
+  summary: string
+  fields?: string[]
+  before?: Record<string, unknown>
+  after?: Record<string, unknown>
+  state: "applied" | "reverted"
+  /** How an edited SQL was checked on the stand before saving */
+  stand_check?: { status: "ok" | "skipped"; summary?: string; duration_ms?: number | null }
+}
+
+export interface AssistantFailure {
+  case_id: string
+  case_name: string
+  field: string
+  attempts: number
+  error: string
+}
+
+export interface AssistantSuggestion {
+  id: string
+  kind: "delete" | "bug"
+  case_id: string
+  case_name: string
+  text: string
+  state: "open" | "accepted" | "dismissed"
+}
+
+export interface AssistantTurn {
+  id: string
+  session_id: string
+  status: AssistantTurnStatus
+  created_at: string
+  text: string
+  attachments: AssistantAttachment[]
+  author: string | null
+  stage: "waiting" | "thinking" | "acting" | "verifying" | "saving" | null
+  current: string | null
+  started_at?: string
+  finished_at?: string
+  actions: AssistantAction[]
+  reply?: string
+  cause?: string | null
+  changes?: AssistantChange[]
+  failures?: AssistantFailure[]
+  suggestions?: AssistantSuggestion[]
+  case_refs?: { case_id: string; case_name: string }[]
+  /** #N in the reply → case id, as numbered when the message was answered */
+  numbering?: Record<string, string>
+  error?: string
+}
+
+export interface AssistantSessionSummary {
+  id: string
+  title: string
+  author: string | null
+  created_at: string
+  updated_at: string
+  turn_count: number
+  state: "running" | "queued" | "idle"
+}
+
+export interface AssistantSession extends Omit<AssistantSessionSummary, "turn_count" | "state"> {
+  turns: AssistantTurn[]
+}
+
+export interface AssistantOverview {
+  sessions: AssistantSessionSummary[]
+  stand: {
+    sql: boolean
+    database: string | null
+    write_schema: string | null
+    http: boolean
+    service: string | null
+    wiremock: boolean
+  }
+  /** false = Codex is switched off on the server */
+  enabled: boolean
 }
 
 // Test DB (SQL artifact execution) types

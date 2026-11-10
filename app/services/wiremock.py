@@ -86,3 +86,65 @@ async def upload_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
         "status_code": response.status_code,
         "duration_ms": int((time.monotonic() - started) * 1000),
     }
+
+
+async def _admin_get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Read-only call to the WireMock admin API of the test stand."""
+    url = mappings_url()
+    if not url:
+        raise WireMockError("WireMock не настроен — задайте TEST_WIREMOCK_URL в .env")
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=False) as client:
+            response = await client.get(url.removesuffix("/mappings") + path, params=params)
+    except httpx.HTTPError as exc:
+        message = str(exc).strip() or exc.__class__.__name__
+        if isinstance(exc, httpx.TimeoutException):
+            message = f"Таймаут запроса ({REQUEST_TIMEOUT}с)"
+        raise WireMockError(f"WireMock недоступен: {message}") from exc
+    if not 200 <= response.status_code < 300:
+        raise WireMockError(f"WireMock вернул HTTP {response.status_code}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise WireMockError("WireMock вернул ответ не в формате JSON") from exc
+    if not isinstance(payload, dict):
+        raise WireMockError("WireMock вернул неожиданный ответ")
+    return payload
+
+
+def _request_urls(request: dict[str, Any]) -> list[str]:
+    return [str(request[key]) for key in ("url", "urlPath", "urlPattern", "urlPathPattern") if request.get(key)]
+
+
+async def find_mappings(url_contains: str | None, *, limit: int = 15) -> dict[str, Any]:
+    """Stubs registered on the stand whose URL matcher contains the given text."""
+    payload = await _admin_get("/mappings")
+    needle = (url_contains or "").strip().lower()
+    mappings = [m for m in payload.get("mappings") or [] if isinstance(m, dict)]
+    matched = [
+        m for m in mappings
+        if not needle or any(needle in url.lower() for url in _request_urls(m.get("request") or {}))
+    ]
+    return {"total": len(mappings), "matched_count": len(matched), "mappings": matched[:limit]}
+
+
+async def recent_requests(url_contains: str | None, *, limit: int = 15) -> dict[str, Any]:
+    """Latest requests the stand's WireMock received (its request journal), newest first."""
+    payload = await _admin_get("/requests", {"limit": 300})
+    needle = (url_contains or "").strip().lower()
+    entries = []
+    for item in payload.get("requests") or []:
+        request = item.get("request") or {}
+        if needle and needle not in str(request.get("url", "")).lower():
+            continue
+        response = item.get("response") or item.get("responseDefinition") or {}
+        entries.append({
+            "time": request.get("loggedDateString"),
+            "method": request.get("method"),
+            "url": request.get("url"),
+            "body": (request.get("body") or "")[:1500],
+            "matched": bool(item.get("wasMatched")),
+            "stub_id": (item.get("stubMapping") or {}).get("id"),
+            "response_status": response.get("status"),
+        })
+    return {"matched_count": len(entries), "requests": entries[:limit]}

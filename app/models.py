@@ -141,3 +141,34 @@ class UserSession(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AssistantSession(Base):
+    """One conversation with the test-case assistant, scoped to a feature and
+    shared by everyone who opens that feature."""
+
+    __tablename__ = "assistant_sessions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    feature_id: Mapped[int] = mapped_column(ForeignKey("features.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[str] = mapped_column(Text, unique=True)
+    title: Mapped[str] = mapped_column(Text)
+    author: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AssistantTurn(Base):
+    """A tester's message together with the assistant's answer to it.
+
+    ``data`` holds the request (text, attachments) and everything the run
+    produced: the stand journal, saved changes, suggestions and the reply."""
+
+    __tablename__ = "assistant_turns"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    session_pk: Mapped[int] = mapped_column(ForeignKey("assistant_sessions.id", ondelete="CASCADE"), index=True)
+    turn_id: Mapped[str] = mapped_column(Text, unique=True)
+    status: Mapped[str] = mapped_column(Text)  # queued | running | done | error | cancelled
+    data: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

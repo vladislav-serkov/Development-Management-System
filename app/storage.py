@@ -23,7 +23,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import func
 
 from app.db import get_session_factory
-from app.models import AnalysisItem, Dependency, Document, Feature, Project, Rules, Task
+from app.models import (
+    AnalysisItem,
+    AssistantSession,
+    AssistantTurn,
+    Dependency,
+    Document,
+    Feature,
+    Project,
+    Rules,
+    Task,
+)
 from app.services.gap_results import PRIVATE_SOURCE_IDS
 
 logger = logging.getLogger(__name__)
@@ -46,6 +56,23 @@ def _gap_counts(gaps: list[dict]) -> dict[str, int]:
     return {"gap_count": len(active), "pending_gap_count": sum(
         g.get("status") == "pending" or bool(g.get("needs_review")) for g in active
     )}
+
+
+def _test_case_counts(test_cases: list[dict]) -> dict[str, int]:
+    return {
+        "test_case_count": len(test_cases),
+        "pending_test_case_count": sum(1 for t in test_cases if t.get("status") == "pending"),
+    }
+
+
+def _ensure_case_ids(test_cases: list[dict]) -> None:
+    """Give every test case a stable id (in place); list positions shift on delete."""
+    seen: set[str] = set()
+    for case in test_cases:
+        if not case.get("id") or case["id"] in seen:
+            case["id"] = uuid.uuid4().hex[:12]
+        seen.add(case["id"])
+
 
 # Keys that indicate the dep dict already contains enrichment data (Context Collector format)
 _ENRICHMENT_MARKERS = {
@@ -642,11 +669,30 @@ class ProjectStore:
         return await self._get_items(project_slug, feature_name, "test_case")
 
     async def save_test_cases(self, project_slug: str, feature_name: str, test_cases: list[dict]) -> None:
-        counts = {
-            "test_case_count": len(test_cases),
-            "pending_test_case_count": sum(1 for t in test_cases if t.get("status") == "pending"),
-        }
-        await self._save_items(project_slug, feature_name, "test_case", test_cases, counts)
+        _ensure_case_ids(test_cases)
+        await self._save_items(project_slug, feature_name, "test_case", test_cases, _test_case_counts(test_cases))
+
+    async def mutate_test_cases(self, project_slug: str, feature_name: str, mutate) -> list[dict]:
+        """Read-modify-write of the feature's test cases under the feature lock.
+
+        ``mutate`` gets the current list (every case has an ``id``) and returns
+        the new one, so an edit prepared during a long assistant run is applied
+        to the list as it is now, not to an earlier snapshot.
+        """
+        async with self._sf().begin() as session:
+            row = await self._project_and_feature(session, project_slug, feature_name, for_update=True)
+            if row is None:
+                raise ValueError("Фича не найдена")
+            items = (await session.execute(select(AnalysisItem.data).where(
+                AnalysisItem.feature_id == row.id, AnalysisItem.kind == "test_case",
+            ).order_by(AnalysisItem.position))).scalars().all()
+            cases = [dict(item) for item in items]
+            _ensure_case_ids(cases)
+            cases = mutate(cases)
+            _ensure_case_ids(cases)
+            await self._replace_items(session, row.id, "test_case", cases)
+            row.data = {**row.data, **_test_case_counts(cases)}
+            return cases
 
     async def get_bugs(self, project_slug: str, feature_name: str) -> list[dict]:
         return await self._get_items(project_slug, feature_name, "bug")
@@ -687,6 +733,238 @@ class ProjectStore:
                 return
             await self._replace_items(session, row.id, kind, items)
             row.data = {**row.data, **counts}
+
+    # ------------------------------------------------------------------
+    # Test-case assistant (sessions + turns)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _assistant_session_dict(row: AssistantSession) -> dict:
+        return {
+            "id": row.session_id,
+            "title": row.title,
+            "author": row.author,
+            "created_at": _iso(row.created_at),
+            "updated_at": _iso(row.updated_at),
+        }
+
+    @staticmethod
+    def _assistant_turn_dict(row: AssistantTurn, session_id: str) -> dict:
+        return {
+            **row.data,
+            "id": row.turn_id,
+            "session_id": session_id,
+            "status": row.status,
+            "created_at": _iso(row.created_at),
+        }
+
+    async def _assistant_session_row(
+        self, session: AsyncSession, project_slug: str, feature_name: str, session_id: str,
+        *, for_update: bool = False,
+    ) -> AssistantSession | None:
+        feature = await self._project_and_feature(session, project_slug, feature_name)
+        if feature is None:
+            return None
+        stmt = select(AssistantSession).where(
+            AssistantSession.feature_id == feature.id, AssistantSession.session_id == session_id,
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def _assistant_turn_row(
+        self, session: AsyncSession, project_slug: str, feature_name: str, turn_id: str,
+    ) -> tuple[AssistantTurn, AssistantSession] | None:
+        """The turn locked for update, checked to belong to this feature."""
+        feature = await self._project_and_feature(session, project_slug, feature_name)
+        if feature is None:
+            return None
+        found = (await session.execute(
+            select(AssistantTurn, AssistantSession)
+            .join(AssistantSession, AssistantSession.id == AssistantTurn.session_pk)
+            .where(AssistantSession.feature_id == feature.id, AssistantTurn.turn_id == turn_id)
+            .with_for_update(of=AssistantTurn)
+        )).first()
+        return (found[0], found[1]) if found else None
+
+    async def list_assistant_sessions(self, project_slug: str, feature_name: str) -> list[dict]:
+        """Sessions of the feature, most recently used first, with activity state."""
+        async with self._sf()() as session:
+            feature = await self._project_and_feature(session, project_slug, feature_name)
+            if feature is None:
+                return []
+            rows = (await session.execute(
+                select(AssistantSession).where(AssistantSession.feature_id == feature.id)
+                .order_by(AssistantSession.updated_at.desc(), AssistantSession.id.desc())
+            )).scalars().all()
+            turns = (await session.execute(
+                select(AssistantTurn.session_pk, AssistantTurn.status)
+                .where(AssistantTurn.session_pk.in_([r.id for r in rows]))
+            )).all() if rows else []
+        statuses: dict[int, list[str]] = {}
+        for session_pk, status in turns:
+            statuses.setdefault(session_pk, []).append(status)
+        result = []
+        for row in rows:
+            own = statuses.get(row.id, [])
+            state = "running" if "running" in own else "queued" if "queued" in own else "idle"
+            result.append({**self._assistant_session_dict(row), "turn_count": len(own), "state": state})
+        return result
+
+    async def create_assistant_session(
+        self, project_slug: str, feature_name: str, *, title: str, author: str | None,
+    ) -> dict | None:
+        async with self._sf().begin() as session:
+            feature = await self._project_and_feature(session, project_slug, feature_name)
+            if feature is None:
+                return None
+            now = datetime.now(UTC)
+            row = AssistantSession(
+                feature_id=feature.id, session_id=uuid.uuid4().hex, title=title, author=author,
+                created_at=now, updated_at=now,
+            )
+            session.add(row)
+            await session.flush()
+            return {**self._assistant_session_dict(row), "turn_count": 0, "state": "idle"}
+
+    async def get_assistant_session(self, project_slug: str, feature_name: str, session_id: str) -> dict | None:
+        """The session with all its turns in order, or None."""
+        async with self._sf()() as session:
+            row = await self._assistant_session_row(session, project_slug, feature_name, session_id)
+            if row is None:
+                return None
+            turns = (await session.execute(
+                select(AssistantTurn).where(AssistantTurn.session_pk == row.id).order_by(AssistantTurn.id)
+            )).scalars().all()
+            return {
+                **self._assistant_session_dict(row),
+                "turns": [self._assistant_turn_dict(t, row.session_id) for t in turns],
+            }
+
+    async def rename_assistant_session(
+        self, project_slug: str, feature_name: str, session_id: str, title: str,
+    ) -> bool:
+        async with self._sf().begin() as session:
+            row = await self._assistant_session_row(session, project_slug, feature_name, session_id, for_update=True)
+            if row is None:
+                return False
+            row.title = title
+            return True
+
+    async def delete_assistant_session(self, project_slug: str, feature_name: str, session_id: str) -> bool:
+        """Delete a session unless one of its turns is being processed."""
+        async with self._sf().begin() as session:
+            row = await self._assistant_session_row(session, project_slug, feature_name, session_id, for_update=True)
+            if row is None:
+                return False
+            busy = (await session.execute(
+                select(AssistantTurn.id).where(
+                    AssistantTurn.session_pk == row.id, AssistantTurn.status == "running",
+                ).limit(1)
+            )).first()
+            if busy is not None:
+                raise ValueError("Ассистент ещё работает в этой сессии")
+            await session.delete(row)
+            return True
+
+    async def add_assistant_turn(
+        self, project_slug: str, feature_name: str, session_id: str, data: dict,
+    ) -> dict | None:
+        """Queue a tester's message; the feature worker picks turns up in order."""
+        async with self._sf().begin() as session:
+            row = await self._assistant_session_row(session, project_slug, feature_name, session_id, for_update=True)
+            if row is None:
+                return None
+            now = datetime.now(UTC)
+            turn = AssistantTurn(
+                session_pk=row.id, turn_id=uuid.uuid4().hex, status="queued", data=data, created_at=now,
+            )
+            session.add(turn)
+            row.updated_at = now
+            await session.flush()
+            return self._assistant_turn_dict(turn, row.session_id)
+
+    async def get_assistant_turn(self, project_slug: str, feature_name: str, turn_id: str) -> dict | None:
+        async with self._sf().begin() as session:
+            found = await self._assistant_turn_row(session, project_slug, feature_name, turn_id)
+            if found is None:
+                return None
+            return self._assistant_turn_dict(found[0], found[1].session_id)
+
+    async def claim_assistant_turn(self, project_slug: str, feature_name: str) -> dict | None:
+        """Take the oldest queued turn of the feature and mark it running."""
+        async with self._sf().begin() as session:
+            feature = await self._project_and_feature(session, project_slug, feature_name)
+            if feature is None:
+                return None
+            found = (await session.execute(
+                select(AssistantTurn, AssistantSession)
+                .join(AssistantSession, AssistantSession.id == AssistantTurn.session_pk)
+                .where(AssistantSession.feature_id == feature.id, AssistantTurn.status == "queued")
+                .order_by(AssistantTurn.id).limit(1)
+                .with_for_update(of=AssistantTurn, skip_locked=True)
+            )).first()
+            if found is None:
+                return None
+            turn, owner = found
+            turn.status = "running"
+            turn.data = {**turn.data, "started_at": datetime.now(UTC).isoformat()}
+            return self._assistant_turn_dict(turn, owner.session_id)
+
+    async def update_assistant_turn(
+        self, project_slug: str, feature_name: str, turn_id: str, *,
+        status: str | None = None, patch: dict | None = None, mutate=None, only_status: str | None = None,
+    ) -> dict | None:
+        """Merge ``patch`` into the turn (or apply ``mutate(data) -> data``) under a row lock.
+
+        ``only_status`` makes the update conditional, so a late progress write
+        cannot reopen a turn that was already cancelled or finished.
+        """
+        async with self._sf().begin() as session:
+            found = await self._assistant_turn_row(session, project_slug, feature_name, turn_id)
+            if found is None:
+                return None
+            turn, owner = found
+            if only_status is not None and turn.status != only_status:
+                return None
+            data = dict(turn.data)
+            if mutate is not None:
+                data = mutate(copy.deepcopy(data))
+            if patch:
+                data.update(patch)
+            turn.data = data
+            if status is not None:
+                turn.status = status
+                owner.updated_at = datetime.now(UTC)
+            return self._assistant_turn_dict(turn, owner.session_id)
+
+    async def delete_assistant_turn(self, project_slug: str, feature_name: str, turn_id: str) -> bool:
+        """Remove a message that is still waiting in the queue."""
+        async with self._sf().begin() as session:
+            found = await self._assistant_turn_row(session, project_slug, feature_name, turn_id)
+            if found is None or found[0].status != "queued":
+                return False
+            await session.delete(found[0])
+            return True
+
+    async def assistant_activity(self, project_slug: str, feature_name: str) -> dict:
+        """Ids of the feature's running and queued turns (oldest first)."""
+        async with self._sf()() as session:
+            feature = await self._project_and_feature(session, project_slug, feature_name)
+            if feature is None:
+                return {"running": [], "queued": []}
+            rows = (await session.execute(
+                select(AssistantTurn.turn_id, AssistantTurn.status)
+                .join(AssistantSession, AssistantSession.id == AssistantTurn.session_pk)
+                .where(
+                    AssistantSession.feature_id == feature.id,
+                    AssistantTurn.status.in_(("running", "queued")),
+                ).order_by(AssistantTurn.id)
+            )).all()
+        return {
+            "running": [turn_id for turn_id, status in rows if status == "running"],
+            "queued": [turn_id for turn_id, status in rows if status == "queued"],
+        }
 
     # ------------------------------------------------------------------
     # Dependencies

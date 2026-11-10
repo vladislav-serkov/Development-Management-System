@@ -172,12 +172,15 @@ async def fetch_table_columns(schema: str, tables: list[str]) -> dict[str, list[
     return out
 
 
-async def execute_sql(sql: str) -> dict[str, Any]:
+async def execute_sql(sql: str, *, readonly: bool = False) -> dict[str, Any]:
     """Run a SQL script on the test DB; one transaction, rollback on any error.
 
     Returns per-statement results: command status for DML, rows (capped at
     MAX_ROWS) for row-returning statements. Errors come back in the payload
     (not as exceptions) so the UI can show which statement failed.
+
+    ``readonly`` opens a READ ONLY transaction: the database itself rejects
+    any write, whatever the statements look like.
     """
     statements = split_sql_statements(sql)
     if not statements:
@@ -205,7 +208,7 @@ async def execute_sql(sql: str) -> dict[str, Any]:
 
     try:
         try:
-            async with conn.transaction():
+            async with conn.transaction(readonly=readonly):
                 for idx, stmt in enumerate(statements):
                     if _returns_rows(stmt):
                         rows = await conn.fetch(stmt)
