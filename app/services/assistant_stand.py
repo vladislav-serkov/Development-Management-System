@@ -250,8 +250,8 @@ class Stand:
             entry["summary"] = f"{count} {_plural(count, 'запрос', 'запроса', 'запросов')} · {result['duration_ms']} мс"
             self.applied_sql[normalize_sql(sql)] = entry
         else:
-            last = result["results"][-1]
-            entry["summary"] = str(last["status"])
+            # One status per statement: the last one alone hides what earlier reads found
+            entry["summary"] = _first_line("; ".join(str(res["status"]) for res in result["results"]))
         return entry
 
     async def run_http(

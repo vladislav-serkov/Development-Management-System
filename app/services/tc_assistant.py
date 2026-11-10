@@ -156,6 +156,13 @@ def _stand_text(caps: dict) -> str:
             else "Запись запрещена: неизвестно, в какие схемы пишет эта фича."
         )
         lines.append(f"- Тестовая БД {caps['database'] or ''}: чтение доступно. {write}")
+        if len(schemas) > 1:
+            # Seen on the stand: an adapter's tables live in another service's schema,
+            # while the feature context names the (non-existent) schema of the service
+            lines.append(
+                "  Кейсы этой фичи пишут не только в схему сервиса. Схемы, названной в описании фичи, на стенде "
+                "может не быть — в каких схемах лежат таблицы, сверяй по SQL кейсов и information_schema."
+            )
     else:
         lines.append(
             "- Тестовая БД не подключена: действия sql недоступны, правки SQL сохраняются без проверки на стенде."
