@@ -61,7 +61,7 @@ async def test_export_import_zip(client, store):
 
 
 async def test_task_log_lists_every_task_kind(client, store):
-    """Regression: bug_fix / autotest_gen / implement tasks (target service/repo)
+    """Regression: bug_fix / dsl_script / implement tasks (target service/repo)
     made the whole task log fail validation with HTTP 500."""
     await client.post("/projects/", json={"name": "Tasks"})
     for kind, target_type in [
@@ -69,16 +69,17 @@ async def test_task_log_lists_every_task_kind(client, store):
         ("gaps", "feature"),
         ("implement", "service"),
         ("bug_fix", "service"),
-        ("autotest_gen", "repo"),
+        ("dsl_script", "repo"),
+        ("autotest_gen", "repo"),  # rows of the removed Java-autotest flow stay in the log
     ]:
         task = await store.create_task("tasks", kind=kind, target_type=target_type, target_id=f"t-{kind}")
         await store.finish_task("tasks", task["id"], status="done")
 
     r = await client.get("/projects/tasks/tasks")
     assert r.status_code == 200
-    assert {t["kind"] for t in r.json()["tasks"]} == {"extraction", "gaps", "implement", "bug_fix", "autotest_gen"}
+    assert {t["kind"] for t in r.json()["tasks"]} == {"extraction", "gaps", "implement", "bug_fix", "dsl_script", "autotest_gen"}
 
-    r = await client.get("/projects/tasks/tasks", params={"kind": "autotest_gen"})
+    r = await client.get("/projects/tasks/tasks", params={"kind": "dsl_script"})
     assert r.status_code == 200
     assert [t["target_type"] for t in r.json()["tasks"]] == ["repo"]
 

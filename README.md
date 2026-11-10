@@ -1,6 +1,6 @@
 # Extract Agent
 
-AI-powered web platform that extracts structured feature specifications from Confluence pages using the local Codex SDK with ChatGPT authentication, then generates gaps analysis, test cases, bug reports, and dependency enrichments. Local Codex SDK jobs analyze business gaps in original specifications, fix bugs, generate Java autotests, and implement feature tasks in service repositories.
+AI-powered web platform that extracts structured feature specifications from Confluence pages using the local Codex SDK with ChatGPT authentication, then generates gaps analysis, test cases, bug reports, and dependency enrichments. Local Codex SDK jobs analyze business gaps in original specifications, fix bugs, write ru-dsl-v2 test scenarios for accepted test cases, and implement feature tasks in service repositories.
 
 ## Stack
 
@@ -190,7 +190,7 @@ deploy/nginx.conf         Alternative Docker production nginx configuration
 - `.context/` import copies data into a new database project and remembers its source path. Writing back requires an explicit export; there is no live file synchronization. ZIP import/export uses the same layout and is not a complete database backup.
 - Spec tables are parsed deterministically and preserve original columns and contents. The LLM classifies tables and extracts logic; all API calls go through `app/services/codex_client.py`.
 - Long LLM/agent jobs run through `task_manager.launch()` with persisted task status and frontend polling. The in-memory task registry is per process; the published app uses one worker.
-- Bug fixing, autotest generation, and feature implementation use `openai-codex` (`AsyncCodex`) through `app/services/agent_runner.py`. All AI workflows reuse the local ChatGPT login and share one subscription queue.
+- Bug fixing, ru-dsl script generation, and feature implementation use `openai-codex` (`AsyncCodex`) through `app/services/agent_runner.py`. All AI workflows reuse the local ChatGPT login and share one subscription queue.
 
 ## Personal coding jobs (Codex subscription)
 
@@ -202,8 +202,8 @@ codex login
 codex login status
 ```
 
-`CODEX_ENABLED=true` enables all AI workflows (default). Set `AUTOTESTS_REPO_DIR` for
-Java autotests and `REPOS_DIRS` for bug fixing/feature implementation. No Codex
+`CODEX_ENABLED=true` enables all AI workflows (default). Set `RU_DSL_REPO_DIR` (a ru-dsl-v2
+clone) for test scenarios of accepted cases and `REPOS_DIRS` for bug fixing/feature implementation. No Codex
 token belongs in `.env`; the runner requires ChatGPT authentication and never
 falls back to API-key billing. Existing `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CLI`
 settings are accepted for compatibility but no longer used.

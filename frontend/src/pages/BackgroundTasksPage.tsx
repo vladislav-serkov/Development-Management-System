@@ -21,6 +21,7 @@ const KIND_LABELS: Record<TaskKind, string> = {
   implement: "Реализация",
   bugs: "Баг-репорт",
   bug_fix: "Исправление бага",
+  dsl_script: "Скрипт ru-dsl",
   autotest_gen: "Автотест",
 }
 
@@ -34,6 +35,7 @@ const KIND_ICONS: Record<TaskKind, typeof FileText> = {
   implement: Code2,
   bugs: Bug,
   bug_fix: Bug,
+  dsl_script: Bot,
   autotest_gen: Bot,
 }
 
@@ -244,7 +246,7 @@ export default function BackgroundTasksPage() {
                   { value: "enrichment", label: "Обогащение" },
                   { value: "bugs", label: "Баг-репорт" },
                   { value: "bug_fix", label: "Исправление бага" },
-                  { value: "autotest_gen", label: "Автотест" },
+                  { value: "dsl_script", label: "Скрипт ru-dsl" },
                 ]}
                 onChange={(v) => setKindFilter(v as KindFilter)}
               />

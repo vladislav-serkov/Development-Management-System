@@ -136,6 +136,8 @@ export type TaskKind =
   | "implement"
   | "bugs"
   | "bug_fix"
+  | "dsl_script"
+  /** legacy rows: Java autotests, replaced by dsl_script */
   | "autotest_gen"
 export type TaskStatus = "running" | "done" | "error"
 export type TaskTargetType = "document" | "feature" | "dependency" | "service" | "repo"
@@ -544,10 +546,15 @@ export interface TestCaseItem {
   kafka_message: { key: string; value: string } | null
   sql_setup: string | null
   mock_config: string | null
-  autotest_status?: "queued" | "running" | "generated" | "failed" | null
-  autotest_mr_url?: string | null
-  autotest_summary?: string | null
-  autotest_error?: string | null
+  /** ru-dsl-v2 scenario written for the accepted case */
+  script_status?: "queued" | "running" | "generated" | "failed" | null
+  script_mr_url?: string | null
+  script_summary?: string | null
+  script_error?: string | null
+  /** .feature file in the ru-dsl-v2 repo */
+  script_path?: string | null
+  /** the scenario as committed; null if it could not be read back */
+  script_text?: string | null
 }
 
 export interface TestCasesResponse {

@@ -16,7 +16,8 @@ class TaskKind(str, Enum):
     implement = "implement"
     bugs = "bugs"
     bug_fix = "bug_fix"
-    autotest_gen = "autotest_gen"
+    dsl_script = "dsl_script"
+    autotest_gen = "autotest_gen"  # legacy rows: Java autotests, replaced by dsl_script
 
 
 class TaskStatus(str, Enum):

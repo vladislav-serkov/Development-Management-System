@@ -28,14 +28,14 @@ export async function deleteTestCase(projectSlug: string, featureName: string, t
   return res.json()
 }
 
-export async function requestAutotest(projectSlug: string, featureName: string, tcIndex: number): Promise<{ test_cases: TestCaseItem[] }> {
+export async function requestScript(projectSlug: string, featureName: string, tcIndex: number): Promise<{ test_cases: TestCaseItem[] }> {
   const res = await apiFetch(
-    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}/autotest`,
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}/script`,
     { method: "POST" }
   )
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(body.detail || `Autotest request failed: ${res.status}`)
+    throw new Error(body.detail || `Script request failed: ${res.status}`)
   }
   return res.json()
 }

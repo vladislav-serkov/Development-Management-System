@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useRequestAutotest } from "@/hooks/useTestCases"
+import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useRequestScript } from "@/hooks/useTestCases"
 import { useFeatureBugs, useGenerateBug } from "@/hooks/useBugs"
 import { useExecuteSql, useTestDbStatus } from "@/hooks/useTestDb"
 import { Badge } from "@/components/ui/badge"
@@ -155,7 +155,7 @@ function TestCaseCard({
   const generateBugMut = useGenerateBug(projectSlug, featureName)
   const { data: bugsData } = useFeatureBugs(projectSlug, featureName)
   const bugGenerating = generateBugMut.isPending || !!bugsData?.bugs_running
-  const autotestMut = useRequestAutotest(projectSlug, featureName)
+  const scriptMut = useRequestScript(projectSlug, featureName)
   const attachToAssistant = useAssistantStore((s) => s.attach)
   const [showBugForm, setShowBugForm] = useState(false)
   const [bugComment, setBugComment] = useState("")
@@ -286,25 +286,33 @@ function TestCaseCard({
         </div>
       </div>
 
-      {tc.autotest_status && (
+      {(tc.script_status || tc.status === "approved") && (
         <div className="flex flex-wrap items-center gap-2.5 border-t border-border/50 bg-muted/[0.12] px-4 py-2 text-[0.75rem] md:px-5">
-          {tc.autotest_status === "queued" && (
+          {!tc.script_status && (
+            <>
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <Bot className="h-3.5 w-3.5" /> Скрипт ru-dsl не создан
+              </span>
+              <ScriptRequestButton label="Сгенерировать" pending={scriptMut.isPending} disabled={isBusy} onClick={() => scriptMut.mutate(index)} />
+            </>
+          )}
+          {tc.script_status === "queued" && (
             <span className="flex items-center gap-1.5 text-muted-foreground">
-              <Bot className="h-3.5 w-3.5" /> Автотест: в очереди
+              <Bot className="h-3.5 w-3.5" /> Скрипт ru-dsl: в очереди
             </span>
           )}
-          {tc.autotest_status === "running" && (
+          {tc.script_status === "running" && (
             <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Codex пишет автотест…
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Codex пишет скрипт ru-dsl…
             </span>
           )}
-          {tc.autotest_status === "generated" && (
+          {tc.script_status === "generated" && (
             <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
               <Bot className="h-3.5 w-3.5" />
-              Автотест готов
-              {tc.autotest_mr_url && (
+              Скрипт ru-dsl готов
+              {tc.script_mr_url && (
                 <a
-                  href={tc.autotest_mr_url}
+                  href={tc.script_mr_url}
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
@@ -313,26 +321,22 @@ function TestCaseCard({
                   MR
                 </a>
               )}
-              {tc.autotest_summary && <span className="text-foreground/60">— {tc.autotest_summary}</span>}
+              {tc.script_summary && <span className="text-foreground/60">— {tc.script_summary}</span>}
             </span>
           )}
-          {tc.autotest_status === "failed" && (
+          {tc.script_status === "failed" && (
             <>
               <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
                 <Bot className="h-3.5 w-3.5" />
-                Автотест не создан{tc.autotest_error ? `: ${tc.autotest_error}` : ""}
+                Скрипт ru-dsl не создан{tc.script_error ? `: ${tc.script_error}` : ""}
               </span>
-              <button
-                className="rounded-md border border-border px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
-                onClick={(e) => { e.stopPropagation(); autotestMut.mutate(index) }}
-                disabled={isBusy || autotestMut.isPending}
-              >
-                {autotestMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Повторить"}
-              </button>
+              {tc.status === "approved" && (
+                <ScriptRequestButton label="Повторить" pending={scriptMut.isPending} disabled={isBusy} onClick={() => scriptMut.mutate(index)} />
+              )}
             </>
           )}
-          {autotestMut.error && (
-            <span className="text-destructive">{(autotestMut.error as Error).message}</span>
+          {scriptMut.error && (
+            <span className="text-destructive">{(scriptMut.error as Error).message}</span>
           )}
         </div>
       )}
@@ -387,6 +391,19 @@ function TestCaseCard({
           </TestCaseSection>
 
           <ArtifactsSection tc={tc} projectSlug={projectSlug} featureName={featureName} />
+
+          {tc.script_text && (
+            <TestCaseSection title="Скрипт ru-dsl" surface>
+              <div className="space-y-2.5">
+                <ArtifactHead
+                  badge={<TypeBadge label="RU-DSL" className={ARTIFACT_BADGE.DSL} />}
+                  target={tc.script_path?.split("/").pop()}
+                  chips={tc.script_path ? <MetaChip mono title={tc.script_path}>{tc.script_path}</MetaChip> : undefined}
+                />
+                <CodeBlock value={tc.script_text} />
+              </div>
+            </TestCaseSection>
+          )}
 
           {tc.status === "pending" && showBugForm && (
             <div className="rounded-xl border border-red-200/70 bg-red-50/40 p-3 dark:border-red-900/40 dark:bg-red-950/10">
@@ -459,6 +476,18 @@ function TestCaseCard({
         </div>
       )}
     </article>
+  )
+}
+
+function ScriptRequestButton({ label, pending, disabled, onClick }: { label: string; pending: boolean; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      className="rounded-md border border-border px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+      onClick={(e) => { e.stopPropagation(); onClick() }}
+      disabled={disabled || pending}
+    >
+      {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : label}
+    </button>
   )
 }
 

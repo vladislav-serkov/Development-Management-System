@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Path
 
 from app.config import settings
 from app.schemas.test_cases import TestCaseAskRequest, TestCaseReviewRequest
-from app.services import autotest_generator
+from app.services import dsl_script_generator
 from app.services.task_manager import task_manager
 from app.services.test_cases import (
     _check_enrichment_gate,
@@ -171,30 +171,35 @@ async def review_test_case(
     logger.info("review_test_case: project=%s, feature=%s, index=%d, status=%s", project_slug, feature_name, tc_index, body.status)
     test_cases[tc_index]["status"] = body.status
     test_cases[tc_index]["analyst_text"] = body.analyst_text
+    # Taken back before its turn came: the script is written for accepted cases only
+    if body.status != "approved" and test_cases[tc_index].get("script_status") == "queued":
+        test_cases[tc_index]["script_status"] = None
 
     await store.save_test_cases(project_slug, feature_name, test_cases)
 
-    # An accepted test case becomes an autotest — hand it to the generator right away
-    if body.status == "approved" and settings.autotest_auto and autotest_generator.is_configured():
+    # An accepted test case becomes a ru-dsl scenario — hand it to the generator right away
+    if body.status == "approved" and settings.dsl_script_auto and dsl_script_generator.is_configured():
         try:
-            await autotest_generator.request_generation(store, project_slug, feature_name, tc_index)
-        except autotest_generator.AutotestError as exc:
-            logger.warning("review_test_case: autotest not queued: %s", exc)
-            test_cases = await store.get_test_cases(project_slug, feature_name)
-            test_cases[tc_index]["autotest_status"] = "failed"
-            test_cases[tc_index]["autotest_error"] = str(exc)
-            await store.save_test_cases(project_slug, feature_name, test_cases)
+            await dsl_script_generator.request_generation(store, project_slug, feature_name, tc_index)
+        except dsl_script_generator.ScriptActiveError:
+            pass  # accepted again while its script is still being written
+        except dsl_script_generator.ScriptError as exc:
+            logger.warning("review_test_case: ru-dsl script not queued: %s", exc)
+            await dsl_script_generator.update_case(
+                store, project_slug, feature_name, test_cases[tc_index]["id"],
+                script_status="failed", script_error=str(exc),
+            )
 
     return {"test_cases": await store.get_test_cases(project_slug, feature_name)}
 
 
-@router.post("/{tc_index}/autotest")
-async def generate_autotest(
+@router.post("/{tc_index}/script")
+async def generate_script(
     project_slug: str,
     feature_name: str,
     tc_index: int = Path(..., description="Zero-based index of test case in the list"),
 ):
-    """Queue a headless Codex run that writes a Java autotest for the accepted case."""
+    """Queue a headless Codex run that writes a ru-dsl scenario for the accepted case."""
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise HTTPException(
@@ -204,11 +209,11 @@ async def generate_autotest(
     feature_name = feature["name"]
 
     try:
-        await autotest_generator.request_generation(store, project_slug, feature_name, tc_index)
-    except autotest_generator.AutotestError as exc:
+        await dsl_script_generator.request_generation(store, project_slug, feature_name, tc_index)
+    except dsl_script_generator.ScriptError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    logger.info("generate_autotest: project=%s, feature=%s, index=%d", project_slug, feature_name, tc_index)
+    logger.info("generate_script: project=%s, feature=%s, index=%d", project_slug, feature_name, tc_index)
     return {"test_cases": await store.get_test_cases(project_slug, feature_name)}
 
 
