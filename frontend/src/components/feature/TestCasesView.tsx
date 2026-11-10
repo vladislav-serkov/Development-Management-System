@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useAskTestCase, useRequestAutotest } from "@/hooks/useTestCases"
+import { useEffect, useState } from "react"
+import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useRequestAutotest } from "@/hooks/useTestCases"
 import { useFeatureBugs, useGenerateBug } from "@/hooks/useBugs"
 import { useExecuteSql, useTestDbStatus } from "@/hooks/useTestDb"
 import { Badge } from "@/components/ui/badge"
@@ -13,9 +13,10 @@ import { CurlArtifact } from "@/components/feature/CurlArtifact"
 import { MockArtifact } from "@/components/feature/MockArtifact"
 import { ArtifactHead, CodeBlock, CopyButton, MetaChip, TypeBadge } from "@/components/feature/artifact-ui"
 import { ARTIFACT_BADGE } from "@/lib/artifacts"
-import { Bot, Check, ChevronDown, ChevronUp, Equal, Loader2, Play, Search, Sparkles, X } from "lucide-react"
+import { Bot, Check, ChevronDown, ChevronUp, Equal, Loader2, MessageSquare, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { countLabel } from "@/lib/plural"
+import { assistantKey, useAssistantStore } from "@/stores/assistantStore"
 import type { TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
 
 const ARTIFACTS = [
@@ -155,6 +156,7 @@ function TestCaseCard({
   const { data: bugsData } = useFeatureBugs(projectSlug, featureName)
   const bugGenerating = generateBugMut.isPending || !!bugsData?.bugs_running
   const autotestMut = useRequestAutotest(projectSlug, featureName)
+  const attachToAssistant = useAssistantStore((s) => s.attach)
   const [showBugForm, setShowBugForm] = useState(false)
   const [bugComment, setBugComment] = useState("")
 
@@ -231,6 +233,8 @@ function TestCaseCard({
           <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <p className={cn("text-[0.875rem] font-medium leading-[1.5] text-foreground", isOpen ? "font-semibold" : "line-clamp-1")}>
+                {/* The number the assistant uses to refer to this case */}
+                <span className="mr-1.5 font-mono text-[0.75rem] font-normal tabular-nums text-muted-foreground">#{index + 1}</span>
                 <RichText text={tc.name} />
               </p>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
@@ -439,7 +443,16 @@ function TestCaseCard({
               </Button>
             )}
 
-            <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-red-600" onClick={() => deleteMut.mutate(index)} disabled={isBusy}>
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-auto"
+              onClick={() => attachToAssistant(assistantKey(projectSlug, featureName), { kind: "case", case_id: tc.id })}
+            >
+              <MessageSquare />
+              Обсудить
+            </Button>
+            <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-red-600" onClick={() => deleteMut.mutate(index)} disabled={isBusy}>
               Удалить кейс
             </Button>
           </div>
@@ -536,7 +549,7 @@ function countSqlStatements(sql: string) {
   return sql.split(";").filter((s) => s.trim()).length
 }
 
-function SqlArtifact({ value }: { value: string }) {
+function SqlArtifact({ value, onFix }: { value: string; onFix: (result: SqlExecuteResponse) => void }) {
   const { data: dbStatus } = useTestDbStatus()
   const execMut = useExecuteSql()
   const statements = countSqlStatements(value)
@@ -577,6 +590,17 @@ function SqlArtifact({ value }: { value: string }) {
         <p className="whitespace-pre-wrap break-words text-[0.75rem] text-destructive">{(execMut.error as Error).message}</p>
       )}
       {execMut.data && <SqlRunResults result={execMut.data} />}
+      {execMut.data?.error && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => onFix(execMut.data)}>
+            <Sparkles />
+            Исправить с ассистентом
+          </Button>
+          <span className="text-[0.75rem] text-muted-foreground">
+            Ассистент разберётся, исправит скрипт и выполнит его сам
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -598,6 +622,9 @@ function KafkaArtifact({ message }: { message: { key: string; value: string } })
 function ArtifactsSection({ tc, projectSlug, featureName }: { tc: TestCaseItem; projectSlug: string; featureName: string }) {
   const available = ARTIFACTS.filter((artifact) => tc[artifact.key as keyof TestCaseItem])
   const [active, setActive] = useState<string>(available[0]?.key ?? "")
+  const attach = useAssistantStore((s) => s.attach)
+  const sendNow = useAssistantStore((s) => s.sendNow)
+  const key = assistantKey(projectSlug, featureName)
   if (available.length === 0) return null
   const current = available.some((a) => a.key === active) ? active : available[0].key
 
@@ -620,12 +647,54 @@ function ArtifactsSection({ tc, projectSlug, featureName }: { tc: TestCaseItem; 
         </div>
       )}
 
+      {/* Keyed by content: after the assistant edits an artifact, the old run result must not linger under it */}
       {current === "curl_command" && tc.curl_command && (
-        <CurlArtifact value={tc.curl_command} projectSlug={projectSlug} featureName={featureName} />
+        <CurlArtifact
+          key={tc.curl_command}
+          value={tc.curl_command}
+          projectSlug={projectSlug}
+          featureName={featureName}
+          onDiscuss={(result) =>
+            attach(
+              key,
+              {
+                kind: "http_result",
+                case_id: tc.id,
+                status_code: result.status_code,
+                reason: result.reason,
+                url: result.url,
+                body: result.body,
+                error: result.error,
+              },
+              "Посмотри, почему стенд так ответил на запрос",
+            )
+          }
+        />
       )}
       {current === "kafka_message" && tc.kafka_message && <KafkaArtifact message={tc.kafka_message} />}
-      {current === "sql_setup" && tc.sql_setup && <SqlArtifact value={tc.sql_setup} />}
-      {current === "mock_config" && tc.mock_config && <MockArtifact key={tc.mock_config} value={tc.mock_config} />}
+      {current === "sql_setup" && tc.sql_setup && (
+        <SqlArtifact
+          key={tc.sql_setup}
+          value={tc.sql_setup}
+          onFix={(result) =>
+            sendNow(key, "Посмотри, почему SQL не выполнился на стенде, и исправь его", {
+              kind: "sql_error",
+              case_id: tc.id,
+              error: result.error,
+              failed_statement: result.failed_statement,
+            })
+          }
+        />
+      )}
+      {current === "mock_config" && tc.mock_config && (
+        <MockArtifact
+          key={tc.mock_config}
+          value={tc.mock_config}
+          onDiscuss={(error) =>
+            attach(key, { kind: "mock_error", case_id: tc.id, error }, "Посмотри, почему мок не загрузился")
+          }
+        />
+      )}
     </TestCaseSection>
   )
 }
@@ -639,16 +708,39 @@ export function TestCasesView({
 }) {
   const { data: tcData, isLoading } = useFeatureTestCases(projectSlug, featureName)
   const runMut = useRunTestCases(projectSlug, featureName)
-  const askMut = useAskTestCase(projectSlug, featureName)
-  const [askText, setAskText] = useState("")
-  const [dismissedAskAt, setDismissedAskAt] = useState<string | null>(null)
+  const assistantOpen = useAssistantStore((s) => s.open)
+  const setAssistantOpen = useAssistantStore((s) => s.setOpen)
+  const caseToOpen = useAssistantStore((s) => s.caseToOpen)
   const [statusFilter, setStatusFilter] = useState<ReviewFilter>("all")
   const [categoryFilter, setCategoryFilter] = useState<TestCaseCategory | "all">("all")
   const [sortMode, setSortMode] = useState<SortMode>("default")
   const [query, setQuery] = useState("")
   const [openCardKey, setOpenCardKey] = useState<number | null>(null)
+  // Requests made before this tab was shown are not replayed
+  const [handledCaseNonce, setHandledCaseNonce] = useState(caseToOpen?.nonce ?? 0)
+  const [scrollTarget, setScrollTarget] = useState<{ idx: number; nonce: number } | null>(null)
 
   const displayTcs = tcData?.test_cases ?? []
+
+  // The assistant panel asked to show a case: open its card (state derived from the request)
+  if (caseToOpen && caseToOpen.nonce !== handledCaseNonce) {
+    setHandledCaseNonce(caseToOpen.nonce)
+    const idx = displayTcs.findIndex((tc) => tc.id === caseToOpen.id)
+    if (idx >= 0) {
+      // Drop filters so the target card is guaranteed to be rendered
+      setStatusFilter("all")
+      setCategoryFilter("all")
+      setQuery("")
+      setOpenCardKey(idx)
+      setScrollTarget({ idx, nonce: caseToOpen.nonce })
+    }
+  }
+
+  useEffect(() => {
+    if (!scrollTarget) return
+    document.getElementById(`tc-card-${scrollTarget.idx}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }, [scrollTarget])
+
   const isRunning = runMut.isPending || Boolean(tcData?.test_cases_running)
   const generationComplete = !isRunning && Boolean(tcData?.test_cases_run_at)
   const reviewedCount = displayTcs.filter((tc) => tc.status !== "pending").length
@@ -697,30 +789,6 @@ export function TestCasesView({
     setOpenCardKey(next?.idx ?? null)
   }
 
-  function openCaseByName(name: string) {
-    const idx = displayTcs.findIndex((tc) => tc.name === name)
-    if (idx < 0) return
-    // Drop filters so the target card is guaranteed to be rendered
-    setStatusFilter("all")
-    setCategoryFilter("all")
-    setQuery("")
-    setOpenCardKey(idx)
-    requestAnimationFrame(() => {
-      document.getElementById(`tc-card-${idx}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
-    })
-  }
-
-  function handleAsk() {
-    const text = askText.trim()
-    if (text.length < 3 || isRunning || askMut.isPending) return
-    askMut.mutate(text, {
-      onSuccess: () => {
-        setAskText("")
-        setDismissedAskAt(null)
-      },
-    })
-  }
-
   const pendingCount = displayTcs.length - reviewedCount
   const categoryCounts = (["validation", "positive", "negative", "edge_case"] as TestCaseCategory[]).map((category) => ({
     category,
@@ -740,6 +808,16 @@ export function TestCasesView({
               { value: bugCount, label: "с багом", tone: bugCount > 0 ? "danger" : "default" },
             ]}
           />
+          <Button
+            size="sm"
+            variant={assistantOpen ? "secondary" : "outline"}
+            aria-pressed={assistantOpen}
+            title="Разобрать ошибку на стенде, заменить тестовые данные, добавить кейс"
+            onClick={() => setAssistantOpen(!assistantOpen)}
+          >
+            <Sparkles />
+            Ассистент
+          </Button>
           {!generationComplete ? (
             <Button size="sm" onClick={() => runMut.mutate()} disabled={isRunning}>
               {isRunning ? (
@@ -768,82 +846,13 @@ export function TestCasesView({
           </div>
         )}
 
-        <form
-          className="flex flex-col gap-2 sm:flex-row sm:items-center"
-          onSubmit={(e) => {
-            e.preventDefault()
-            handleAsk()
-          }}
-        >
-          <div className="relative flex-1">
-            <Sparkles className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={askText}
-              onChange={(e) => setAskText(e.target.value)}
-              placeholder="Нужен кейс на пункт ТЗ — например: «негативные сценарии для шага проверки тарифа»"
-              className="pl-8 text-sm"
-              disabled={askMut.isPending}
-            />
-          </div>
-          <Button size="sm" variant="outline" type="submit" disabled={isRunning || askMut.isPending || askText.trim().length < 3}>
-            {askMut.isPending ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Отправка<AnimatedDots />
-              </>
-            ) : (
-              "Попросить кейс"
-            )}
-          </Button>
-        </form>
       </section>
-
-      {askMut.error && (
-        <p className="text-[0.8125rem] text-destructive">{(askMut.error as Error).message}</p>
-      )}
 
       {isRunning && displayTcs.length > 0 && (
         <p className="flex items-center gap-2 text-[0.8125rem] text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Генерация выполняется — новые кейсы появятся в списке<AnimatedDots />
         </p>
-      )}
-
-      {tcData?.last_ask_message && tcData.last_ask_at !== dismissedAskAt && !isRunning && (
-        <div className="flex items-start justify-between gap-3 rounded-lg border border-blue-200/80 bg-blue-50/50 px-3 py-2 dark:border-blue-900/40 dark:bg-blue-950/10">
-          <div className="min-w-0">
-            <p className="text-[0.8125rem] leading-[1.6] text-foreground/85">
-              <span className="font-semibold">Ответ на запрос кейса:</span> {tcData.last_ask_message}
-            </p>
-            {(() => {
-              const refs = (tcData.last_ask_covered_by ?? []).filter((name) =>
-                displayTcs.some((tc) => tc.name === name)
-              )
-              if (refs.length === 0) return null
-              return (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {refs.map((name) => (
-                    <button
-                      key={name}
-                      onClick={() => openCaseByName(name)}
-                      className="max-w-full truncate rounded-md border border-blue-200/80 bg-background px-2 py-1 text-left text-[0.75rem] text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-100/50 dark:border-blue-900/50 dark:text-blue-300 dark:hover:bg-blue-950/30"
-                      title={name}
-                    >
-                      {name}
-                    </button>
-                  ))}
-                </div>
-              )
-            })()}
-          </div>
-          <button
-            className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-            onClick={() => setDismissedAskAt(tcData.last_ask_at)}
-            aria-label="Скрыть сообщение"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
       )}
 
       {displayTcs.length > 0 && (

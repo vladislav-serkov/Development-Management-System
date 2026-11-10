@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, Loader2, Play } from "lucide-react"
+import { ChevronDown, ChevronRight, Loader2, Play, Sparkles } from "lucide-react"
 import { parseCurl, type CurlParam } from "@/lib/curl"
 import { useExecuteHttpRequest, useTestStandStatus } from "@/hooks/useTestStand"
 import { Button } from "@/components/ui/button"
@@ -89,10 +89,13 @@ export function CurlArtifact({
   value,
   projectSlug,
   featureName,
+  onDiscuss,
 }: {
   value: string
   projectSlug: string
   featureName: string
+  /** Hand the stand's answer to the test-case assistant */
+  onDiscuss?: (result: HttpExecuteResponse) => void
 }) {
   const parsed = useMemo(() => parseCurl(value), [value])
   const { data: stand } = useTestStandStatus(projectSlug, featureName)
@@ -184,6 +187,12 @@ export function CurlArtifact({
         <p className="whitespace-pre-wrap break-words text-[0.8125rem] text-destructive">{(execMut.error as Error).message}</p>
       )}
       {execMut.data && <ResponsePanel result={execMut.data} />}
+      {execMut.data && onDiscuss && (
+        <Button size="sm" variant="outline" onClick={() => onDiscuss(execMut.data)}>
+          <Sparkles />
+          Разобрать с ассистентом
+        </Button>
+      )}
     </div>
   )
 }

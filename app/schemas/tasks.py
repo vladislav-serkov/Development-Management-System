@@ -11,6 +11,7 @@ class TaskKind(str, Enum):
     gaps = "gaps"
     apply_gaps = "apply_gaps"
     test_cases = "test_cases"
+    tc_assistant = "tc_assistant"
     enrichment = "enrichment"
     implement = "implement"
     bugs = "bugs"

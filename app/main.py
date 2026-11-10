@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.routers.assistant import router as assistant_router
 from app.routers.auth import router as auth_router
 from app.routers.auth import store as auth_store
 from app.routers.bugs import router as bugs_router
@@ -89,6 +90,7 @@ app.include_router(documents_router)
 app.include_router(dependencies_router)
 app.include_router(gaps_router)
 app.include_router(test_cases_router)
+app.include_router(assistant_router)
 app.include_router(bugs_router)
 app.include_router(rules_router)
 app.include_router(tasks_router)

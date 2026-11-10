@@ -7,6 +7,7 @@ import re
 import pytest
 
 from app.prompts.enrichment import ENRICHMENT_SCHEMAS
+from app.schemas.assistant import AssistantStep
 from app.schemas.bugs import BugReportResult
 from app.schemas.extraction import (
     DetectedFeature,
@@ -23,7 +24,7 @@ from app.services.codex_client import call_structured, output_schema
 
 ALL_SCHEMAS = [
     FeatureDetectionResult, ApplyResult, GapsAnalysisResult,
-    TestCasePlanResult, TestCaseGenerationResult, TestCaseAskResult, BugReportResult,
+    TestCasePlanResult, TestCaseGenerationResult, TestCaseAskResult, BugReportResult, AssistantStep,
     *[cfg["schema"] for cfg in ENRICHMENT_SCHEMAS.values()],
 ]
 

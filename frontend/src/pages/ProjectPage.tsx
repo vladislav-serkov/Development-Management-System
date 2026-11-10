@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useUIStore } from "@/stores/uiStore"
+import { useAssistantStore } from "@/stores/assistantStore"
 import { useProject, useImportConfluence, useProjectFeatures, useProjectDocuments, useSpecUpdates, useDeleteFeature, useImplementFeature } from "@/hooks/useDocuments"
 import { useProjectDependencies } from "@/hooks/useDependencies"
 import { Badge } from "@/components/ui/badge"
@@ -36,6 +37,9 @@ const BugsView = lazy(() =>
 const DependencyDetail = lazy(() =>
   import("@/components/dependency/DependencyDetail").then((module) => ({ default: module.DependencyDetail }))
 )
+const AssistantPanel = lazy(() =>
+  import("@/components/assistant/AssistantPanel").then((module) => ({ default: module.AssistantPanel }))
+)
 
 export default function ProjectPage() {
   const navigate = useNavigate()
@@ -49,6 +53,7 @@ export default function ProjectPage() {
   const projectSlug = projectSlugParam ?? null
   const sidebarWidth = useUIStore((s) => s.sidebarWidth)
   const setSidebarWidth = useUIStore((s) => s.setSidebarWidth)
+  const assistantOpen = useAssistantStore((s) => s.open)
   const isDragging = useRef(false)
 
   useEffect(() => {
@@ -124,7 +129,7 @@ export default function ProjectPage() {
         onStartDrag={() => { isDragging.current = true }}
       />
 
-      <main className="flex-1 min-h-0 overflow-y-auto p-6">
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6">
         <ProjectContentArea
           key={contentKey}
           projectSlug={projectSlug!}
@@ -143,6 +148,18 @@ export default function ProjectPage() {
           }}
         />
       </main>
+
+      {/* The assistant talks about one feature's test cases, so it lives beside that tab only */}
+      {assistantOpen && selectedFeature && activeFeatureTab === "tests" && (
+        <Suspense fallback={null}>
+          <AssistantPanel
+            key={selectedFeature.name}
+            projectSlug={projectSlug!}
+            featureName={selectedFeature.name}
+            featureTitle={selectedFeature.display_name ?? stripMethodPrefix(selectedFeature.name, selectedFeature.method)}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }

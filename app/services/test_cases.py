@@ -604,17 +604,21 @@ async def _prepare_feature_context(
     project_slug: str,
     feature_name: str,
     store,
+    *,
+    enforce_gate: bool = True,
 ) -> tuple[dict, str, str]:
     """Load the feature, run the enrichment gate and build the shared prompt context.
 
-    Returns (feature, feature_type, shared_context).
+    Returns (feature, feature_type, shared_context). The assistant passes
+    ``enforce_gate=False``: discussing existing cases must not be blocked by a
+    dependency that is not enriched yet.
     """
     feature = await store.get_feature(project_slug, feature_name)
     if feature is None:
         raise ValueError(f"Feature '{feature_name}' not found in project '{project_slug}'")
 
-    # Enrichment gate
-    await _check_enrichment_gate(feature, project_slug, store)
+    if enforce_gate:
+        await _check_enrichment_gate(feature, project_slug, store)
 
     # Build enriched dependency context — only deps used by this feature
     all_deps_by_type = await store.list_dependencies(project_slug)

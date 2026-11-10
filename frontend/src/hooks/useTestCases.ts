@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { fetchTestCases, patchTestCase, deleteTestCase, runTestCases, askTestCase, requestAutotest } from "@/api/test-cases"
+import { fetchTestCases, patchTestCase, deleteTestCase, runTestCases, requestAutotest } from "@/api/test-cases"
 
 export function useFeatureTestCases(projectSlug: string | null, featureName: string | null) {
   return useQuery({
@@ -43,17 +43,6 @@ export function useDeleteTestCase(projectSlug: string, featureName: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (tcIndex: number) => deleteTestCase(projectSlug, featureName, tcIndex),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "test-cases"] })
-      qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
-    },
-  })
-}
-
-export function useAskTestCase(projectSlug: string, featureName: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (request: string) => askTestCase(projectSlug, featureName, request),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features", featureName, "test-cases"] })
       qc.invalidateQueries({ queryKey: ["projects", projectSlug, "features"] })
