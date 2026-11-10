@@ -663,7 +663,7 @@ export interface AssistantOverview {
   stand: {
     sql: boolean
     database: string | null
-    write_schema: string | null
+    write_schemas: string[]
     http: boolean
     service: string | null
     wiremock: boolean

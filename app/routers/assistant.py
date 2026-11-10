@@ -35,7 +35,8 @@ async def assistant_overview(project_slug: str, feature_name: str):
     name = feature["name"]
     # Polling doubles as recovery: queued messages get a worker after a restart
     await tc_assistant.ensure_worker(store, project_slug, name)
-    stand = await tc_assistant.feature_stand(store, project_slug, feature)
+    cases = await store.get_test_cases(project_slug, name)
+    stand = await tc_assistant.feature_stand(store, project_slug, feature, cases)
     return {
         "sessions": await store.list_assistant_sessions(project_slug, name),
         "stand": stand.capabilities(),

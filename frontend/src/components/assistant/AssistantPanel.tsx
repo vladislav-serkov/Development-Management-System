@@ -37,10 +37,11 @@ function standSummary(stand: AssistantOverview["stand"]): string {
     stand.wiremock && "загружает моки",
   ].filter(Boolean)
   if (can.length === 0) return "Стенд не подключён: ассистент работает только с текстом кейсов и ТЗ."
+  const schemas = stand.write_schemas
   const limit = stand.sql
-    ? stand.write_schema
-      ? ` Запись в БД — только в схему ${stand.write_schema}.`
-      : " Записывать в БД не может: неизвестна схема сервиса."
+    ? schemas.length > 0
+      ? ` Запись в БД — только в ${schemas.length === 1 ? "схему" : "схемы"} ${schemas.join(", ")}.`
+      : " Записывать в БД не может: неизвестно, в какие схемы пишет эта фича."
     : ""
   return `Сам ${can.join(", ")}.${limit}`
 }

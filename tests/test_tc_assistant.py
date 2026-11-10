@@ -138,7 +138,7 @@ async def ask(store, text: str, *, session_id=None, attachments=None) -> dict:
     ("INSERT INTO bnpl_payment.plan (id) VALUES (1); -- trailing note; DROP TABLE x", True),
 ])
 def test_sql_within_limits(sql, writes):
-    assert classify_sql(sql, "bnpl_payment") is writes
+    assert classify_sql(sql, {"bnpl_payment"}) is writes
 
 
 @pytest.mark.parametrize("sql", [
@@ -154,13 +154,13 @@ def test_sql_within_limits(sql, writes):
 ])
 def test_sql_outside_limits_is_refused(sql):
     with pytest.raises(SqlNotAllowed):
-        classify_sql(sql, "bnpl_payment")
+        classify_sql(sql, {"bnpl_payment"})
 
 
-def test_writes_refused_when_service_schema_unknown():
-    assert classify_sql("SELECT 1", None) is False
+def test_writes_refused_when_feature_schemas_unknown():
+    assert classify_sql("SELECT 1", set()) is False
     with pytest.raises(SqlNotAllowed):
-        classify_sql("DELETE FROM bnpl_payment.plan", None)
+        classify_sql("DELETE FROM bnpl_payment.plan", set())
 
 
 # --- storage ---------------------------------------------------------------
@@ -257,6 +257,27 @@ async def test_write_outside_service_schema_never_reaches_the_stand(store, agent
     assert "только в схему bnpl_payment" in turn["actions"][0]["summary"]
 
 
+async def test_adapter_feature_may_write_where_its_cases_already_write(store, agent, test_db):
+    """Seen on the real stand: bnpl-mtspay-adapter has no schema of its own, its
+    cases prepare data in bnpl_processing. The assistant must be able to run them."""
+    script, prompts = agent
+    setup = "DELETE FROM bnpl_processing.payment WHERE id = 1;\nINSERT INTO bnpl_processing.payment (id) VALUES (1);"
+    await seed(store, [case("A", sql_setup=setup)])
+    script += [
+        step(actions=[
+            action("sql", "Подготовил данные кейса", case=1, sql=setup),
+            action("sql", "Почистил чужую таблицу", sql="DELETE FROM flp_order.payment"),
+        ]),
+        step(reply="Готово."),
+    ]
+
+    turn = await ask(store, "Выполни SQL кейса #1")
+
+    assert [a["status"] for a in turn["actions"]] == ["ok", "blocked"]
+    assert test_db == [(setup, False)]
+    assert "только в схемы bnpl_payment, bnpl_processing" in prompts[0]
+
+
 async def test_changes_can_be_reverted_and_restored(store, agent, test_db):
     script, _ = agent
     cases = await seed(store, [case("A", preconditions="клиент c-1001"), case("B")])
@@ -333,7 +354,7 @@ async def test_api_message_flow_and_failure(client, store, agent, monkeypatch):
     base = "/projects/p/features/create-plan/assistant"
 
     overview = (await client.get(base)).json()
-    assert overview["sessions"] == [] and overview["stand"]["write_schema"] is None  # no test DB configured
+    assert overview["sessions"] == [] and overview["stand"]["write_schemas"] == []  # no test DB configured
 
     script.append(step(reply="Готово.", session_title="Проверка"))
     r = await client.post(f"{base}/messages", json={"text": "  Проверь покрытие  "})

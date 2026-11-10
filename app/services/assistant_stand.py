@@ -6,7 +6,9 @@ DB, test stand and WireMock. Every action becomes a journal entry the tester
 sees. Limits enforced here, not in the prompt:
 
 - reads run in a READ ONLY transaction;
-- writes are INSERT/UPDATE/DELETE into the feature's own service schema only;
+- writes are INSERT/UPDATE/DELETE into the feature's own schemas only: the
+  service schema plus the schemas its test cases already write to (an adapter
+  may keep its tables in another service's schema);
 - no DDL or other statements;
 - HTTP goes only to the feature's service on the stand (relative paths).
 """
@@ -14,6 +16,7 @@ sees. Limits enforced here, not in the prompt:
 import json
 import re
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any
 
@@ -76,22 +79,46 @@ def _strip_literals(stmt: str) -> str:
     return "".join(out)
 
 
-def classify_sql(sql: str, write_schema: str | None) -> bool:
+def _statement_bodies(sql: str) -> list[str]:
+    """Statements reduced to their own structure: no comments, literals, or the
+    UPDATE keywords that do not name a write target."""
+    bodies = []
+    for stmt in sql_runner.split_sql_statements(sql):
+        body = _strip_literals(stmt).strip()
+        # A trailing comment after the last ";" splits off as a statement of its own
+        if not body:
+            continue
+        # FOR UPDATE and ON CONFLICT ... DO UPDATE are not separate write targets
+        body = re.sub(r"\bfor\s+(?:no\s+key\s+)?update\b", " ", body, flags=re.IGNORECASE)
+        bodies.append(re.sub(r"\bdo\s+update\b", " do_upsert ", body, flags=re.IGNORECASE))
+    return bodies
+
+
+def _targets(body: str) -> list[list[str]]:
+    """Tables a statement writes to, as lower-cased name parts ([schema, table])."""
+    names = [m.group(1) for pattern in _TARGET_RES for m in pattern.finditer(body)]
+    return [[part.strip('"').lower() for part in name.split(".")] for name in names]
+
+
+def written_schemas(sql: str | None) -> set[str]:
+    """Schemas a script writes to (schema-qualified targets only)."""
+    if not sql:
+        return set()
+    return {parts[0] for body in _statement_bodies(sql) for parts in _targets(body) if len(parts) == 2}
+
+
+def classify_sql(sql: str, write_schemas: Collection[str]) -> bool:
     """True if the script writes, False if it only reads.
 
     Raises SqlNotAllowed for anything but SELECT-like reads and
-    INSERT/UPDATE/DELETE into ``write_schema``.
+    INSERT/UPDATE/DELETE into one of ``write_schemas``.
     """
-    # A trailing comment after the last ";" splits off as a statement of its own
-    statements = [s for s in sql_runner.split_sql_statements(sql) if _strip_literals(s).strip()]
+    allowed = {schema.lower() for schema in write_schemas}
+    statements = _statement_bodies(sql)
     if not statements:
         raise SqlNotAllowed("Пустой SQL")
     writes = False
-    for stmt in statements:
-        body = _strip_literals(stmt).strip()
-        # FOR UPDATE and ON CONFLICT ... DO UPDATE are not separate write targets
-        body = re.sub(r"\bfor\s+(?:no\s+key\s+)?update\b", " ", body, flags=re.IGNORECASE)
-        body = re.sub(r"\bdo\s+update\b", " do_upsert ", body, flags=re.IGNORECASE)
+    for body in statements:
         first = re.match(r"[A-Za-z]+", body)
         keyword = first.group(0).lower() if first else ""
         modifies = bool(_MODIFYING_RE.search(body))
@@ -103,25 +130,29 @@ def classify_sql(sql: str, write_schema: str | None) -> bool:
             raise SqlNotAllowed("Запрос на чтение содержит изменяющую операцию — разделите чтение и запись")
         if keyword not in _WRITE_KEYWORDS and keyword != "with":
             raise SqlNotAllowed(
-                f"Ассистент выполняет только SELECT и INSERT/UPDATE/DELETE, а не «{keyword.upper() or stmt[:20]}»"
+                f"Ассистент выполняет только SELECT и INSERT/UPDATE/DELETE, а не «{keyword.upper() or body[:20]}»"
             )
         if re.search(r"\b(merge|truncate)\b", body, re.IGNORECASE):
             raise SqlNotAllowed("MERGE и TRUNCATE ассистент не выполняет")
-        if not write_schema:
+        if not allowed:
             raise SqlNotAllowed(
-                "Неизвестна схема БД сервиса этой фичи, поэтому запись в тестовую БД ассистенту запрещена"
+                "Неизвестно, в какие схемы пишет эта фича, поэтому запись в тестовую БД ассистенту запрещена"
             )
-        targets = [m.group(1) for pattern in _TARGET_RES for m in pattern.finditer(body)]
+        targets = _targets(body)
         if not targets:
             raise SqlNotAllowed("Не удалось определить таблицу, в которую пишет запрос")
-        for target in targets:
-            parts = [p.strip('"').lower() for p in target.split(".")]
-            if len(parts) != 2 or parts[0] != write_schema.lower():
+        for parts in targets:
+            if len(parts) != 2 or parts[0] not in allowed:
                 raise SqlNotAllowed(
-                    f"Запись разрешена только в схему {write_schema}, а запрос пишет в «{target}»"
+                    f"Запись разрешена только в {_schemas_text(allowed)}, а запрос пишет в «{'.'.join(parts)}»"
                 )
         writes = True
     return writes
+
+
+def _schemas_text(schemas: Collection[str]) -> str:
+    names = sorted(schemas)
+    return ("схему " if len(names) == 1 else "схемы ") + ", ".join(names)
 
 
 def normalize_sql(sql: str) -> str:
@@ -159,9 +190,9 @@ def _first_line(text: str, limit: int = 220) -> str:
 class Stand:
     """Executes the assistant's actions for one feature and records the journal."""
 
-    def __init__(self, service: str | None, write_schema: str | None) -> None:
+    def __init__(self, service: str | None, write_schemas: Collection[str]) -> None:
         self.service = service
-        self.write_schema = write_schema
+        self.write_schemas = sorted({schema.lower() for schema in write_schemas})
         # Normalized scripts that were written to the stand successfully in this run
         self.applied_sql: dict[str, dict] = {}
 
@@ -170,7 +201,7 @@ class Stand:
         return {
             "sql": db["configured"],
             "database": db["database"],
-            "write_schema": self.write_schema if db["configured"] else None,
+            "write_schemas": self.write_schemas if db["configured"] else [],
             "http": http_runner.is_configured(),
             "service": self.service,
             "wiremock": wiremock.mappings_url() is not None,
@@ -202,7 +233,7 @@ class Stand:
         if not sql_runner.is_configured():
             return self._fail(entry, "error", "Тестовая БД не настроена (TEST_DB_URL)", sql)
         try:
-            writes = classify_sql(sql, self.write_schema)
+            writes = classify_sql(sql, self.write_schemas)
         except SqlNotAllowed as exc:
             return self._fail(entry, "blocked", str(exc), sql)
         entry["write"] = writes

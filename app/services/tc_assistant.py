@@ -30,7 +30,7 @@ from app.config import settings
 from app.prompts.tc_assistant import CONTINUE, INSTRUCTIONS, LAST_ROUND
 from app.schemas.assistant import AssistantStep
 from app.services import agent_runner, wiremock
-from app.services.assistant_stand import Stand, normalize_sql, result_for_model
+from app.services.assistant_stand import Stand, normalize_sql, result_for_model, written_schemas
 from app.services.rules import build_system_prompt
 from app.services.task_manager import task_manager
 from app.services.test_cases import _prepare_feature_context
@@ -71,15 +71,23 @@ def worker_key(project_slug: str, feature_name: str) -> str:
     return f"{TASK_KIND}:{project_slug}/{feature_name}"
 
 
-async def feature_stand(store, project_slug: str, feature: dict) -> Stand:
-    """Stand toolbox for the feature: its service and the schema it may write to
-    (schema name == service name, dashes → underscores)."""
+async def feature_stand(store, project_slug: str, feature: dict, cases: list[dict]) -> Stand:
+    """Stand toolbox for the feature: its service and the schemas it may write to.
+
+    That is the service's own schema (service name, dashes → underscores) plus
+    every schema the feature's test cases already write to: an adapter often
+    keeps its tables in another service's schema, and those scripts are what
+    testers run by hand anyway.
+    """
     service = None
     doc_slug = feature.get("source_document")
     if doc_slug:
         doc = await store.get_document(project_slug, doc_slug)
         service = (doc or {}).get("service_name")
-    return Stand(service, service.replace("-", "_") if service else None)
+    schemas = {service.replace("-", "_")} if service else set()
+    for case in cases:
+        schemas |= written_schemas(case.get("sql_setup"))
+    return Stand(service, schemas)
 
 
 # ----------------------------------------------------------------------
@@ -142,9 +150,10 @@ def _history_text(turn: dict, number_of: dict[str, int]) -> str:
 def _stand_text(caps: dict) -> str:
     lines = ["## Стенд"]
     if caps["sql"]:
+        schemas = caps["write_schemas"]
         write = (
-            f"Запись — только в схему {caps['write_schema']}." if caps["write_schema"]
-            else "Запись запрещена: схема сервиса этой фичи неизвестна."
+            f"Запись — только в {'схему' if len(schemas) == 1 else 'схемы'} {', '.join(schemas)}." if schemas
+            else "Запись запрещена: неизвестно, в какие схемы пишет эта фича."
         )
         lines.append(f"- Тестовая БД {caps['database'] or ''}: чтение доступно. {write}")
     else:
@@ -452,10 +461,10 @@ async def run_turn(store, project_slug: str, feature_name: str, turn: dict) -> t
     feature, _, shared_ctx = await _prepare_feature_context(
         project_slug, feature_name, store, enforce_gate=False,
     )
-    stand = await feature_stand(store, project_slug, feature)
     cases = await store.get_test_cases(project_slug, feature_name)
     if any(not case.get("id") for case in cases):
         cases = await store.mutate_test_cases(project_slug, feature_name, lambda current: current)
+    stand = await feature_stand(store, project_slug, feature, cases)
 
     session = await store.get_assistant_session(project_slug, feature_name, turn["session_id"])
     history = []
