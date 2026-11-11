@@ -57,6 +57,10 @@ class CoverageItem(BaseModel):
 class TestCaseCoverageResult(BaseModel):
     """Turn 1 of the generation dialog: everything the spec requires to check."""
     coverage: list[CoverageItem]
+    note: str | None = Field(
+        default=None,
+        description="Только если перечень пуст: почему по этому ТЗ нельзя написать проверяемые кейсы",
+    )
 
 
 class _CoverageRef(BaseModel):

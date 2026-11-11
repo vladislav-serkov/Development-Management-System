@@ -25,6 +25,7 @@ from app.schemas.test_cases import (
     TestCaseGenerationResult,
 )
 from app.services import sql_runner
+from app.services.agent_runner import AgentError
 from app.services.codex_client import StructuredAsk, call_structured, structured_dialog
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
@@ -262,10 +263,30 @@ def _render_live_ddl(db_schema: str, columns_by_table: dict[str, list[dict]]) ->
     return "\n".join(lines)
 
 
-async def _live_ddl_block(db_schema: str | None, enriched_deps: dict) -> str | None:
-    """Fetch live DDL for the feature's db_table deps; non-fatal on any failure."""
-    if not db_schema or not sql_runner.is_configured():
-        return None
+def _pick_schema(tables: list[str], located: dict[str, list[str]]) -> str | None:
+    """The one schema that holds all the feature's tables, or None if unclear.
+
+    Copies of a schema (``bnpl_processing_lt`` next to ``bnpl_processing``) are
+    not separate candidates.
+    """
+    candidates = None
+    for table in tables:
+        schemas = set(located.get(table) or [])
+        candidates = schemas if candidates is None else candidates & schemas
+    candidates = candidates or set()
+    originals = {c for c in candidates if not any(c.startswith(other + "_") for other in candidates)}
+    return next(iter(originals)) if len(originals) == 1 else None
+
+
+async def _stand_tables(db_schema: str | None, enriched_deps: dict) -> tuple[str | None, dict[str, list[dict]]]:
+    """Live columns of the feature's tables and the schema they really live in.
+
+    The schema is the service name by convention, but an adapter may keep its
+    data in another service's schema: when the conventional schema has none of
+    the tables, the stand is asked where they are. Non-fatal on any failure.
+    """
+    if not sql_runner.is_configured():
+        return db_schema, {}
     tables = []
     for name, dep in enriched_deps.items():
         if dep.get("dep_type") != "db_table":
@@ -273,19 +294,21 @@ async def _live_ddl_block(db_schema: str | None, enriched_deps: dict) -> str | N
         # dep name may be a spec alias ("payment"); the enriched table name is the real one
         tables.append(((dep.get("enriched_data") or {}).get("table_name")) or name)
     if not tables:
-        return None
+        return db_schema, {}
     try:
-        columns_by_table = await sql_runner.fetch_table_columns(db_schema, tables)
+        columns = await sql_runner.fetch_table_columns(db_schema, tables) if db_schema else {}
+        if not columns:
+            actual = _pick_schema(tables, await sql_runner.locate_tables(tables))
+            if actual and actual != db_schema:
+                logger.info("[test_cases] tables %s live in schema %s, not %s", tables, actual, db_schema)
+                db_schema = actual
+                columns = await sql_runner.fetch_table_columns(db_schema, tables)
     except Exception as exc:
         logger.warning("[test_cases] live DDL fetch failed (non-fatal): %s", exc)
-        return None
-    if not columns_by_table:
-        return None
-    logger.info(
-        "[test_cases] live DDL: schema=%s, tables=%s",
-        db_schema, sorted(columns_by_table),
-    )
-    return _render_live_ddl(db_schema, columns_by_table)
+        return db_schema, {}
+    if columns:
+        logger.info("[test_cases] live DDL: schema=%s, tables=%s", db_schema, sorted(columns))
+    return db_schema, columns
 
 
 def _build_shared_context(feature: dict, enriched_deps: dict, db_schema: str | None = None) -> str:
@@ -295,9 +318,7 @@ def _build_shared_context(feature: dict, enriched_deps: dict, db_schema: str | N
     dependency tree (specific to test_cases for sql_setup ordering) and the
     DB schema of the service (schema name == service name, dashes → underscores).
     """
-    base = build_feature_context(
-        feature, enriched_deps, service_name=db_schema.replace("_", "-") if db_schema else None,
-    )
+    base = build_feature_context(feature, enriched_deps)
 
     extra: list[str] = []
     fk_tree = _build_fk_tree(enriched_deps)
@@ -353,13 +374,21 @@ def _planned_case(tc: GeneratedTestCaseResult, item: CoverageItem) -> dict:
 
 
 def _problem_report(coverage: list[CoverageItem], cases: dict[int, dict], problems: dict[int, list[str]]) -> str:
-    lines = []
+    """Problems for the repair turn; the same problem in many cases is stated once."""
+    by_text: dict[str, list[int]] = {}
     for number in sorted(problems):
-        if number in cases:
-            lines.append(f"Пункт {number}, кейс «{cases[number]['name']}»:")
-            lines += [f"- {problem}" for problem in problems[number]]
-        else:
-            lines.append(f"Пункт {number} «{coverage[number - 1].covers}»: кейс не написан.")
+        for problem in problems[number]:
+            by_text.setdefault(problem if number in cases else "кейс не написан", []).append(number)
+    lines = []
+    for problem, numbers in by_text.items():
+        if len(numbers) > 3:
+            lines.append(f"Пункты {', '.join(map(str, numbers))}: {problem}")
+            continue
+        for number in numbers:
+            if number in cases:
+                lines.append(f"Пункт {number}, кейс «{cases[number]['name']}»: {problem}")
+            else:
+                lines.append(f"Пункт {number} «{coverage[number - 1].covers}»: кейс не написан.")
     return "\n".join(lines)
 
 
@@ -400,7 +429,10 @@ async def generate_suite(
         stats["turns"] += 1
         coverage = plan.coverage
         if not coverage:
-            raise RuntimeError("[test_cases] Codex returned an empty coverage list")
+            raise AgentError(
+                "По этому ТЗ не из чего писать тест-кейсы: "
+                + (plan.note or "модель не нашла в нём описанного поведения фичи")
+            )
         logger.info("[test_cases] Coverage: %d item(s)", len(coverage))
 
         def accept(result: TestCaseGenerationResult, allowed: range | set[int], into: dict[int, dict]) -> int:
@@ -421,21 +453,31 @@ async def generate_suite(
 
         problems = await check(by_item, len(coverage))
         if problems:
-            logger.info("[test_cases] %d case(s) failed the checks — one repair turn", len(problems))
-            fixed = await ask(
-                REPAIR_TASK.format(problems=_problem_report(coverage, by_item, problems)), TestCaseGenerationResult,
-            )
-            stats["turns"] += 1
-            stats["repaired"] = accept(fixed, set(problems), by_item)
+            logger.info("[test_cases] %d item(s) failed the checks — one repair pass", len(problems))
+            failed = sorted(problems)
+            for start in range(0, len(failed), CASES_PER_TURN):
+                portion = {n: problems[n] for n in failed[start:start + CASES_PER_TURN]}
+                fixed = await ask(
+                    REPAIR_TASK.format(
+                        items=", ".join(map(str, portion)), problems=_problem_report(coverage, by_item, portion),
+                    ),
+                    TestCaseGenerationResult,
+                )
+                stats["turns"] += 1
+                stats["repaired"] += accept(fixed, set(portion), by_item)
             problems = await check(by_item, len(coverage))
+        if len(by_item) * 2 < len(coverage):
+            # Saving a fragment as "the suite" would hide that the run failed.
+            raise AgentError(
+                f"Модель написала кейсы только для {len(by_item)} из {len(coverage)} проверок — "
+                "набор не сохранён, запустите генерацию ещё раз"
+            )
         return coverage, by_item, problems
 
     coverage, by_item, problems = await structured_dialog(
         dialog, label="test_cases", model=model, system=system_prompt,
         timeout=settings.structured_timeout_seconds * DIALOG_TIMEOUT_FACTOR,
     )
-    if not by_item:
-        raise RuntimeError("[test_cases] Codex returned no test cases")
     numbers = sorted(by_item)
     for number, found in problems.items():
         name = by_item[number]["name"] if number in by_item else coverage[number - 1].covers
@@ -623,10 +665,10 @@ async def _prepare_feature_context(
             db_schema = service_name.replace("-", "_")
 
     feature_type = feature.get("type", "")
+    db_schema, live_columns = await _stand_tables(db_schema, enriched_deps)
     shared_ctx = _build_shared_context(feature, enriched_deps, db_schema=db_schema)
-    live_ddl = await _live_ddl_block(db_schema, enriched_deps)
-    if live_ddl:
-        shared_ctx += "\n" + live_ddl
+    if live_columns:
+        shared_ctx += "\n" + _render_live_ddl(db_schema, live_columns)
     return feature, feature_type, shared_ctx, db_schema
 
 

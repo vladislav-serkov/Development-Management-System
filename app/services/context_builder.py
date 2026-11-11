@@ -42,14 +42,12 @@ def _serialize_enriched(dep_type: str, enriched: dict) -> str:
     return _render_json(enriched)
 
 
-def build_feature_context(feature: dict, enriched_deps: dict, service_name: str | None = None) -> str:
+def build_feature_context(feature: dict, enriched_deps: dict) -> str:
     """Build the feature + dependencies block of the test-case prompts.
 
     Args:
         feature: feature.json dict.
         enriched_deps: {name: dep_dict} — already filtered to enriched entries relevant to the feature.
-        service_name: the feature's own service; API dependencies that belong to
-            it are internal calls (nothing to stub) and are labelled as such.
     """
     lines: list[str] = []
     lines.append("## Feature")
@@ -71,11 +69,6 @@ def build_feature_context(feature: dict, enriched_deps: dict, service_name: str 
         for dep_name, dep_data in enriched_deps.items():
             dep_type = dep_data.get("dep_type", "")
             lines.append(f"### {dep_name} ({dep_type})")
-            if dep_type == "external_api" and service_name and dep_data.get("service_name") == service_name:
-                lines.append(
-                    f"Метод этого же сервиса ({service_name}) — внутренний вызов: заглушка не нужна, "
-                    "результат проверяется по состоянию БД."
-                )
             enriched = dep_data.get("enriched_data")
             if enriched:
                 lines.append(_serialize_enriched(dep_type, enriched))

@@ -154,15 +154,68 @@ async def test_regeneration_keeps_reviewed_cases(store, monkeypatch):
     ]
 
 
-async def test_empty_coverage_marks_task_error(store, monkeypatch):
+async def test_spec_without_behaviour_fails_with_the_reason(store, monkeypatch):
     await store.create_project("P")
     await store.save_feature("p", dict(FEATURE))
-    _mock_codex(monkeypatch, {"coverage": []})
+    _mock_codex(monkeypatch, {"coverage": [], "note": "в ТЗ описан только формат сообщения"})
 
     task = await store.create_task("p", kind="test_cases", target_type="feature", target_id="create-order")
-    with pytest.raises(RuntimeError, match="empty coverage"):
+    with pytest.raises(agent_runner.AgentError, match="не из чего писать"):
         await run_test_cases_pipeline("p", "create-order", store, task_id=task["id"])
 
     tasks = await store.list_tasks("p", kind="test_cases")
     assert tasks[0]["status"] == "error"
+    assert "только формат сообщения" in tasks[0]["error_message"]
     assert await store.get_test_cases("p", "create-order") == []
+
+
+async def test_fragment_of_a_suite_is_not_saved(store, monkeypatch):
+    await store.create_project("P")
+    await store.save_feature("p", dict(FEATURE))
+    existing = {
+        "name": "Старый кейс", "category": "positive", "priority": "low", "preconditions": "",
+        "steps": [], "expected_result": "", "covers": "x", "status": "pending", "analyst_text": None,
+    }
+    await store.save_test_cases("p", "create-order", [existing])
+    coverage = {"coverage": [
+        {"covers": f"logic_steps {n}", "category": "positive", "priority": "low"} for n in range(1, 6)
+    ]}
+    # the model writes 2 of 5 cases, the repair turn adds nothing
+    _mock_codex(monkeypatch, coverage, {"test_cases": [_case(1, "Кейс 1"), _case(2, "Кейс 2")]}, {"test_cases": []})
+
+    with pytest.raises(agent_runner.AgentError, match="только для 2 из 5"):
+        await run_test_cases_pipeline("p", "create-order", store)
+
+    assert [tc["name"] for tc in await store.get_test_cases("p", "create-order")] == ["Старый кейс"]
+
+
+async def test_same_problem_in_many_cases_is_reported_once(store, monkeypatch):
+    await store.create_project("P")
+    await store.save_feature("p", dict(FEATURE))
+    coverage = {"coverage": [
+        {"covers": f"logic_steps {n}", "category": "positive", "priority": "low"} for n in range(1, 6)
+    ]}
+    broken = [_case(n, f"Кейс {n}", curl_command=None) for n in range(1, 6)]
+    turns = _mock_codex(
+        monkeypatch, coverage, {"test_cases": broken},
+        {"test_cases": [_case(n, f"Кейс {n}") for n in range(1, 6)]},
+    )
+
+    result = await run_test_cases_pipeline("p", "create-order", store)
+
+    repair = turns[2]["text"]
+    assert "для пунктов 1, 2, 3, 4, 5" in repair
+    assert repair.count("нет curl_command") == 1 and "Пункты 1, 2, 3, 4, 5:" in repair
+    assert all(tc["curl_command"] for tc in result)
+
+
+def test_stand_schema_is_the_one_holding_all_tables():
+    located = {
+        "payment": ["bnpl_processing", "bnpl_processing_lt", "flp_order"],
+        "trclog": ["bnpl_processing", "bnpl_processing_lt"],
+    }
+    # a load-test copy of the same schema is not a separate candidate
+    assert tc_service._pick_schema(["payment", "trclog"], located) == "bnpl_processing"
+    # ambiguous or unknown — do not guess
+    assert tc_service._pick_schema(["payment"], {"payment": ["flp_order", "bnpl_registry"]}) is None
+    assert tc_service._pick_schema(["payment", "missing"], located) is None

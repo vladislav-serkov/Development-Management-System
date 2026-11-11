@@ -252,6 +252,29 @@ async def execute_sql(sql: str, *, readonly: bool = False) -> dict[str, Any]:
     }
 
 
+async def locate_tables(tables: list[str]) -> dict[str, list[str]]:
+    """Schemas of the test DB that contain each of the given tables."""
+    if not is_configured() or not tables:
+        return {}
+    dsn = settings.test_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(
+        dsn, timeout=CONNECT_TIMEOUT, statement_cache_size=0, command_timeout=STATEMENT_TIMEOUT,
+    )
+    try:
+        rows = await conn.fetch(
+            "SELECT table_name, table_schema FROM information_schema.tables "
+            "WHERE table_name = ANY($1::text[]) AND table_schema NOT IN ('information_schema', 'pg_catalog') "
+            "ORDER BY table_name, table_schema",
+            tables,
+        )
+    finally:
+        await conn.close()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r["table_name"], []).append(r["table_schema"])
+    return out
+
+
 class _Rollback(Exception):
     """Leaves the dry-run transaction without committing."""
 
