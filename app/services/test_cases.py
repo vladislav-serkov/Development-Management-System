@@ -295,7 +295,9 @@ def _build_shared_context(feature: dict, enriched_deps: dict, db_schema: str | N
     dependency tree (specific to test_cases for sql_setup ordering) and the
     DB schema of the service (schema name == service name, dashes → underscores).
     """
-    base = build_feature_context(feature, enriched_deps)
+    base = build_feature_context(
+        feature, enriched_deps, service_name=db_schema.replace("_", "-") if db_schema else None,
+    )
 
     extra: list[str] = []
     fk_tree = _build_fk_tree(enriched_deps)

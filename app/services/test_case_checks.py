@@ -16,6 +16,8 @@ from app.services.wiremock import InvalidMappingError, prepare_mappings
 logger = logging.getLogger(__name__)
 
 _UUID_LIKE = re.compile(r"\b[0-9a-zA-Z]{8}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{12}\b")
+_UNBOUNDED_WRITE = re.compile(r"\s*(delete|update)\b", re.IGNORECASE)
+_WHERE = re.compile(r"\bwhere\b", re.IGNORECASE)
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
@@ -57,6 +59,14 @@ def _static_problems(case: dict, feature_type: str, db_schema: str | None) -> li
             classify_sql(sql, written_schemas(sql) | ({db_schema} if db_schema else set()))
         except SqlNotAllowed as exc:
             problems.append(f"sql_setup: {exc}")
+        else:
+            # The stand is shared: a script may only touch the rows it names.
+            for stmt in sql_runner.split_sql_statements(sql):
+                if _UNBOUNDED_WRITE.match(stmt) and not _WHERE.search(stmt):
+                    problems.append(
+                        "sql_setup: DELETE/UPDATE без WHERE затронет чужие данные на общем стенде — "
+                        f"ограничь условием: {stmt[:80]}"
+                    )
     return problems
 
 
