@@ -19,15 +19,25 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class SPAStaticFiles(StaticFiles):
-    """Unknown paths fall back to index.html so client-side routes survive a reload."""
+    """Unknown paths fall back to index.html so client-side routes survive a reload.
+
+    index.html names the build's hashed files, and every build replaces them. So the
+    page itself must be revalidated on each load (a browser left to guess keeps a
+    stale copy that points at files that are gone), and a missing build file must be
+    a 404 — answering it with the page makes the browser load HTML as a script and
+    show a blank screen.
+    """
 
     async def get_response(self, path, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code != 404:
+            if exc.status_code != 404 or path.startswith("assets/"):
                 raise
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+        if Path(str(getattr(response, "path", ""))).name == "index.html":
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 @asynccontextmanager
