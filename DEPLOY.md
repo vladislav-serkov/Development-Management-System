@@ -72,7 +72,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://24dms.ru/api/auth/me
 
 Startup typically takes 10–20 seconds. All three agents should show `running`; `/api/auth/me` returns `401` for an unauthenticated request when login is enabled. `502` indicates an app/tunnel problem. `GET /api/` is the public API health endpoint.
 
-Building `frontend/dist` updates the files served by the live process immediately, even before a backend restart. Documentation-only changes do not require a build or restart.
+Building `frontend/dist` updates the files served by the live process immediately, even before a backend restart. A build replaces the hashed files under `dist/assets`: `index.html` is served with `Cache-Control: no-cache`, so a reload always gets the new build, and a request for a file of the previous build returns 404. A tab opened before the build keeps working until it needs a not-yet-loaded part of the old build, then needs a reload. Documentation-only changes do not require a build or restart.
 
 ### Logs and user administration
 
