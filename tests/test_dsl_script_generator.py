@@ -156,6 +156,17 @@ def test_prompt_gives_the_stand_address_when_known():
     assert "на тестовом стенде:" not in build_prompt("p", FEATURE, TEST_CASE, DOC)
 
 
+def test_prompt_asks_for_flat_steps_instead_of_dsl_blocks():
+    case = {**TEST_CASE, "kafka_message": {"key": "k", "value": "{}"}, "mock_config": "{}"}
+    prompt = build_prompt("p", FEATURE, case, DOC)
+    assert "Блоки `DSL: …` и `DSL очистка:` не используй" in prompt
+    assert "`отправить в топик … событие…:`" in prompt
+    assert "`мок … на … отвечает … с телом:`" in prompt
+    assert "`после сценария …`" in prompt
+    assert "`запрос с заголовком …`" in prompt
+    assert "командами движка" not in prompt
+
+
 def test_prompt_tells_how_to_get_jdk_17():
     assert "java_home -v 17" in build_prompt("p", FEATURE, TEST_CASE, DOC)
 
