@@ -18,6 +18,7 @@ async def workflow_data(store, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "repos_dirs", str(tmp_path))
     monkeypatch.setattr(settings, "ru_dsl_repo_dir", str(repo))
     monkeypatch.setattr(settings, "test_stand_url", "")  # no stand lookups from tests
+    monkeypatch.setattr(settings, "dsl_script_run", False)  # stand runs have their own tests
     monkeypatch.setattr(settings, "bug_fix_log_dir", str(tmp_path / "bug-logs"))
     monkeypatch.setattr(settings, "dsl_script_log_dir", str(tmp_path / "script-logs"))
     monkeypatch.setattr(settings, "implement_log_dir", str(tmp_path / "impl-logs"))

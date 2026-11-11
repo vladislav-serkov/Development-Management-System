@@ -217,6 +217,30 @@ async def generate_script(
     return {"test_cases": await store.get_test_cases(project_slug, feature_name)}
 
 
+@router.post("/{tc_index}/script/run")
+async def run_script(
+    project_slug: str,
+    feature_name: str,
+    tc_index: int = Path(..., description="Zero-based index of test case in the list"),
+):
+    """Queue a run of the case's generated ru-dsl scenario on the test stand."""
+    feature = await store.get_feature(project_slug, feature_name)
+    if feature is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Feature '{feature_name}' not found in project '{project_slug}'",
+        )
+    feature_name = feature["name"]
+
+    try:
+        await dsl_script_generator.request_run(store, project_slug, feature_name, tc_index)
+    except dsl_script_generator.ScriptError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    logger.info("run_script: project=%s, feature=%s, index=%d", project_slug, feature_name, tc_index)
+    return {"test_cases": await store.get_test_cases(project_slug, feature_name)}
+
+
 @router.delete("/{tc_index}")
 async def delete_test_case(
     project_slug: str,

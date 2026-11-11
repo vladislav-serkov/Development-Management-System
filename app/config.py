@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     ru_dsl_repo_dir: str = ""
     dsl_script_auto: bool = True  # queue generation as soon as a test case is accepted
     dsl_script_log_dir: str = "logs/dsl-script"
+    # After generation the backend runs the scenario on the test stand itself and shows
+    # the result on the case (needs TEST_DB_URL; false = scenarios are only written).
+    dsl_script_run: bool = True
+    dsl_script_profile: str = "bnpl-ump2-test"  # runner profile (config/application-<name>.properties)
+    dsl_script_run_timeout_seconds: int = 600
+    # Kafka bootstrap of the test stand for scenarios that publish/read events (empty = such
+    # scenarios are not run). WireMock for scenario mocks is TEST_WIREMOCK_URL.
+    test_kafka_bootstrap: str = ""
     # Deprecated (Java autotests in flp-autotests, replaced by ru-dsl scripts):
     # accepted so existing .env files still load; never used.
     autotests_repo_dir: str = ""

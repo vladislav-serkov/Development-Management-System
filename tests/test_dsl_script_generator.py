@@ -76,6 +76,7 @@ def generator_configured(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "dsl_script_log_dir", str(tmp_path / "logs"))
     monkeypatch.setattr(settings, "dsl_script_auto", True)  # a developer .env may turn it off
     monkeypatch.setattr(settings, "test_stand_url", "")  # no stand lookups from tests
+    monkeypatch.setattr(settings, "dsl_script_run", False)  # stand runs have their own tests
 
 
 async def _make_test_case(client, store, *, status="approved", with_doc=True, **fields):

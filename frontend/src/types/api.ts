@@ -524,6 +524,16 @@ export interface ApplyPreviewData {
 export type TestCaseStatus = "pending" | "approved" | "edited"
 export type TestCaseCategory = "validation" | "positive" | "negative" | "edge_case"
 
+/** One step of a ru-dsl scenario run on the test stand */
+export interface ScriptRunStep {
+  keyword: string
+  text: string
+  status: "passed" | "failed" | "skipped" | "undefined" | "pending" | "ambiguous"
+  error?: string | null
+  /** set when the tag matched several scenarios (a scenario outline) */
+  scenario?: string
+}
+
 export interface TestStep {
   action: string
   expected: string
@@ -555,6 +565,11 @@ export interface TestCaseItem {
   script_path?: string | null
   /** the scenario as committed; null if it could not be read back */
   script_text?: string | null
+  /** run of the scenario on the test stand; `error` = could not be run at all */
+  script_run_status?: "queued" | "running" | "passed" | "failed" | "error" | null
+  script_run_error?: string | null
+  script_run_steps?: ScriptRunStep[] | null
+  script_run_finished_at?: string | null
 }
 
 export interface TestCasesResponse {

@@ -8,6 +8,11 @@ scenarios instead of N conflicting MRs editing the same file. Where the scenario
 lives (file, branch, tag) is decided here, not by the agent — that is what lets
 the backend read the result back and show it on the case card.
 
+After a scenario is written the backend runs it on the test stand itself
+(`dsl_script_runner`) and stores the step-by-step result on the case; the agent
+never runs scenarios, so it cannot adapt checks to the stand. A run can be
+repeated without re-generation.
+
 Queueing mirrors the bug fixer: one running generation per repo (task kind
 `dsl_script`, target_id = repo name) on the shared Codex runner. Cases are
 addressed by their stable `id` and written under the feature lock, so a case
@@ -23,7 +28,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
-from app.services import agent_runner, http_runner
+from app.services import agent_runner, dsl_script_runner, http_runner
+from app.services.assistant_stand import written_schemas
 from app.services.task_manager import task_manager
 from app.storage import ActiveTaskExistsError
 
@@ -160,6 +166,10 @@ def build_prompt(project_slug: str, feature: dict, tc: dict, doc: dict, stand_ba
             f" Адрес API сервиса на тестовом стенде: {stand_base} — пути кейса заданы относительно него."
             if stand_base else ""
         ),
+        f"- Профиль стенда — `{settings.dsl_script_profile}` "
+        f"(`src/test/resources/config/application-{settings.dsl_script_profile}.properties`): настройки "
+        "сервиса добавляй в него, новых профилей не создавай. Адреса WireMock и Kafka и доступы к БД в "
+        "профиль не пиши — платформа передаёт их раннеру при запуске сценария.",
         "- kafka_message — шагом `отправить в топик … событие…:`; mock_config — шагами "
         "`мок … на … отвечает … с телом:`, вызовы мока проверяй шагом `проверить что мок … получил …`.",
         "- Java-код раннера не меняй и шаги не выдумывай. Шаг кейса, который нельзя проверить "
@@ -178,8 +188,8 @@ def build_prompt(project_slug: str, feature: dict, tc: dict, doc: dict, stand_ba
         f"- Перед dry-run убедись, что в сценарии {target['tag']} нет шагов, начинающихся с `DSL`.",
         "- Проверь привязку шагов (dry-run, ничего не выполняет): `./mvnw test-compile exec:java "
         f"-Dexec.args=--dry-run -Dcucumber.filter.tags={target['tag']} "
-        "-Dqa.output=target/extract-agent-check`. Сценарии на стенде НЕ запускай — стенд и доступы "
-        "из этой сессии недоступны.",
+        "-Dqa.output=target/extract-agent-check`. Сценарий на стенде НЕ запускай — после твоей "
+        "работы его запустит платформа и покажет результат тестировщику.",
         "- Закоммить только файлы этой задачи. MR — через git push options, target-ветка main, title "
         f'"ru-dsl: {service} — {feature_name}"; в description — ссылка на ТЗ'
         + (f" ({spec})" if spec else "")
@@ -319,19 +329,50 @@ async def request_generation(store, project_slug: str, feature_name: str, tc_ind
     return tc
 
 
-async def _find_queued(store, project_slug: str) -> tuple[str, dict, dict] | None:
-    """Oldest queued test case: (feature_name, tc, feature)."""
+async def request_run(store, project_slug: str, feature_name: str, tc_index: int) -> dict:
+    """Queue a stand run of the case's already generated scenario (no re-generation)."""
+    if not is_configured():
+        raise ScriptError(
+            "Генератор скриптов ru-dsl не настроен: задайте CODEX_ENABLED=true и RU_DSL_REPO_DIR в .env"
+        )
+    if not dsl_script_runner.is_configured():
+        raise ScriptError("Запуск сценариев на стенде не настроен: задайте TEST_DB_URL в .env")
+
+    test_cases = await store.get_test_cases(project_slug, feature_name)
+    if tc_index < 0 or tc_index >= len(test_cases):
+        raise ScriptError(f"Тест-кейс с индексом {tc_index} не найден")
+    tc = test_cases[tc_index]
+    if tc.get("script_status") != "generated" or not tc.get("script_text"):
+        raise ScriptError("Запускать нечего: у кейса нет готового сценария ru-dsl")
+    if tc.get("script_run_status") in ACTIVE_STATUSES and task_manager.is_running(_task_key(project_slug)):
+        raise ScriptActiveError(f"Прогон уже {tc['script_run_status']}")
+
+    tc = await update_case(
+        store, project_slug, feature_name, tc["id"],
+        script_run_status="queued", script_run_error=None, script_run_requested_at=datetime.now(UTC).isoformat(),
+    )
+    if tc is None:
+        raise ScriptError("Тест-кейс удалён")
+    await _maybe_start(store, project_slug)
+    return tc
+
+
+async def _find_queued(store, project_slug: str) -> tuple[str, str, dict, dict] | None:
+    """Oldest queued job: (action, feature_name, tc, feature); action is `generate` or `run`."""
     best = None
     for feature in await store.list_features(project_slug):
         for tc in await store.get_test_cases(project_slug, feature["name"]):
-            if tc.get("script_status") != "queued":
+            if tc.get("script_status") == "queued":
+                action, key = "generate", tc.get("script_requested_at") or ""
+            elif tc.get("script_run_status") == "queued":
+                action, key = "run", tc.get("script_run_requested_at") or ""
+            else:
                 continue
-            key = tc.get("script_requested_at") or ""
             if best is None or key < best[0]:
-                best = (key, feature["name"], tc, feature)
+                best = (key, action, feature["name"], tc, feature)
     if best is None:
         return None
-    return best[1], best[2], best[3]
+    return best[1], best[2], best[3], best[4]
 
 
 async def _requeue_interrupted(store, project_slug: str) -> None:
@@ -340,6 +381,8 @@ async def _requeue_interrupted(store, project_slug: str) -> None:
         for tc in await store.get_test_cases(project_slug, feature["name"]):
             if tc.get("script_status") == "running":
                 await update_case(store, project_slug, feature["name"], tc["id"], script_status="queued")
+            elif tc.get("script_run_status") == "running":
+                await update_case(store, project_slug, feature["name"], tc["id"], script_run_status="queued")
 
 
 async def _maybe_start(store, project_slug: str) -> None:
@@ -374,8 +417,11 @@ async def _run_queue(store, project_slug: str, task_id: str) -> None:
             item = await _find_queued(store, project_slug)
             if item is None:
                 break
-            feature_name, tc, feature = item
-            await _generate_one(store, project_slug, feature_name, tc, feature)
+            action, feature_name, tc, feature = item
+            if action == "generate":
+                await _generate_one(store, project_slug, feature_name, tc, feature)
+            else:
+                await _run_one(store, project_slug, feature_name, tc, feature)
     except Exception as exc:  # noqa: BLE001 — the task must always be finished
         logger.exception("[dsl-script] Queue for %s crashed", project_slug)
         error = str(exc)[:500]
@@ -398,6 +444,8 @@ async def _generate_one(store, project_slug: str, feature_name: str, tc: dict, f
         store, project_slug, feature_name, case_id,
         script_status="running", script_started_at=started, script_log=str(log_path),
         script_path=target["path"],
+        # The result of the previous scenario says nothing about the one being written
+        script_run_status=None, script_run_error=None, script_run_steps=None,
     )
     if running is None:  # deleted while it waited in the queue
         return
@@ -433,7 +481,46 @@ async def _generate_one(store, project_slug: str, feature_name: str, tc: dict, f
         fields["script_text"] = await _read_scenario(
             repo_dir(), result.get("branch") or target["branch"], target["path"], target["tag"],
         )
-    await update_case(store, project_slug, feature_name, case_id, **fields)
+    updated = await update_case(store, project_slug, feature_name, case_id, **fields)
     logger.info("[dsl-script] %s/%s case %s finished: %s (%s)",
                 project_slug, feature_name, case_id,
                 status, result.get("mr_url") or result.get("reason"))
+    if updated and status == "generated" and updated.get("script_text") and dsl_script_runner.is_configured():
+        await _run_one(store, project_slug, feature_name, updated, feature)
+
+
+async def _run_one(store, project_slug: str, feature_name: str, tc: dict, feature: dict) -> None:
+    """Run the case's scenario on the stand and store the result on the case."""
+    case_id = tc["id"]
+    doc = await _doc_of_feature(store, project_slug, feature)
+    target = script_target(feature, doc, case_id)
+    running = await update_case(
+        store, project_slug, feature_name, case_id,
+        script_run_status="running", script_run_error=None, script_run_steps=None,
+    )
+    if running is None or not running.get("script_text"):
+        return
+
+    # The feature's own schemas, as for the test-case assistant: the service's schema
+    # plus every schema its cases' sql_setup already writes to
+    service = doc.get("service_name")
+    schemas = {service.replace("-", "_")} if service else set()
+    for case in await store.get_test_cases(project_slug, feature_name):
+        schemas |= written_schemas(case.get("sql_setup"))
+
+    stamp = datetime.now(UTC).isoformat()[:19].replace(":", "-")
+    log_path = Path(settings.dsl_script_log_dir) / f"{project_slug}-{case_id}-run-{stamp}.log"
+    logger.info("[dsl-script] Running %s/%s case %s on the stand (log: %s)",
+                project_slug, feature_name, case_id, log_path)
+    try:
+        fields = await dsl_script_runner.run_scenario(
+            repo_dir(), running.get("script_branch") or target["branch"], target["tag"],
+            running["script_text"], schemas, log_path,
+        )
+    except Exception as exc:  # noqa: BLE001 — a broken run must not leave the case `running`
+        logger.exception("[dsl-script] Run of %s/%s case %s crashed", project_slug, feature_name, case_id)
+        fields = {"script_run_status": "error", "script_run_error": str(exc)[:500], "script_run_steps": [],
+                  "script_run_finished_at": datetime.now(UTC).isoformat()}
+    await update_case(store, project_slug, feature_name, case_id, **fields)
+    logger.info("[dsl-script] %s/%s case %s run: %s", project_slug, feature_name, case_id,
+                fields.get("script_run_status"))
