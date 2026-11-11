@@ -21,10 +21,10 @@ async def upload_mock(body: UploadMockRequest):
     if not wiremock.mappings_url():
         raise HTTPException(status_code=503, detail="WireMock не настроен — задайте TEST_WIREMOCK_URL в .env")
     try:
-        mapping = wiremock.prepare_mapping(body.mock_config)
+        mappings = wiremock.prepare_mappings(body.mock_config)
     except wiremock.InvalidMappingError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
-        return await wiremock.upload_mapping(mapping)
+        return await wiremock.upload_mappings(mappings)
     except wiremock.WireMockError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
