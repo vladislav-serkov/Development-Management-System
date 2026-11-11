@@ -75,6 +75,7 @@ def generator_configured(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "ru_dsl_repo_dir", str(tmp_path / "ru-dsl-v2"))
     monkeypatch.setattr(settings, "dsl_script_log_dir", str(tmp_path / "logs"))
     monkeypatch.setattr(settings, "dsl_script_auto", True)  # a developer .env may turn it off
+    monkeypatch.setattr(settings, "test_stand_url", "")  # no stand lookups from tests
 
 
 async def _make_test_case(client, store, *, status="approved", with_doc=True, **fields):
@@ -137,6 +138,26 @@ def test_prompt_carries_repo_conventions_and_contract():
     assert "origin/main" in prompt
     assert '"generated" | "failed"' in prompt
     assert "SpecRef" not in prompt
+
+
+def test_prompt_builds_spec_link_for_documents_that_keep_only_the_page_id(monkeypatch):
+    monkeypatch.setattr(settings, "confluence_base_url", "https://confluence.example/")
+    old_doc = {**DOC, "confluence_url": "627197487"}
+    prompt = build_prompt("p", FEATURE, TEST_CASE, old_doc)
+    assert "https://confluence.example/pages/viewpage.action?pageId=627197487 (версия 2)" in prompt
+
+    monkeypatch.setattr(settings, "confluence_base_url", "")
+    assert "ТЗ:" not in build_prompt("p", FEATURE, TEST_CASE, old_doc)
+
+
+def test_prompt_gives_the_stand_address_when_known():
+    address = "http://stand.example:8090/flp-card-balance/api/v1"
+    assert address in build_prompt("p", FEATURE, TEST_CASE, DOC, address)
+    assert "на тестовом стенде:" not in build_prompt("p", FEATURE, TEST_CASE, DOC)
+
+
+def test_prompt_tells_how_to_get_jdk_17():
+    assert "java_home -v 17" in build_prompt("p", FEATURE, TEST_CASE, DOC)
 
 
 def test_extract_scenario_takes_only_the_tagged_one():

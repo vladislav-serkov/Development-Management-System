@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
-from app.services import agent_runner
+from app.services import agent_runner, http_runner
 from app.services.task_manager import task_manager
 from app.storage import ActiveTaskExistsError
 
@@ -77,12 +77,26 @@ def script_target(feature: dict, doc: dict, case_id: str) -> dict:
     }
 
 
-def build_prompt(project_slug: str, feature: dict, tc: dict, doc: dict) -> str:
-    """Task prompt for the headless run in the ru-dsl-v2 repo."""
+def _spec_url(doc: dict) -> str:
+    """Link to the spec page; documents imported long ago keep only the page id."""
+    url = doc.get("confluence_url") or ""
+    if url.startswith("http"):
+        return url
+    page_id = doc.get("confluence_page_id") or url
+    if page_id and settings.confluence_base_url:
+        return f"{settings.confluence_base_url.rstrip('/')}/pages/viewpage.action?pageId={page_id}"
+    return ""
+
+
+def build_prompt(project_slug: str, feature: dict, tc: dict, doc: dict, stand_base: str | None = None) -> str:
+    """Task prompt for the headless run in the ru-dsl-v2 repo.
+
+    ``stand_base`` — the service's API base on the test stand, when the platform knows it.
+    """
     service = doc.get("service_name") or ""
     feature_name = feature.get("name", "")
     target = script_target(feature, doc, tc.get("id", ""))
-    spec = doc.get("confluence_url") or ""
+    spec = _spec_url(doc)
     spec_version = doc.get("confluence_version")
     origin = f"# Extract Agent: {project_slug} / {feature_name}, кейс {tc.get('id', '')}"
     if spec:
@@ -136,7 +150,11 @@ def build_prompt(project_slug: str, feature: dict, tc: dict, doc: dict) -> str:
         "- curl_command: метод, путь и тело переведи в шаг `отправить …`. Адрес стенда в сценарий не "
         f"пиши — он задаётся профилем. Если в профиле стенда ещё нет настроек сервиса {service} (адрес "
         "API, `entities.tables.*`), добавь их по docs/CONFIGURATION.md; при необходимости добавь рецепт "
-        "`entities/<schema.table>.json` и JSON Schema ответа.",
+        "`entities/<schema.table>.json` и JSON Schema ответа."
+        + (
+            f" Адрес API сервиса на тестовом стенде: {stand_base} — пути кейса заданы относительно него."
+            if stand_base else ""
+        ),
         "- kafka_message и mock_config — командами движка, как описано в документации раннера.",
         "- Java-код раннера не меняй и шаги не выдумывай. Шаг кейса, который нельзя проверить "
         "имеющимися шагами (логи, отсутствие вызова), в сценарий не переносится. Если не переносится "
@@ -148,6 +166,8 @@ def build_prompt(project_slug: str, feature: dict, tc: dict, doc: dict) -> str:
         f"- `git fetch origin`. Ветка {target['branch']}: если `origin/{target['branch']}` существует — "
         "переключись на неё и влей `origin/main` (в ней копятся сценарии этой фичи, MR уже открыт); "
         "иначе создай её от `origin/main`.",
+        "- Раннеру нужен JDK 17+: если `java -version` старше, выставь JAVA_HOME (на macOS — "
+        "`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`).",
         "- Проверь привязку шагов (dry-run, ничего не выполняет): `./mvnw test-compile exec:java "
         f"-Dexec.args=--dry-run -Dcucumber.filter.tags={target['tag']} "
         "-Dqa.output=target/extract-agent-check`. Сценарии на стенде НЕ запускай — стенд и доступы "
@@ -376,9 +396,10 @@ async def _generate_one(store, project_slug: str, feature_name: str, tc: dict, f
     logger.info("[dsl-script] Generating %s/%s case %s in %s (log: %s)",
                 project_slug, feature_name, case_id, repo_dir(), log_path)
 
+    stand = await http_runner.stand_info(doc.get("service_name"))
     try:
         result = await agent_runner.run(
-            build_prompt(project_slug, feature, running, doc),
+            build_prompt(project_slug, feature, running, doc, stand.get("target_base")),
             repo_dir(), log_path,
             statuses=VERDICT_STATUSES,
         )
