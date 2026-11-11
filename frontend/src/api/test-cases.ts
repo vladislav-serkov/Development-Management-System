@@ -40,6 +40,18 @@ export async function requestScript(projectSlug: string, featureName: string, tc
   return res.json()
 }
 
+export async function runScript(projectSlug: string, featureName: string, tcIndex: number): Promise<{ test_cases: TestCaseItem[] }> {
+  const res = await apiFetch(
+    `/projects/${projectSlug}/features/${encodeURIComponent(featureName.replaceAll("/", "__"))}/test-cases/${tcIndex}/script/run`,
+    { method: "POST" }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `Script run request failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function patchTestCase(
   projectSlug: string,
   featureName: string,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useRequestScript } from "@/hooks/useTestCases"
+import { useFeatureTestCases, usePatchTestCase, useDeleteTestCase, useRunTestCases, useRequestScript, useRunScript } from "@/hooks/useTestCases"
 import { useFeatureBugs, useGenerateBug } from "@/hooks/useBugs"
 import { useExecuteSql, useTestDbStatus } from "@/hooks/useTestDb"
 import { Badge } from "@/components/ui/badge"
@@ -13,11 +13,11 @@ import { CurlArtifact } from "@/components/feature/CurlArtifact"
 import { MockArtifact } from "@/components/feature/MockArtifact"
 import { ArtifactHead, CodeBlock, CopyButton, MetaChip, TypeBadge } from "@/components/feature/artifact-ui"
 import { ARTIFACT_BADGE } from "@/lib/artifacts"
-import { Bot, Check, ChevronDown, ChevronUp, Equal, Loader2, MessageSquare, Play, Search, Sparkles, X } from "lucide-react"
+import { Bot, Check, ChevronDown, ChevronUp, CircleAlert, Equal, Loader2, MessageSquare, Minus, Play, Search, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { countLabel } from "@/lib/plural"
 import { assistantKey, useAssistantStore } from "@/stores/assistantStore"
-import type { TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
+import type { ScriptRunStep, TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
 
 const ARTIFACTS = [
   { key: "curl_command", label: "Запрос" },
@@ -156,6 +156,7 @@ function TestCaseCard({
   const { data: bugsData } = useFeatureBugs(projectSlug, featureName)
   const bugGenerating = generateBugMut.isPending || !!bugsData?.bugs_running
   const scriptMut = useRequestScript(projectSlug, featureName)
+  const runMut = useRunScript(projectSlug, featureName)
   const attachToAssistant = useAssistantStore((s) => s.attach)
   const [showBugForm, setShowBugForm] = useState(false)
   const [bugComment, setBugComment] = useState("")
@@ -341,6 +342,21 @@ function TestCaseCard({
         </div>
       )}
 
+      {tc.script_status === "generated" && tc.script_text && (
+        <div className="flex flex-wrap items-center gap-2.5 border-t border-border/50 bg-muted/[0.12] px-4 py-2 text-[0.75rem] md:px-5">
+          <ScriptRunSummary tc={tc} />
+          {tc.script_run_status !== "queued" && tc.script_run_status !== "running" && (
+            <ScriptRequestButton
+              label={tc.script_run_status ? "Запустить ещё раз" : "Запустить на стенде"}
+              pending={runMut.isPending}
+              disabled={isBusy}
+              onClick={() => runMut.mutate(index)}
+            />
+          )}
+          {runMut.error && <span className="text-destructive">{(runMut.error as Error).message}</span>}
+        </div>
+      )}
+
       {!isOpen ? null : (
         <div className="space-y-3 px-4 py-4 md:pl-11">
           {tc.covers && (
@@ -402,6 +418,12 @@ function TestCaseCard({
                 />
                 <CodeBlock value={tc.script_text} />
               </div>
+            </TestCaseSection>
+          )}
+
+          {tc.script_status === "generated" && tc.script_run_status && tc.script_run_status !== "queued" && tc.script_run_status !== "running" && (
+            <TestCaseSection title="Прогон на стенде" surface>
+              <ScriptRunDetails tc={tc} />
             </TestCaseSection>
           )}
 
@@ -476,6 +498,102 @@ function TestCaseCard({
         </div>
       )}
     </article>
+  )
+}
+
+function firstLine(text: string | null | undefined) {
+  return (text ?? "").split("\n")[0]
+}
+
+/** One line under the case: how the scenario's run on the test stand ended. */
+function ScriptRunSummary({ tc }: { tc: TestCaseItem }) {
+  const steps = tc.script_run_steps ?? []
+  const failedAt = steps.findIndex((step) => step.status !== "passed" && step.status !== "skipped")
+  switch (tc.script_run_status) {
+    case "queued":
+      return (
+        <span className="flex items-center gap-1.5 text-muted-foreground">
+          <Play className="h-3.5 w-3.5" /> Прогон на стенде: в очереди
+        </span>
+      )
+    case "running":
+      return (
+        <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Сценарий выполняется на стенде…
+        </span>
+      )
+    case "passed":
+      return (
+        <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+          <Check className="h-3.5 w-3.5" strokeWidth={3} /> Прошёл на стенде · {countLabel(steps.length, ["шаг", "шага", "шагов"])}
+        </span>
+      )
+    case "failed":
+      return (
+        <span className="flex min-w-0 items-center gap-1.5 text-red-600 dark:text-red-400">
+          <X className="h-3.5 w-3.5 shrink-0" strokeWidth={3} />
+          <span className="[overflow-wrap:anywhere]">
+            Упал на стенде{failedAt >= 0 ? ` на шаге ${failedAt + 1} из ${steps.length}` : ""}
+            {tc.script_run_error ? `: ${firstLine(tc.script_run_error)}` : ""}
+          </span>
+        </span>
+      )
+    case "error":
+      return (
+        <span className="flex min-w-0 items-center gap-1.5 text-amber-700 dark:text-amber-400">
+          <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+          <span className="[overflow-wrap:anywhere]">
+            {/* Messages that already say «не запущен» are shown as they are */}
+            {tc.script_run_error?.startsWith("Сценарий не запущен")
+              ? firstLine(tc.script_run_error)
+              : `Не удалось запустить на стенде${tc.script_run_error ? `: ${firstLine(tc.script_run_error)}` : ""}`}
+          </span>
+        </span>
+      )
+    default:
+      return (
+        <span className="flex items-center gap-1.5 text-muted-foreground">
+          <Play className="h-3.5 w-3.5" /> На стенде не запускался
+        </span>
+      )
+  }
+}
+
+function ScriptRunStepIcon({ status }: { status: ScriptRunStep["status"] }) {
+  if (status === "passed") return <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" strokeWidth={3} />
+  if (status === "skipped") return <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+  return <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" strokeWidth={3} />
+}
+
+/** Step-by-step result of the run; the failed step carries the runner's message. */
+function ScriptRunDetails({ tc }: { tc: TestCaseItem }) {
+  const steps = tc.script_run_steps ?? []
+  if (steps.length === 0) {
+    return tc.script_run_error ? <CodeBlock value={tc.script_run_error} /> : null
+  }
+  return (
+    <ol className="space-y-1.5">
+      {steps.map((step, i) => (
+        <li key={i} className="space-y-1.5">
+          {step.scenario && step.scenario !== steps[i - 1]?.scenario && (
+            <p className="pt-1 text-[0.75rem] font-semibold text-foreground">{step.scenario}</p>
+          )}
+          <div className="flex gap-2">
+            <ScriptRunStepIcon status={step.status} />
+            <p
+              className={cn(
+                "min-w-0 font-mono text-[0.75rem] leading-5 [overflow-wrap:anywhere]",
+                step.status === "skipped" ? "text-muted-foreground/70" : "text-foreground",
+              )}
+            >
+              {step.keyword && <span className="text-muted-foreground">{step.keyword} </span>}
+              {step.text}
+            </p>
+          </div>
+          {step.error && <CodeBlock value={step.error} className="ml-5" />}
+        </li>
+      ))}
+    </ol>
   )
 }
 
