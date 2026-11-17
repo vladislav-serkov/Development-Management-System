@@ -13,7 +13,7 @@ import { ProjectSidebar, MethodBadge } from "@/components/sidebar"
 import { Bot, Loader2, Trash2, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { countLabel, plural } from "@/lib/plural"
-import { stripMethodPrefix } from "@/lib/artifacts"
+import { featureSubtitle, featureTitle } from "@/lib/artifacts"
 import { dependencyPath, featurePath, isFeatureTab, projectPath, type FeatureTab } from "@/lib/routes"
 import { useConfirm } from "@/components/ConfirmDialog"
 import type {
@@ -156,7 +156,7 @@ export default function ProjectPage() {
             key={selectedFeature.name}
             projectSlug={projectSlug!}
             featureName={selectedFeature.name}
-            featureTitle={selectedFeature.display_name ?? stripMethodPrefix(selectedFeature.name, selectedFeature.method)}
+            featureTitle={featureTitle(selectedFeature)}
           />
         </Suspense>
       )}
@@ -209,7 +209,8 @@ function ProjectContentArea({
     const integrationMeta = getFeatureIntegrationMeta(selectedFeature, selectedFeature.endpoint)
     const featureSummary = selectedFeature.summary ?? "Добавьте краткое описание, чтобы экран было проще сканировать и обсуждать с командой."
     const canCollapseSummary = featureSummary.length > 200
-    const title = selectedFeature.display_name ?? stripMethodPrefix(selectedFeature.name, selectedFeature.method)
+    const title = featureTitle(selectedFeature)
+    const subtitle = featureSubtitle(selectedFeature)
     const extraMeta = integrationMeta.value && integrationMeta.value !== title && integrationMeta.value !== selectedFeature.name ? integrationMeta : null
     const staleTargets = [
       selectedFeature.gaps_stale ? "Gaps-анализ" : null,
@@ -240,6 +241,7 @@ function ProjectContentArea({
                   </Badge>
                 )}
               </div>
+              {subtitle && <p className="max-w-4xl text-base leading-6 font-medium">{subtitle}</p>}
               <p
                 className="max-w-4xl text-sm leading-6 text-muted-foreground"
                 style={canCollapseSummary && !isSummaryExpanded ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } : undefined}
@@ -490,7 +492,7 @@ function ProjectContentArea({
                     <td className="px-4 py-2.5">
                       <div className="flex items-start gap-1.5">
                         <MethodBadge method={f.method} featureType={f.type} />
-                        <span className="break-all font-mono text-[0.8125rem] font-medium">{f.display_name ?? stripMethodPrefix(f.name, f.method)}</span>
+                        <span className="break-all font-mono text-[0.8125rem] font-medium">{featureTitle(f)}</span>
                       </div>
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">{f.test_case_count ?? 0}</td>

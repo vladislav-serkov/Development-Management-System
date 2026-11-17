@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 import { countLabel } from "@/lib/plural"
 import { MethodBadge } from "./MethodBadge"
 import { SidebarTrashButton } from "./sidebar-helpers"
-import { stripMethodPrefix } from "@/lib/artifacts"
+import { featureSubtitle, featureTitle } from "@/lib/artifacts"
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog"
 import type { FeatureResponse } from "@/types/api"
 
@@ -18,7 +18,8 @@ interface FeatureListItemProps {
 
 export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, isDeletePending }: FeatureListItemProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const name = feature.display_name ?? stripMethodPrefix(feature.name, feature.method)
+  const name = featureTitle(feature)
+  const subtitle = featureSubtitle(feature)
   const stale = !feature.orphaned && (feature.gaps_stale || feature.test_cases_stale)
 
   return (
@@ -26,7 +27,7 @@ export function FeatureListItem({ feature, isActive, onFeatureClick, onDelete, i
       <div className="group relative flex items-start">
         <button
           onClick={() => onFeatureClick(feature.name)}
-          title={feature.display_name ?? feature.name}
+          title={subtitle ? `${feature.name} — ${subtitle}` : feature.display_name ?? feature.name}
           className={cn(
             "flex-1 rounded-lg px-2 py-1.5 text-left transition-colors",
             isActive ? "bg-background shadow-[0_0_0_1px_var(--color-border)]" : "hover:bg-background/70",

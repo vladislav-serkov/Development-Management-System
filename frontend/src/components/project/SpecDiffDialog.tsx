@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { featureTitle } from "@/lib/artifacts"
 import type { DocumentResponse, FeatureDiff, SpecTableDiff } from "@/types/api"
 
 interface SpecDiffDialogProps {
@@ -90,7 +91,7 @@ function FeatureDiffBlock({ change }: { change: FeatureDiff }) {
   return (
     <section className="rounded-xl border border-border/70 p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="font-medium">{change.display_name ?? change.name}</p>
+        <p className="font-medium">{change.type ? featureTitle(change) : change.display_name ?? change.name}</p>
         <Badge variant="outline" className="text-[0.6875rem] text-amber-700 dark:text-amber-400">изменена</Badge>
       </div>
 

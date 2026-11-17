@@ -1,5 +1,3 @@
-import difflib
-import json
 import logging
 import re
 from collections.abc import Callable
@@ -14,6 +12,7 @@ from app.schemas.extraction import (
 )
 from app.services.codex_client import call_structured
 from app.services.dep_impact import mark_feature_stale
+from app.services.feature_identity import page_header, resolve_identity
 from app.services.rules import build_system_prompt
 from app.services.spec_diff import _names_contain, compute_spec_diff, merge_reextracted_feature
 
@@ -25,90 +24,8 @@ def _normalize_dep_name(name: str) -> str:
     return name.strip().replace(" ", "_")
 
 
-# Dotted identifiers like Kafka topics: at least three dot-separated segments
-_DOTTED_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}\b")
-# URL-ish paths like /v1/credit-line or /api/orders/{id}
+# "GET /v1/working-day" as a dependency name: the method is not part of the name
 _TITLE_METHOD_RE = re.compile(r"\s*(GET|POST|PUT|PATCH|DELETE)\b", re.IGNORECASE)
-_PATH_TOKEN_RE = re.compile(r"(?<![\w.])/(?:[\w.-]+|\{[\w.-]+\})(?:/(?:[\w.-]+|\{[\w.-]+\}))+")
-
-
-def _enforce_spec_identity(
-    detected: DetectedFeature,
-    *,
-    title: str,
-    text: str,
-    tables: list[dict] | None,
-    single_feature: bool = False,
-) -> str | None:
-    """Feature identity must be verbatim from the spec, never invented by the LLM:
-    the Kafka topic / REST path the model claims has to literally occur in the
-    document (title, body or tables). If it doesn't, replace it with the closest
-    real token from the spec. Returns a warning string when a correction happened.
-
-    For a single-feature REST/Kafka page whose title carries a path/topic ("GET /v1/client/debt"),
-    the title IS the identity: pages also mention other real paths (a swagger link
-    to the controller path, a gateway route), and letting the LLM pick among them
-    renamed the feature from run to run.
-
-    scheduled_task names are semantic slugs by design and are not touched
-    (their verbatim identity lives in display_name).
-    """
-    ftype = detected.type.value if hasattr(detected.type, "value") else str(detected.type)
-    corpus = "\n".join([title or "", text or "", json.dumps(tables or [], ensure_ascii=False)])
-
-    if ftype == "kafka_consumer":
-        claimed = (detected.endpoint or detected.name or "").strip()
-        title_topics = list(dict.fromkeys(_DOTTED_TOKEN_RE.findall(title or "")))
-        if single_feature and len(title_topics) == 1:
-            # Kafka spec pages are titled with the topic; the body also names the
-            # topics the consumer writes to, and the LLM alternated between them
-            topic = title_topics[0]
-            detected.name = detected.endpoint = topic
-            return f"kafka topic '{claimed}' заменён на топик из заголовка ТЗ '{topic}'" if claimed != topic else None
-        candidates = list(dict.fromkeys(_DOTTED_TOKEN_RE.findall(corpus)))
-        if claimed and claimed in candidates:
-            detected.name = claimed
-            detected.endpoint = claimed
-            return None
-        best = None
-        if claimed and candidates:
-            matches = difflib.get_close_matches(claimed, candidates, n=1, cutoff=0.6)
-            best = matches[0] if matches else None
-        if best is None:
-            # A Kafka spec page is conventionally titled with the topic name
-            title_tokens = _DOTTED_TOKEN_RE.findall(title or "")
-            best = title_tokens[0] if title_tokens else None
-        if best is None:
-            return f"kafka topic '{claimed}' не найден в тексте ТЗ (оставлен как есть)"
-        detected.name = best
-        detected.endpoint = best
-        return f"kafka topic '{claimed}' не найден в ТЗ — заменён на '{best}'"
-
-    if ftype == "rest_endpoint":
-        claimed = (detected.endpoint or "").strip()
-        title_paths = list(dict.fromkeys(_PATH_TOKEN_RE.findall(title or "")))
-        if single_feature and len(title_paths) == 1:
-            path = title_paths[0]
-            title_method = _TITLE_METHOD_RE.match(title or "")
-            method = title_method.group(1).upper() if title_method else detected.method
-            canonical = f"{method} {path}".strip() if method else path
-            changed = path != claimed
-            detected.endpoint, detected.method, detected.name = path, method, canonical
-            return f"REST path '{claimed}' заменён на путь из заголовка ТЗ '{path}'" if changed else None
-        candidates = list(dict.fromkeys(_PATH_TOKEN_RE.findall(corpus)))
-        path = claimed if claimed and claimed in candidates else None
-        if path is None and claimed and candidates:
-            matches = difflib.get_close_matches(claimed, candidates, n=1, cutoff=0.6)
-            path = matches[0] if matches else None
-        if path is None:
-            return f"REST path '{claimed}' не найден в тексте ТЗ (оставлен как есть)" if claimed else None
-        canonical = f"{detected.method} {path}".strip() if detected.method else path
-        changed = path != claimed or detected.name != canonical
-        detected.endpoint = path
-        detected.name = canonical
-        return f"REST path '{claimed}' не найден в ТЗ — заменён на '{path}'" if changed and path != claimed else None
-
-    return None
 
 
 def _build_document_block(text: str, cache: bool = False) -> dict:
@@ -521,48 +438,54 @@ async def _rename_dep_rows(store, project_slug: str, renames: list[tuple[str, st
             logger.warning("Dependency rename %s '%s' → '%s' failed (non-fatal): %s", dep_type, old, new, exc)
 
 
-async def _carry_renames(store, project_slug: str, prior_features: dict, detected_features, foreign: dict) -> None:
-    """A detected feature that is a prior feature under a new name is a rename,
-    not remove+add: the prior row is renamed so its gaps/test-cases/bugs follow.
+def _pair_with_prior(prior_features: dict, detected_features: list[DetectedFeature]) -> dict[int, str]:
+    """Which feature of this document each detected one continues: index → prior name.
 
-    Single-feature pages (kafka/rest: the page IS the feature) pair 1↔1. Pages
-    with several features (scheduled tasks — LLM-slugged names) pair by the
-    verbatim parts of identity: display_name, then endpoint.
+    Single-feature pages (the page IS the feature) pair 1↔1. Pages with several
+    features pair by name, then by the verbatim parts of identity: display_name,
+    then endpoint. A pair is what makes identity stable: the detected feature
+    keeps the prior identity while the page still supports it, and when the
+    identity does change the prior row is renamed instead of removed + added.
     """
-    detected_names = {d.name for d in detected_features}
-    left_prior = {
-        n: f for n, f in prior_features.items()
-        if not f.get("orphaned") and n not in detected_names
-    }
-    left_detected = [d for d in detected_features if d.name not in prior_features and d.name not in foreign]
-    if not left_prior or not left_detected:
-        return
+    active = {n: f for n, f in prior_features.items() if not f.get("orphaned")}
+    pairs: dict[int, str] = {}
+    if not active or not detected_features:
+        return pairs
+    if len(active) == 1 and len(detected_features) == 1:
+        (prior_name, prior_feat), = active.items()
+        if prior_feat.get("type") == detected_features[0].type.value:
+            pairs[0] = prior_name
+        return pairs
 
     def _key(value) -> str:
         return " ".join(str(value or "").split()).lower()
 
-    pairs: list[tuple[str, object]] = []
-    active_prior = [n for n, f in prior_features.items() if not f.get("orphaned")]
-    if len(active_prior) == 1 and len(detected_features) == 1 and len(left_detected) == 1:
-        (prior_name, prior_feat), = left_prior.items()
-        if prior_feat.get("type") == left_detected[0].type.value:
-            pairs.append((prior_name, left_detected[0]))
-    else:
-        for attr in ("display_name", "endpoint"):
-            for detected in list(left_detected):
-                want = _key(getattr(detected, attr, None))
-                if not want:
-                    continue
-                match = [
-                    n for n, f in left_prior.items()
-                    if f.get("type") == detected.type.value and _key(f.get(attr)) == want
-                ]
-                if len(match) == 1:
-                    pairs.append((match[0], detected))
-                    left_prior.pop(match[0])
-                    left_detected.remove(detected)
+    left = dict(active)
+    for attr in ("name", "display_name", "endpoint"):
+        for index, detected in enumerate(detected_features):
+            want = _key(getattr(detected, attr, None))
+            if index in pairs or not want:
+                continue
+            match = [
+                n for n, f in left.items()
+                if f.get("type") == detected.type.value and _key(f.get(attr)) == want
+            ]
+            if len(match) == 1:
+                pairs[index] = match[0]
+                left.pop(match[0])
+    return pairs
 
-    for prior_name, detected in pairs:
+
+async def _carry_renames(
+    store, project_slug: str, prior_features: dict, detected_features: list[DetectedFeature],
+    pairs: dict[int, str], foreign: dict,
+) -> None:
+    """A detected feature that continues a prior one under a new name is a rename,
+    not remove+add: the prior row is renamed so its gaps/test-cases/bugs follow."""
+    for index, prior_name in pairs.items():
+        detected = detected_features[index]
+        if detected.name == prior_name or detected.name in prior_features or detected.name in foreign:
+            continue
         try:
             renamed = await store.rename_feature(project_slug, prior_name, detected.name)
         except ValueError:
@@ -571,6 +494,11 @@ async def _carry_renames(store, project_slug: str, prior_features: dict, detecte
             prior_features.pop(prior_name, None)
             prior_features[detected.name] = renamed
             logger.info("Re-extraction: '%s' renamed to '%s' (analysis carried over)", prior_name, detected.name)
+
+
+def _same_title(a: str | None, b: str | None) -> bool:
+    """"POST/v1/x" retitled "POST /v1/x" is the same title."""
+    return "".join((a or "").split()) == "".join((b or "").split())
 
 
 def normalize_source_text(text: str | None) -> str:
@@ -590,6 +518,7 @@ async def run_extraction_pipeline(
     prev_text: str | None = None,
     new_version: int | None = None,
     new_source: dict | None = None,
+    prev_title: str | None = None,
 ) -> None:
     """Extraction pipeline for one document (markdown text) = one or more features.
 
@@ -599,8 +528,8 @@ async def run_extraction_pipeline(
     Designed to run as a background task (asyncio.create_task).
     The document record must already exist in storage before calling this.
 
-    Re-import (``prev_text`` = the page text the current features were extracted
-    from): when the page text is unchanged, nothing about the spec changed — any
+    Re-import (``prev_text``/``prev_title`` = the page the current features were
+    extracted from): when the page text is unchanged, nothing about the spec changed — any
     difference in the new extraction is LLM run-to-run noise, so no feature is
     marked stale or orphaned. ``new_version``/``new_source`` are committed to the
     document only when every feature succeeded: a failed or partial re-import
@@ -631,18 +560,24 @@ async def run_extraction_pipeline(
         return
     if new_version is None:
         new_version = doc_data.get("confluence_version")
-    source_unchanged = prev_text is not None and (
-        normalize_source_text(prev_text) == normalize_source_text(text_content)
-    )
 
-    # Stable link targets for dependency identity across spec versions
-    links_by_id: dict[str, dict] = {}
+    source: dict = {}
     try:
-        source = new_source or await store.get_document_source(project_slug, doc_slug)
-        if source:
-            links_by_id = {str(l.get("id")): l for l in source.get("links") or [] if l.get("id")}
+        source = new_source or await store.get_document_source(project_slug, doc_slug) or {}
     except Exception as exc:
-        logger.warning("Loading document source links failed (non-fatal): %s", exc)
+        logger.warning("Loading document source failed (non-fatal): %s", exc)
+    # Stable link targets for dependency identity across spec versions
+    links_by_id = {str(link.get("id")): link for link in source.get("links") or [] if link.get("id")}
+
+    # The page as the model sees it: its title and place in the page tree are part
+    # of the spec — the path, the method or the topic is often stated only there
+    title = source.get("title") or filename
+    header = page_header(title, source.get("ancestors"), source.get("service_name") or doc_data.get("service_name"))
+    source_unchanged = (
+        prev_text is not None
+        and normalize_source_text(prev_text) == normalize_source_text(text_content)
+        and (prev_title is None or _same_title(prev_title, title))
+    )
 
     # Snapshot this document's features before re-extraction: the source of the
     # spec diff. Analysis state is merged from the live row at save time.
@@ -678,7 +613,7 @@ async def run_extraction_pipeline(
         await store.finish_task(project_slug, task["id"], status="error", error_message=message)
 
     try:
-        detected_features = await _detect_features(text_content, model, extraction_system_prompt)
+        detected_features = await _detect_features(f"{header}\n\n{text_content}", model, extraction_system_prompt)
     except Exception as exc:
         logger.error("Feature detection failed for %s: %s", filename, exc)
         await _fail_document(str(exc))
@@ -690,14 +625,18 @@ async def run_extraction_pipeline(
         "error_message": None,
     })
 
-    # Identity must come from the spec, not the LLM: same page → same feature name
-    for detected in detected_features:
-        warning = _enforce_spec_identity(
-            detected, title=filename, text=text_content, tables=tables,
+    # Identity comes from the page, not from the model's wording: every part is
+    # checked against the page, the name is assembled in code, and a feature the
+    # page already has keeps its identity while the page still supports it
+    pairs = _pair_with_prior(prior_features, detected_features)
+    for index, detected in enumerate(detected_features):
+        note = resolve_identity(
+            detected, title=title, text=text_content, tables=tables,
+            prior=prior_features.get(pairs.get(index, "")),
             single_feature=len(detected_features) == 1,
         )
-        if warning:
-            logger.warning("Feature identity corrected for '%s': %s", filename, warning)
+        if note:
+            logger.warning("Feature identity for '%s': %s", filename, note)
         renames = _canonicalize_dep_names(detected.structured_logic, links_by_id)
         renames += _renames_from_prior(prior_features, detected.structured_logic, links_by_id, source_unchanged)
         await _rename_dep_rows(store, project_slug, renames)
@@ -709,7 +648,7 @@ async def run_extraction_pipeline(
         if f.get("source_document") and f.get("source_document") != doc_slug:
             foreign[f["name"]] = f["source_document"]
 
-    await _carry_renames(store, project_slug, prior_features, detected_features, foreign)
+    await _carry_renames(store, project_slug, prior_features, detected_features, pairs, foreign)
 
     succeeded: list[str] = []
     failures: list[tuple[str, str]] = []

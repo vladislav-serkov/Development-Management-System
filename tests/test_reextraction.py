@@ -66,7 +66,10 @@ def _as_grids(detected: list[DetectedFeature]) -> list[dict]:
     return grids
 
 
-async def _run_pipeline(store, monkeypatch, project_slug, doc_slug, detected, prev_version=None, new_version=None):
+async def _run_pipeline(
+    store, monkeypatch, project_slug, doc_slug, detected, prev_version=None, new_version=None,
+    text="GET /v1/x и GET /v1/y — тестовое ТЗ",
+):
     async def fake_detect(*args, **kwargs):
         return detected
 
@@ -76,7 +79,7 @@ async def _run_pipeline(store, monkeypatch, project_slug, doc_slug, detected, pr
     # The endpoint value literally occurs in text_content so identity enforcement keeps it
     await extraction.run_extraction_pipeline(
         filename="doc",
-        text_content="GET /v1/x и GET /v1/y — тестовое ТЗ",
+        text_content=text,
         store=store,
         project_slug=project_slug,
         doc_slug=doc_slug,
@@ -160,11 +163,21 @@ async def test_single_feature_rename_carries_analysis(store, monkeypatch):
     await _run_pipeline(store, monkeypatch, slug, "doc", [_detected("GET /v1/x")], new_version=12)
     await store.save_test_cases(slug, "GET /v1/x", [{"name": "tc", "status": "approved"}])
 
-    # Re-extraction picks the other path from the same page
+    # Re-extraction picks the other path from the same page: the page still names
+    # the path the feature already has, so nothing is renamed
     await _run_pipeline(
         store, monkeypatch, slug, "doc",
         [_detected("GET /v1/y", endpoint="/v1/y")],
         prev_version=12, new_version=13,
+    )
+    assert await store.get_feature(slug, "GET /v1/y") is None
+    assert (await store.get_feature(slug, "GET /v1/x"))["test_case_count"] == 1
+
+    # The spec moved the endpoint: the old path is gone from the page
+    await _run_pipeline(
+        store, monkeypatch, slug, "doc",
+        [_detected("GET /v1/y", endpoint="/v1/y")],
+        prev_version=13, new_version=14, text="GET /v1/y — тестовое ТЗ",
     )
 
     assert await store.get_feature(slug, "GET /v1/x") is None
@@ -328,7 +341,9 @@ async def test_name_of_another_documents_feature_is_not_overwritten(store, monke
     assert doc["status"] == "partial" and "other" in doc["error_message"]
 
 
-async def test_multi_feature_rename_by_display_name(store, monkeypatch):
+async def test_multi_feature_slug_is_kept_by_display_name(store, monkeypatch):
+    """The slug of a scheduled task is the model's wording; the task is recognised
+    by its heading and keeps the name (and the analysis) it already has."""
     def task(name, display):
         return DetectedFeature(
             name=name, display_name=display, type=FeatureType.scheduled_task, confidence=0.9,
@@ -345,9 +360,10 @@ async def test_multi_feature_rename_by_display_name(store, monkeypatch):
                                                task("send_reminders", "Напоминания")],
                     prev_confluence_version=12, prev_text=TEXT)
 
-    assert await store.get_feature(slug, "close_expired_loans") is None
-    feat = await store.get_feature(slug, "close-expired-loans")
+    assert await store.get_feature(slug, "close-expired-loans") is None
+    feat = await store.get_feature(slug, "close_expired_loans")
     assert feat["test_case_count"] == 1 and not feat.get("orphaned")
+    assert len([f for f in await store.list_features(slug) if not f.get("orphaned")]) == 2
 
 
 async def test_external_doc_name_comes_from_link(store, monkeypatch):
@@ -448,3 +464,79 @@ async def test_prior_dep_without_link_keys_follows_by_name(store, monkeypatch):
     assert [(d["name"], d["enrichment_status"]) for d in deps["external_doc"]] == [
         ("[flp-order] Алгоритм подсчета задолженности", "enriched")
     ]
+
+
+async def test_page_title_reaches_the_model_and_fixes_a_misnamed_feature(store, monkeypatch):
+    """Seen live: the path was only in the page title ("[svc] POST/v1/…"), the model
+    never saw the title and the feature got the first line of the body as its name.
+    A re-import renames it — with its analysis — instead of adding a second feature."""
+    slug = await _doc_project(store, "Titled")
+    title = "[flp-rbo-adapter] POST/v1/support/payment/retry"
+    line = "Повторная отправка данных о совершенном платеже в РБО"
+    source = {
+        "title": title, "markdown": line, "links": [], "service_name": "flp-rbo-adapter",
+        "ancestors": [{"page_id": "1", "title": "Pay Later"}, {"page_id": "2", "title": "flp-rbo-adapter"}],
+    }
+    # what the old pipeline stored
+    await store.save_feature(slug, {
+        "name": line, "source_document": "doc", "type": "rest_endpoint", "method": None,
+        "endpoint": None, "display_name": None, "status": "done",
+        "structured_logic_json": StructuredBusinessLogic().model_dump(),
+    })
+    await store.save_test_cases(slug, line, [{"name": "tc", "status": "approved"}])
+
+    seen: list[str] = []
+
+    async def fake_detect(doc_content, *args, **kwargs):
+        seen.append(doc_content)
+        return [DetectedFeature(
+            name="/v1/support/payment/retry", display_name=line, type=FeatureType.rest_endpoint,
+            confidence=0.9, summary="s", method="POST", endpoint="/v1/support/payment/retry",
+            structured_logic=StructuredBusinessLogic(logic_steps=[LogicStep(number="1", text="шаг")]),
+        )]
+
+    monkeypatch.setattr(extraction, "_detect_features", fake_detect)
+    await extraction.run_extraction_pipeline(
+        filename=title, text_content=line, store=store, project_slug=slug, doc_slug="doc",
+        tables=[], prev_confluence_version=12, prev_text=line, prev_title=title, new_source=source,
+    )
+
+    assert seen[0].startswith("[СТРАНИЦА]\nЗаголовок страницы: " + title)
+    assert "Расположение: Pay Later / flp-rbo-adapter" in seen[0] and seen[0].endswith(line)
+
+    assert await store.get_feature(slug, line) is None
+    feat = await store.get_feature(slug, "POST /v1/support/payment/retry")
+    assert feat["endpoint"] == "/v1/support/payment/retry" and feat["method"] == "POST"
+    assert feat["display_name"] == line
+    assert feat["test_case_count"] == 1 and not feat.get("test_cases_stale")
+    assert len(await store.list_features(slug)) == 1
+
+
+async def test_retitled_page_is_a_changed_spec(store, monkeypatch):
+    """The title is part of the spec: a new path in the title with an untouched
+    body is a real change (the feature is renamed and its test cases go stale),
+    while re-spacing the title is not."""
+    slug = await _doc_project(store, "Retitled")
+
+    async def run(title, prev_title, endpoint):
+        async def fake_detect(*args, **kwargs):
+            return [_detected(f"GET {endpoint}", endpoint=endpoint)]
+
+        monkeypatch.setattr(extraction, "_detect_features", fake_detect)
+        await extraction.run_extraction_pipeline(
+            filename=title, text_content="тело без путей", store=store, project_slug=slug, doc_slug="doc",
+            tables=_as_grids([_detected()]), prev_confluence_version=12 if prev_title else None,
+            prev_text="тело без путей" if prev_title else None, prev_title=prev_title,
+            new_source={"title": title, "markdown": "тело без путей", "links": []},
+        )
+
+    await run("[svc] GET/v1/a/b", None, "/v1/a/b")
+    await store.save_test_cases(slug, "GET /v1/a/b", [{"name": "tc", "status": "approved"}])
+
+    await run("[svc] GET /v1/a/b", "[svc] GET/v1/a/b", "/v1/a/b")
+    assert not (await store.get_feature(slug, "GET /v1/a/b")).get("test_cases_stale")
+
+    await run("[svc] GET /v1/a/c", "[svc] GET /v1/a/b", "/v1/a/c")
+    assert await store.get_feature(slug, "GET /v1/a/b") is None
+    feat = await store.get_feature(slug, "GET /v1/a/c")
+    assert feat["test_case_count"] == 1 and feat["test_cases_stale"] is True
