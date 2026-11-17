@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { ArtifactHead, CodeBlock, CopyButton, MetaChip, SubTabs } from "./artifact-ui"
 import { prettyJsonOrRaw } from "@/lib/artifacts"
 import type { HttpExecuteResponse } from "@/types/api"
+import { StandUnreachableNotice } from "@/components/StandUnreachableNotice"
 
 function statusTone(status: number): string {
   if (status < 300) return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400"
@@ -187,7 +188,8 @@ export function CurlArtifact({
         <p className="whitespace-pre-wrap break-words text-[0.8125rem] text-destructive">{(execMut.error as Error).message}</p>
       )}
       {execMut.data && <ResponsePanel result={execMut.data} />}
-      {execMut.data && onDiscuss && (
+      {execMut.data?.unreachable && <StandUnreachableNotice />}
+      {execMut.data && !execMut.data.unreachable && onDiscuss && (
         <Button size="sm" variant="outline" onClick={() => onDiscuss(execMut.data)}>
           <Sparkles />
           Разобрать с ассистентом

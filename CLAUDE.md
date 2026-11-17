@@ -92,6 +92,7 @@ docker compose -f docker-compose.prod.yml up  # production: nginx + backend
   - `assistant.py` — test-case assistant chat per feature (`/projects/{slug}/features/{name}/assistant/...`): sessions, queued messages, cancel/retry, undo of saved changes, suggestions
   - `bugs.py` — bug reports derived from test cases (`/projects/{slug}/features/{name}/bugs/...`)
   - `rules.py` — project-level validation rules (`/projects/{slug}/rules/...`)
+  - `platform.py` — `/platform/support` (whom the UI names when the stand is unreachable: `SUPPORT_CONTACT_NAME`/`SUPPORT_CONTACT_URL`) and `/platform/codex-limits` — usage windows of the ChatGPT subscription behind every Codex workflow, read via the app-server `account/rateLimits/read` in a short-lived process outside the agent queue (`services/codex_limits.py`, cached 60 s; shown in the project sidebar and on the home page). A failed connection to the stand DB/HTTP/WireMock is flagged `unreachable` (`services/stand_network.py`): the UI shows the contact instead of «fix with the assistant», and the assistant is told it is not the case's fault
   - `test_wiremock.py` — `/test-wiremock/status|upload`; uploads a test-case `mock_config` to the fixed configured WireMock target. `services/wiremock.py` validates the mapping envelope, preserves response body strings, honours explicit UUIDs or derives a stable id from the matcher/scenario, updates via PUT and creates via POST on 404; never resets unrelated mappings or saves startup defaults
 - **`app/services/`** — Business logic:
   - `extraction.py` — single Codex call: markdown document → `FeatureDetectionResult` as a structured output (`codex_client.call_structured`). The LLM only *classifies* tables (which [TABLE:Tn] id belongs to input/response/step mapping + HTTP status codes); all parameter/mapping tables are built deterministically by `table_mapping.py` from parsed grids (no LLM rewriting). Logic steps come back as a flat list and are nested by number in code (`nest_steps`)
@@ -168,6 +169,7 @@ There is no linked-project registry anymore; the DB is the single source of trut
 - `RU_DSL_REPO_DIR` / `DSL_SCRIPT_AUTO` / `DSL_SCRIPT_LOG_DIR` — ru-dsl-v2 clone for scenarios of accepted test cases (empty = off), automatic queueing on «Принять», job logs. Legacy `AUTOTESTS_REPO_DIR` / `AUTOTEST_AUTO` / `AUTOTEST_LOG_DIR` are accepted but unused
 - `BUG_FIXER_AUTO` / `BUG_FIX_TIMEOUT_SECONDS` — automatic bug-fix queueing and the timeout of every coding job
 - `TEST_DB_URL` / `TEST_STAND_URL` — optional execution of SQL/curl test artifacts against a test stand
+- `SUPPORT_CONTACT_NAME` (dative: «Обратитесь к …») / `SUPPORT_CONTACT_URL` — platform contact shown when the stand is unreachable from the platform; the VPS offline page `deploy/maintenance.html` names the same contact
 - `TEST_WIREMOCK_URL` — optional WireMock base URL including gateway prefix, without `/__admin/mappings`; enables one-click mock upload in test cases
 - `AUTH_ENABLED` (default off — local dev stays open; `scripts/serve.sh` turns it on) / `COOKIE_SECURE` / `SESSION_TTL_DAYS` — web UI login
 - Python 3.12+, Node 22+

@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { countLabel } from "@/lib/plural"
 import { assistantKey, useAssistantStore } from "@/stores/assistantStore"
 import type { ScriptRunStep, TestCaseItem, TestCaseCategory, SqlExecuteResponse } from "@/types/api"
+import { StandUnreachableNotice } from "@/components/StandUnreachableNotice"
 
 const ARTIFACTS = [
   { key: "curl_command", label: "Запрос" },
@@ -737,7 +738,8 @@ function SqlArtifact({ value, onFix }: { value: string; onFix: (result: SqlExecu
         <p className="whitespace-pre-wrap break-words text-[0.75rem] text-destructive">{(execMut.error as Error).message}</p>
       )}
       {execMut.data && <SqlRunResults result={execMut.data} />}
-      {execMut.data?.error && (
+      {execMut.data?.unreachable && <StandUnreachableNotice />}
+      {execMut.data?.error && !execMut.data.unreachable && (
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={() => onFix(execMut.data)}>
             <Sparkles />

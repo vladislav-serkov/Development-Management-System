@@ -611,6 +611,8 @@ export interface AssistantAction {
   detail: string
   duration_ms: number | null
   at: string
+  /** true = the platform could not connect to the stand */
+  unreachable?: boolean
 }
 
 export interface AssistantChange {
@@ -716,6 +718,8 @@ export interface SqlExecuteResponse {
   error: string | null
   failed_statement: number | null
   duration_ms: number
+  /** true = the platform could not connect to the test DB at all */
+  unreachable?: boolean
 }
 
 // Test stand (curl artifact execution) types
@@ -743,6 +747,39 @@ export interface HttpExecuteResponse {
   body_truncated: boolean
   duration_ms: number
   error: string | null
+  /** true = the request never reached the stand (no connection) */
+  unreachable?: boolean
+}
+
+// Platform: support contact and Codex subscription limits
+export interface SupportContact {
+  name: string | null
+  url: string | null
+}
+
+export interface CodexLimitWindow {
+  kind: "primary" | "secondary"
+  window_minutes: number | null
+  used_percent: number
+  resets_at: string | null
+}
+
+export interface CodexLimitBucket {
+  id: string | null
+  name: string | null
+  windows: CodexLimitWindow[]
+  reached: boolean
+}
+
+export interface CodexLimits {
+  available: boolean
+  error: string | null
+  fetched_at: string | null
+  plan?: string | null
+  limits?: CodexLimitBucket[]
+  usage_allowed?: boolean | null
+  credits?: { has_credits: boolean; unlimited: boolean; balance: string | null } | null
+  reset_credits?: number
 }
 
 // Bug Report types

@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services.stand_network import describe_http_error, http_unreachable
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +132,8 @@ async def execute_request(
                 content=body.encode("utf-8") if body is not None else None,
             )
     except httpx.HTTPError as exc:
-        logger.warning("test-stand request failed: %s %s: %s", method, url, exc)
-        message = str(exc).strip() or exc.__class__.__name__
-        if isinstance(exc, httpx.TimeoutException):
-            message = f"Таймаут запроса ({REQUEST_TIMEOUT}с)"
+        message = describe_http_error(exc, REQUEST_TIMEOUT)
+        logger.warning("test-stand request failed: %s %s: %s", method, url, message)
         return {
             "url": url,
             "method": method,
@@ -145,6 +144,7 @@ async def execute_request(
             "body_truncated": False,
             "duration_ms": int((time.monotonic() - started) * 1000),
             "error": f"Не удалось выполнить запрос: {message}",
+            "unreachable": http_unreachable(exc),
         }
 
     text = response.text

@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Badge } from "@/components/ui/badge"
 import { projectPath, rulesPath } from "@/lib/routes"
 import { useLogout, useMe } from "@/hooks/useAuth"
+import { CodexLimits } from "@/components/CodexLimits"
 import type { ProjectResponse } from "@/types/api"
 
 export default function HomePage() {
@@ -216,11 +217,16 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <SummaryCard icon={<FolderKanban className="h-4 w-4" />} label="Проекты" value={totalProjects} helper="Всего рабочих пространств" />
         <SummaryCard icon={<FileText className="h-4 w-4" />} label="Документы" value={totalDocuments} helper="Импортированные страницы" />
         <SummaryCard icon={<Workflow className="h-4 w-4" />} label="Фичи" value={totalFeatures} helper="Извлеченные сущности" />
         <SummaryCard icon={<Sparkles className="h-4 w-4" />} label="Готово" value={readyProjects} helper="Проекты со статусом done" />
+        <Card className="border border-border/70 md:col-span-2 xl:col-span-1">
+          <CardContent className="py-4">
+            <CodexLimits />
+          </CardContent>
+        </Card>
       </div>
 
       {isLoading && (

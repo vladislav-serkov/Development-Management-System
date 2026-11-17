@@ -6,7 +6,7 @@ The published site is https://24dms.ru. The application runs directly from this 
 
 - `scripts/serve.sh` starts the Compose PostgreSQL service and serves the API under `/api` plus `frontend/dist` on `127.0.0.1:8080` with one uvicorn worker. Startup applies Alembic migrations and enables login and secure cookies.
 - `autossh` forwards VPS `127.0.0.1:18080` to Mac `127.0.0.1:8080` using `~/.ssh/extract_agent_tunnel` and the restricted `tunnel` user at `72.56.107.180`.
-- VPS nginx terminates TLS and proxies to port 18080. Its config is `/etc/nginx/sites-available/extract-agent`; the offline page is `/var/www/extract-agent/maintenance.html`. Certificate renewal uses `certbot.timer` with the nginx authenticator.
+- VPS nginx terminates TLS and proxies to port 18080. Its config is `/etc/nginx/sites-available/extract-agent`; the offline page is `/var/www/extract-agent/maintenance.html` (source: `deploy/maintenance.html`, copied by hand: `scp deploy/maintenance.html <admin>@72.56.107.180:/var/www/extract-agent/maintenance.html`; it names the platform contact from `SUPPORT_CONTACT_*`). Certificate renewal uses `certbot.timer` with the nginx authenticator.
 - The host process can reach service repositories and the Codex runtime, and uses the corporate VPN for Confluence/Jira access.
 
 The code in this checkout is production code. Develop source changes in a separate worktree with a dedicated development database. Merely switching branches here changes what the next app restart will load, including after a crash, reboot, or login.
