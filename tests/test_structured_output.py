@@ -18,13 +18,13 @@ from app.schemas.extraction import (
     nest_steps,
 )
 from app.schemas.gaps import ApplyResult, GapsAnalysisResult
-from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
+from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult
 from app.services import agent_runner, codex_client
 from app.services.codex_client import call_structured, output_schema
 
 ALL_SCHEMAS = [
     FeatureDetectionResult, ApplyResult, GapsAnalysisResult,
-    TestCasePlanResult, TestCaseGenerationResult, TestCaseAskResult, BugReportResult, AssistantStep,
+    TestCaseGenerationResult, TestCaseAskResult, BugReportResult, AssistantStep,
     *[cfg["schema"] for cfg in ENRICHMENT_SCHEMAS.values()],
 ]
 

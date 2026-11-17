@@ -1,6 +1,8 @@
-"""Test cases generation pipeline: plan → coverage critic → batched detail calls."""
-import asyncio
-import json
+"""Test cases generation: one Codex thread per feature.
+
+The feature context is read once; the dialog then goes coverage list → cases
+(in portions for big specs) → repair of the cases that failed the stand checks.
+"""
 import logging
 import re
 from datetime import UTC, datetime
@@ -8,43 +10,53 @@ from datetime import UTC, datetime
 from app.config import settings
 from app.prompts.test_cases import (
     ASK_SYSTEM_PROMPT,
-    CRITIC_SYSTEM_PROMPT,
-    DETAIL_SYSTEM_PROMPT,
-    PLAN_SYSTEM_PROMPT,
+    CASES_TASK,
+    COVERAGE_TASK,
+    GENERATE_SYSTEM_PROMPT,
+    REPAIR_TASK,
     get_few_shot,
 )
-from app.schemas.test_cases import TestCaseAskResult, TestCaseGenerationResult, TestCasePlanResult
+from app.schemas.test_cases import (
+    AskedTestCaseResult,
+    CoverageItem,
+    GeneratedTestCaseResult,
+    TestCaseAskResult,
+    TestCaseCoverageResult,
+    TestCaseGenerationResult,
+)
 from app.services import sql_runner
-from app.services.codex_client import call_structured
+from app.services.agent_runner import AgentError
+from app.services.codex_client import StructuredAsk, call_structured, structured_dialog
 from app.services.context_builder import build_feature_context
 from app.services.rules import build_system_prompt
+from app.services.test_case_checks import check_cases
 
 logger = logging.getLogger(__name__)
 
+# Coverage items detailed per turn. A turn writes ~600 tokens per case at a
+# fixed speed, so the portion bounds how long one turn runs; small specs fit
+# into a single portion.
+CASES_PER_TURN = 30
 
-# How many plan items to detail per Codex call — keeps each response short enough
-# that late cases stay as thorough as early ones.
-DETAIL_BATCH_SIZE = 10
+# The whole dialog (coverage + portions + repair) may take several turns.
+DIALOG_TIMEOUT_FACTOR = 4
 
-# How many detail batches run concurrently (after batch 1 warms the prompt cache).
-# Bounded so a big plan doesn't burst-hit the API rate limit.
-DETAIL_CONCURRENCY = 4
 
 _UUID_PATTERN = re.compile(r'[0-9a-zA-Z]{8}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{12}')
 _VALID_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
 
-def _validate_test_cases(test_cases: list[dict], plan_count: int) -> list[str]:
+def _validate_test_cases(test_cases: list[dict], coverage_count: int) -> list[str]:
     """Post-generation validation — returns list of warning strings.
 
-    Checks: invalid UUID characters, INSERT-before-DELETE in sql_setup, plan count mismatch.
+    Checks: invalid UUID characters, INSERT-before-DELETE in sql_setup, fewer cases
+    than the spec items the model itself listed for coverage.
     """
     warnings: list[str] = []
 
-    # Check count matches plan
-    if len(test_cases) != plan_count:
+    if len(test_cases) < coverage_count:
         warnings.append(
-            f"Count mismatch: plan had {plan_count} items, but generated {len(test_cases)} test cases"
+            f"Coverage gap: {coverage_count} spec items listed, but only {len(test_cases)} test cases generated"
         )
 
     for i, tc in enumerate(test_cases):
@@ -251,10 +263,30 @@ def _render_live_ddl(db_schema: str, columns_by_table: dict[str, list[dict]]) ->
     return "\n".join(lines)
 
 
-async def _live_ddl_block(db_schema: str | None, enriched_deps: dict) -> str | None:
-    """Fetch live DDL for the feature's db_table deps; non-fatal on any failure."""
-    if not db_schema or not sql_runner.is_configured():
-        return None
+def _pick_schema(tables: list[str], located: dict[str, list[str]]) -> str | None:
+    """The one schema that holds all the feature's tables, or None if unclear.
+
+    Copies of a schema (``bnpl_processing_lt`` next to ``bnpl_processing``) are
+    not separate candidates.
+    """
+    candidates = None
+    for table in tables:
+        schemas = set(located.get(table) or [])
+        candidates = schemas if candidates is None else candidates & schemas
+    candidates = candidates or set()
+    originals = {c for c in candidates if not any(c.startswith(other + "_") for other in candidates)}
+    return next(iter(originals)) if len(originals) == 1 else None
+
+
+async def _stand_tables(db_schema: str | None, enriched_deps: dict) -> tuple[str | None, dict[str, list[dict]]]:
+    """Live columns of the feature's tables and the schema they really live in.
+
+    The schema is the service name by convention, but an adapter may keep its
+    data in another service's schema: when the conventional schema has none of
+    the tables, the stand is asked where they are. Non-fatal on any failure.
+    """
+    if not sql_runner.is_configured():
+        return db_schema, {}
     tables = []
     for name, dep in enriched_deps.items():
         if dep.get("dep_type") != "db_table":
@@ -262,23 +294,25 @@ async def _live_ddl_block(db_schema: str | None, enriched_deps: dict) -> str | N
         # dep name may be a spec alias ("payment"); the enriched table name is the real one
         tables.append(((dep.get("enriched_data") or {}).get("table_name")) or name)
     if not tables:
-        return None
+        return db_schema, {}
     try:
-        columns_by_table = await sql_runner.fetch_table_columns(db_schema, tables)
+        columns = await sql_runner.fetch_table_columns(db_schema, tables) if db_schema else {}
+        if not columns:
+            actual = _pick_schema(tables, await sql_runner.locate_tables(tables))
+            if actual and actual != db_schema:
+                logger.info("[test_cases] tables %s live in schema %s, not %s", tables, actual, db_schema)
+                db_schema = actual
+                columns = await sql_runner.fetch_table_columns(db_schema, tables)
     except Exception as exc:
         logger.warning("[test_cases] live DDL fetch failed (non-fatal): %s", exc)
-        return None
-    if not columns_by_table:
-        return None
-    logger.info(
-        "[test_cases] live DDL: schema=%s, tables=%s",
-        db_schema, sorted(columns_by_table),
-    )
-    return _render_live_ddl(db_schema, columns_by_table)
+        return db_schema, {}
+    if columns:
+        logger.info("[test_cases] live DDL: schema=%s, tables=%s", db_schema, sorted(columns))
+    return db_schema, columns
 
 
 def _build_shared_context(feature: dict, enriched_deps: dict, db_schema: str | None = None) -> str:
-    """Build a shared text block for all parallel test case calls.
+    """Build the feature context block shared by generation, ask and the assistant.
 
     Reuses the common feature+deps context builder, then appends the FK
     dependency tree (specific to test_cases for sql_setup ordering) and the
@@ -310,189 +344,154 @@ def _build_shared_context(feature: dict, enriched_deps: dict, db_schema: str | N
     return base + "\n" + "\n".join(extra)
 
 
-async def _call_plan_tool(label: str, model: str, system_prompt: str, user_blocks: list[dict]) -> list[dict] | None:
-    """Shared plumbing for the plan and critic phases.
-
-    Returns plan items, or None when the model returned an empty list —
-    the caller decides whether empty is an error (plan) or "nothing to add" (critic).
-    """
-    # Plan and detail remain separate to keep coverage explicit and responses focused.
-    result = await call_structured(
-        TestCasePlanResult,
-        label=label,
-        model=model,
-        max_tokens=16000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_blocks}],
-    )
-    if not result.test_cases:
-        return None
-    return [item.model_dump() for item in result.test_cases]
+def _case_fields(tc) -> dict:
+    """Artifacts and steps shared by every stored case shape."""
+    return {
+        "name": tc.name,
+        "preconditions": tc.preconditions,
+        "steps": [{"action": s.action, "expected": s.expected} for s in tc.steps],
+        "expected_result": tc.expected_result,
+        "status": "pending",
+        "analyst_text": None,
+        "curl_command": tc.curl_command,
+        "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,
+        "sql_setup": tc.sql_setup,
+        "mock_config": tc.mock_config,
+    }
 
 
-async def _call_plan_phase(
-    model: str,
+def _case_dict(tc: AskedTestCaseResult, *, origin: str | None = None) -> dict:
+    """Stored shape of a case that carries its own classification (ask flow)."""
+    case = {"category": tc.category, "priority": tc.priority, "covers": tc.covers, **_case_fields(tc)}
+    if origin:
+        case["origin"] = origin
+    return case
+
+
+def _planned_case(tc: GeneratedTestCaseResult, item: CoverageItem) -> dict:
+    """Stored shape of a generated case: classification comes from its coverage item."""
+    return {"category": item.category, "priority": item.priority, "covers": item.covers, **_case_fields(tc)}
+
+
+def _problem_report(coverage: list[CoverageItem], cases: dict[int, dict], problems: dict[int, list[str]]) -> str:
+    """Problems for the repair turn; the same problem in many cases is stated once."""
+    by_text: dict[str, list[int]] = {}
+    for number in sorted(problems):
+        for problem in problems[number]:
+            by_text.setdefault(problem if number in cases else "кейс не написан", []).append(number)
+    lines = []
+    for problem, numbers in by_text.items():
+        if len(numbers) > 3:
+            lines.append(f"Пункты {', '.join(map(str, numbers))}: {problem}")
+            continue
+        for number in numbers:
+            if number in cases:
+                lines.append(f"Пункт {number}, кейс «{cases[number]['name']}»: {problem}")
+            else:
+                lines.append(f"Пункт {number} «{coverage[number - 1].covers}»: кейс не написан.")
+    return "\n".join(lines)
+
+
+async def generate_suite(
     shared_context: str,
-    system_prompt: str = PLAN_SYSTEM_PROMPT,
-) -> list[dict]:
-    """Call 1: generate a test case coverage plan (names, categories, checks, covers, priorities)."""
-    plan_items = await _call_plan_tool(
-        "test_cases_plan",
-        model,
-        system_prompt,
-        [
-            {
-                "type": "text",
-                "text": shared_context,
-                "cache_control": {"type": "ephemeral"},
-            },
-            {"type": "text", "text": "Составь план тест-кейсов для этой фичи."},
-        ],
-    )
-    if not plan_items:
-        raise RuntimeError("[test_cases_plan] Codex returned an empty plan — no test cases planned")
-
-    logger.info("[test_cases:plan] Planned %d test case(s)", len(plan_items))
-    return plan_items
-
-
-async def _call_critic_phase(
-    model: str,
-    shared_context: str,
-    plan_items: list[dict],
-    system_prompt: str = CRITIC_SYSTEM_PROMPT,
-) -> list[dict]:
-    """Call 2: coverage critic — returns plan items MISSING from the plan (may be empty)."""
-    additions = await _call_plan_tool(
-        "test_cases_critic",
-        model,
-        system_prompt,
-        [
-            {
-                "type": "text",
-                "text": shared_context,
-                "cache_control": {"type": "ephemeral"},
-            },
-            {
-                "type": "text",
-                "text": "## Существующий план тест-кейсов\n"
-                + json.dumps(plan_items, ensure_ascii=False, indent=2),
-            },
-            {
-                "type": "text",
-                "text": "Найди пробелы покрытия и верни только недостающие тест-кейсы.",
-            },
-        ],
-    )
-    if not additions:
-        logger.info("[test_cases:critic] Plan is complete — no additions")
-        return []
-
-    # Drop additions that duplicate an existing plan item by name
-    existing_names = {_norm(item["name"]) for item in plan_items}
-    fresh = [item for item in additions if _norm(item.get("name", "")) not in existing_names]
-    logger.info("[test_cases:critic] %d addition(s), %d after dedup", len(additions), len(fresh))
-    return fresh
-
-
-async def _call_detail_phase(
-    model: str,
-    shared_context: str,
-    plan_items: list[dict],
+    *,
     feature_type: str = "",
-    system_prompt: str = DETAIL_SYSTEM_PROMPT,
-) -> list[dict]:
-    """Detail phase: batched calls of DETAIL_BATCH_SIZE plan items each.
+    db_schema: str | None = None,
+    model: str = "",
+    system_prompt: str = GENERATE_SYSTEM_PROMPT,
+) -> dict:
+    """Generate the whole suite for a feature in one Codex thread.
 
-    A single call detailing the whole plan degrades on long outputs (later cases
-    come out lazier) and risks truncation now that the plan is uncapped. Batches
-    run sequentially so every batch after the first reads the shared context
-    from the prompt cache.
+    Turn 1 lists what the spec requires to check; the next turns write one case
+    per item (CASES_PER_TURN at a time — the context is already in the thread);
+    then the cases are checked without an LLM (artifacts are well-formed, the SQL
+    runs on the test DB in a rolled-back transaction) and the failed or missing
+    ones go back to the same thread once for repair.
+
+    Returns ``{"coverage", "cases", "problems", "repaired", "turns"}``; ``problems``
+    are what the repair turn could not fix — the cases are kept for the tester.
     """
-    covers_by_name = {_norm(item.get("name", "")): item.get("covers") for item in plan_items}
-    batches = [plan_items[i:i + DETAIL_BATCH_SIZE] for i in range(0, len(plan_items), DETAIL_BATCH_SIZE)]
+    stats = {"repaired": 0, "turns": 0}
 
-    async def detail_batch(batch_no: int, batch: list[dict]) -> list[dict]:
-        label = f"test_cases_detail[{batch_no}/{len(batches)}]"
-        result = await call_structured(
-            TestCaseGenerationResult,
-            label=label,
-            model=model,
-            max_tokens=64000,
-            system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": shared_context,
-                            "cache_control": {"type": "ephemeral"},
-                        },
-                        {"type": "text", "text": get_few_shot(feature_type)},
-                        {
-                            "type": "text",
-                            "text": "## План тест-кейсов (батч "
-                            f"{batch_no} из {len(batches)}, {len(batch)} кейсов)\n"
-                            + json.dumps(batch, ensure_ascii=False, indent=2),
-                        },
-                        {
-                            "type": "text",
-                            "text": "Детализируй каждый тест-кейс из этого батча — ровно "
-                            f"{len(batch)} кейсов. Сохраняй category и priority из плана.",
-                        },
-                    ],
-                }
-            ],
+    async def check(by_item: dict[int, dict], total: int) -> dict[int, list[str]]:
+        numbers = sorted(by_item)
+        found = await check_cases(
+            [by_item[n] for n in numbers], feature_type=feature_type, db_schema=db_schema,
         )
-        if not result.test_cases:
-            raise RuntimeError(f"[{label}] Codex returned no test cases for the batch")
-        if len(result.test_cases) != len(batch):
-            logger.warning(
-                "[%s] batch size mismatch: plan had %d, generated %d",
-                label, len(batch), len(result.test_cases),
+        problems = {n: p for n, p in zip(numbers, found, strict=True) if p}
+        problems.update({n: ["кейс не написан"] for n in range(1, total + 1) if n not in by_item})
+        return problems
+
+    async def dialog(ask: StructuredAsk) -> tuple[list[CoverageItem], dict[int, dict], dict[int, list[str]]]:
+        plan = await ask(
+            "\n\n".join([shared_context, get_few_shot(feature_type), COVERAGE_TASK]), TestCaseCoverageResult,
+        )
+        stats["turns"] += 1
+        coverage = plan.coverage
+        if not coverage:
+            raise AgentError(
+                "По этому ТЗ не из чего писать тест-кейсы: "
+                + (plan.note or "модель не нашла в нём описанного поведения фичи")
             )
+        logger.info("[test_cases] Coverage: %d item(s)", len(coverage))
 
-        return [
-            {
-                "category": tc.category,
-                "name": tc.name,
-                "preconditions": tc.preconditions,
-                "steps": [{"action": s.action, "expected": s.expected} for s in tc.steps],
-                "expected_result": tc.expected_result,
-                "priority": tc.priority,
-                "status": "pending",
-                "analyst_text": None,
-                "covers": covers_by_name.get(_norm(tc.name)),
-                "curl_command": tc.curl_command,
-                "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,
-                "sql_setup": tc.sql_setup,
-                "mock_config": tc.mock_config,
-            }
-            for tc in result.test_cases
-        ]
+        def accept(result: TestCaseGenerationResult, allowed: range | set[int], into: dict[int, dict]) -> int:
+            taken = 0
+            for tc in result.test_cases:
+                if tc.item in allowed:
+                    into[tc.item] = _planned_case(tc, coverage[tc.item - 1])
+                    taken += 1
+            return taken
 
-    detailed: list[dict] = []
-    if batches:
-        # Batch 1 runs alone: it writes the shared context into the prompt cache.
-        # The rest read that cache, so they can run concurrently (bounded — a big
-        # plan must not burst-hit the API rate limit).
-        detailed.extend(await detail_batch(1, batches[0]))
-        if len(batches) > 1:
-            semaphore = asyncio.Semaphore(DETAIL_CONCURRENCY)
+        by_item: dict[int, dict] = {}
+        for first in range(1, len(coverage) + 1, CASES_PER_TURN):
+            last = min(first + CASES_PER_TURN - 1, len(coverage))
+            portion = await ask(CASES_TASK.format(first=first, last=last), TestCaseGenerationResult)
+            stats["turns"] += 1
+            taken = accept(portion, range(first, last + 1), by_item)
+            logger.info("[test_cases] Items %d–%d: %d case(s)", first, last, taken)
 
-            async def bounded(batch_no: int, batch: list[dict]) -> list[dict]:
-                async with semaphore:
-                    return await detail_batch(batch_no, batch)
-
-            rest = await asyncio.gather(
-                *(bounded(no, batch) for no, batch in enumerate(batches[1:], start=2))
+        problems = await check(by_item, len(coverage))
+        if problems:
+            logger.info("[test_cases] %d item(s) failed the checks — one repair pass", len(problems))
+            failed = sorted(problems)
+            for start in range(0, len(failed), CASES_PER_TURN):
+                portion = {n: problems[n] for n in failed[start:start + CASES_PER_TURN]}
+                fixed = await ask(
+                    REPAIR_TASK.format(
+                        items=", ".join(map(str, portion)), problems=_problem_report(coverage, by_item, portion),
+                    ),
+                    TestCaseGenerationResult,
+                )
+                stats["turns"] += 1
+                stats["repaired"] += accept(fixed, set(portion), by_item)
+            problems = await check(by_item, len(coverage))
+        if len(by_item) * 2 < len(coverage):
+            # Saving a fragment as "the suite" would hide that the run failed.
+            raise AgentError(
+                f"Модель написала кейсы только для {len(by_item)} из {len(coverage)} проверок — "
+                "набор не сохранён, запустите генерацию ещё раз"
             )
-            for part in rest:
-                detailed.extend(part)
+        return coverage, by_item, problems
 
-    logger.info("[test_cases:detail] Generated %d detailed test case(s) in %d batch(es)", len(detailed), len(batches))
-    return detailed
+    coverage, by_item, problems = await structured_dialog(
+        dialog, label="test_cases", model=model, system=system_prompt,
+        timeout=settings.structured_timeout_seconds * DIALOG_TIMEOUT_FACTOR,
+    )
+    numbers = sorted(by_item)
+    for number, found in problems.items():
+        name = by_item[number]["name"] if number in by_item else coverage[number - 1].covers
+        logger.warning("[test_cases:check] «%s»: %s", name, "; ".join(found))
+    logger.info(
+        "[test_cases] Generated %d case(s) for %d coverage item(s) in %d turn(s), repaired %d, unresolved %d",
+        len(by_item), len(coverage), stats["turns"], stats["repaired"], len(problems),
+    )
+    return {
+        "coverage": [item.model_dump() for item in coverage],
+        "cases": [by_item[n] for n in numbers],
+        "problems": {by_item[n]["name"] if n in by_item else coverage[n - 1].covers: p for n, p in problems.items()},
+        **stats,
+    }
 
 
 def _smart_merge_test_cases(existing: list[dict], new: list[dict]) -> list[dict]:
@@ -586,7 +585,7 @@ async def run_test_cases_pipeline(
     *,
     task_id: str | None = None,
 ) -> list[dict]:
-    """Run 2 sequential Codex calls (plan + detail with few-shot) and return merged test cases."""
+    """Generate the feature's test cases in one Codex thread and return the merged list."""
     try:
         result = await _run_test_cases_pipeline_inner(project_slug, feature_name, store)
     except Exception as exc:
@@ -606,10 +605,10 @@ async def _prepare_feature_context(
     store,
     *,
     enforce_gate: bool = True,
-) -> tuple[dict, str, str]:
+) -> tuple[dict, str, str, str | None]:
     """Load the feature, run the enrichment gate and build the shared prompt context.
 
-    Returns (feature, feature_type, shared_context). The assistant passes
+    Returns (feature, feature_type, shared_context, db_schema). The assistant passes
     ``enforce_gate=False``: discussing existing cases must not be blocked by a
     dependency that is not enriched yet.
     """
@@ -637,10 +636,15 @@ async def _prepare_feature_context(
         if not isinstance(dep, dict):
             continue
         dep_name = dep.get("name", "")
-        if dep.get("type") == "external_api" and dep.get("service_name") and dep.get("path"):
-            dep_name = f"{dep['service_name']}/{dep['path'].lstrip('/')}"
         if dep_name:
             used_dep_names.add(_norm(dep_name))
+        if dep.get("type") == "external_api" and dep.get("path"):
+            # Stored API deps are named by their canonical path; older rows by
+            # "<service>/<path>". Match both, or the dep's contract silently
+            # drops out of the prompt.
+            used_dep_names.add(_norm(dep["path"]))
+            if dep.get("service_name"):
+                used_dep_names.add(_norm(f"{dep['service_name']}/{dep['path'].lstrip('/')}"))
 
     # Filter to only enriched deps that are used by this feature
     enriched_deps: dict[str, dict] = {}
@@ -661,11 +665,11 @@ async def _prepare_feature_context(
             db_schema = service_name.replace("-", "_")
 
     feature_type = feature.get("type", "")
+    db_schema, live_columns = await _stand_tables(db_schema, enriched_deps)
     shared_ctx = _build_shared_context(feature, enriched_deps, db_schema=db_schema)
-    live_ddl = await _live_ddl_block(db_schema, enriched_deps)
-    if live_ddl:
-        shared_ctx += "\n" + live_ddl
-    return feature, feature_type, shared_ctx
+    if live_columns:
+        shared_ctx += "\n" + _render_live_ddl(db_schema, live_columns)
+    return feature, feature_type, shared_ctx, db_schema
 
 
 async def _run_test_cases_pipeline_inner(
@@ -675,35 +679,24 @@ async def _run_test_cases_pipeline_inner(
 ) -> list[dict]:
     """Core pipeline without task handling (caller wraps for task lifecycle)."""
     run_started_at = datetime.now(UTC).isoformat()
-    _, feature_type, shared_ctx = await _prepare_feature_context(project_slug, feature_name, store)
-
-    model = settings.test_cases_model
+    _, feature_type, shared_ctx, db_schema = await _prepare_feature_context(project_slug, feature_name, store)
 
     global_rules = await store.get_global_rules()
     project_rules = await store.get_project_rules(project_slug)
-    plan_system_prompt = build_system_prompt(
-        base=PLAN_SYSTEM_PROMPT,
-        global_rules=global_rules.get("test_cases", ""),
-        project_rules=project_rules.get("test_cases", ""),
-    )
-    critic_system_prompt = build_system_prompt(
-        base=CRITIC_SYSTEM_PROMPT,
-        global_rules=global_rules.get("test_cases", ""),
-        project_rules=project_rules.get("test_cases", ""),
-    )
-    detail_system_prompt = build_system_prompt(
-        base=DETAIL_SYSTEM_PROMPT,
+    system_prompt = build_system_prompt(
+        base=GENERATE_SYSTEM_PROMPT,
         global_rules=global_rules.get("test_cases", ""),
         project_rules=project_rules.get("test_cases", ""),
     )
 
-    # Pipeline: plan → coverage critic (fills gaps) → batched detail
-    plan_items = await _call_plan_phase(model, shared_ctx, plan_system_prompt)
-    plan_items += await _call_critic_phase(model, shared_ctx, plan_items, critic_system_prompt)
-    all_new_test_cases = await _call_detail_phase(model, shared_ctx, plan_items, feature_type, detail_system_prompt)
+    suite = await generate_suite(
+        shared_ctx, feature_type=feature_type, db_schema=db_schema,
+        model=settings.test_cases_model, system_prompt=system_prompt,
+    )
+    all_new_test_cases = suite["cases"]
 
     # Post-generation validation (observability only — log warnings, do not reject)
-    validation_warnings = _validate_test_cases(all_new_test_cases, len(plan_items))
+    validation_warnings = _validate_test_cases(all_new_test_cases, len(suite["coverage"]))
     for warning in validation_warnings:
         logger.warning("[test_cases:validate] %s", warning)
 
@@ -754,11 +747,7 @@ async def _call_ask_phase(
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "text",
-                        "text": shared_context,
-                        "cache_control": {"type": "ephemeral"},
-                    },
+                    {"type": "text", "text": shared_context},
                     {"type": "text", "text": get_few_shot(feature_type)},
                     {"type": "text", "text": "## Существующие тест-кейсы\n" + existing_summary},
                     {"type": "text", "text": "## Запрос тестировщика\n" + request_text},
@@ -804,7 +793,7 @@ async def _run_test_case_ask_pipeline_inner(
     store,
 ) -> dict:
     """Core ask pipeline without task handling (caller wraps for task lifecycle)."""
-    _, feature_type, shared_ctx = await _prepare_feature_context(project_slug, feature_name, store)
+    _, feature_type, shared_ctx, _ = await _prepare_feature_context(project_slug, feature_name, store)
 
     existing_test_cases = await store.get_test_cases(project_slug, feature_name)
     existing_summary = _summarize_existing_test_cases(existing_test_cases)
@@ -822,25 +811,7 @@ async def _run_test_case_ask_pipeline_inner(
         settings.test_cases_model, shared_ctx, existing_summary, request_text, feature_type, system_prompt,
     )
 
-    new_cases = [
-        {
-            "category": tc.category,
-            "name": tc.name,
-            "preconditions": tc.preconditions,
-            "steps": [{"action": s.action, "expected": s.expected} for s in tc.steps],
-            "expected_result": tc.expected_result,
-            "priority": tc.priority,
-            "status": "pending",
-            "analyst_text": None,
-            "origin": "ask",
-            "covers": tc.covers,
-            "curl_command": tc.curl_command,
-            "kafka_message": tc.kafka_message.model_dump() if tc.kafka_message else None,
-            "sql_setup": tc.sql_setup,
-            "mock_config": tc.mock_config,
-        }
-        for tc in result.test_cases
-    ]
+    new_cases = [_case_dict(tc, origin="ask") for tc in result.test_cases]
 
     # Drop generated cases that duplicate an existing one (same identity as smart merge)
     existing_identities = {(tc.get("category"), (tc.get("name") or "")[:80]) for tc in existing_test_cases}

@@ -129,3 +129,42 @@ async def test_api_reports_stand_rejection(configured, monkeypatch):
         response = await client.post("/test-wiremock/upload", json={"mock_config": json.dumps(MAPPING)})
     assert response.status_code == 502
     assert "401" in response.json()["detail"]
+
+
+def test_mappings_envelope_yields_every_stub():
+    second = {"request": {"method": "PATCH", "urlPath": "/v1/close"}, "response": {"status": 200}}
+    prepared = wiremock.prepare_mappings(json.dumps({"mappings": [MAPPING, second]}))
+
+    assert [m["request"] for m in prepared] == [MAPPING["request"], second["request"]]
+    assert prepared[0]["id"] != prepared[1]["id"]
+    # a single mapping is still accepted as is
+    assert wiremock.prepare_mappings(json.dumps(MAPPING)) == [wiremock.prepare_mapping(json.dumps(MAPPING))]
+
+
+@pytest.mark.parametrize("value", [
+    '{"mappings": []}', '{"mappings": {}}', '{"mappings": [{"request": {"url": "/"}}]}', '{"mappings": [[]]}',
+])
+def test_invalid_mappings_envelope_rejected(value):
+    with pytest.raises(wiremock.InvalidMappingError):
+        wiremock.prepare_mappings(value)
+
+
+@pytest.mark.anyio
+async def test_upload_mappings_uploads_each_stub(configured, monkeypatch):
+    second = {"request": {"method": "PATCH", "urlPath": "/v1/close"}, "response": {"status": 200}}
+    mappings = wiremock.prepare_mappings(json.dumps({"mappings": [MAPPING, second]}))
+    uploaded = []
+
+    def handler(request):
+        if request.method == "PUT":
+            return httpx.Response(404)
+        uploaded.append(json.loads(request.content)["request"])
+        return httpx.Response(201)
+
+    simulate_stand(monkeypatch, handler)
+    result = await wiremock.upload_mappings(mappings)
+
+    assert uploaded == [MAPPING["request"], second["request"]]
+    assert result["mapping_id"] == mappings[0]["id"]
+    assert result["mapping_ids"] == [m["id"] for m in mappings]
+    assert result["status_code"] == 201

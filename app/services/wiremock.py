@@ -25,16 +25,40 @@ def mappings_url() -> str | None:
     return f"{base}/__admin/mappings" if base else None
 
 
-def prepare_mapping(value: str) -> dict[str, Any]:
-    """Validate the envelope; response bodies may intentionally be malformed JSON."""
+def _load(value: str) -> Any:
     try:
-        mapping = json.loads(value)
+        payload = json.loads(value)
         # Python accepts NaN/Infinity in json.loads, but HTTP JSON does not.
-        json.dumps(mapping, allow_nan=False)
+        json.dumps(payload, allow_nan=False)
     except ValueError as exc:
         raise InvalidMappingError("Мок должен содержать корректный JSON mapping WireMock") from exc
+    return payload
+
+
+def prepare_mapping(value: str) -> dict[str, Any]:
+    """Validate one mapping; response bodies may intentionally be malformed JSON."""
+    return _prepare(_load(value))
+
+
+def prepare_mappings(value: str) -> list[dict[str, Any]]:
+    """Validate a case's mock: one mapping, or ``{"mappings": [...]}`` for several.
+
+    A scenario that calls two dependencies (or one dependency twice with
+    different answers) needs several stubs, and WireMock's own import envelope
+    is how models and testers naturally write them.
+    """
+    payload = _load(value)
+    if isinstance(payload, dict) and "mappings" in payload and "request" not in payload:
+        items = payload["mappings"]
+        if not isinstance(items, list) or not items:
+            raise InvalidMappingError("В моке пустой список mappings")
+        return [_prepare(item) for item in items]
+    return [_prepare(payload)]
+
+
+def _prepare(mapping: Any) -> dict[str, Any]:
     if not isinstance(mapping, dict):
-        raise InvalidMappingError("Ожидается один JSON mapping WireMock с request и response")
+        raise InvalidMappingError("Ожидается JSON mapping WireMock с request и response")
     request = mapping.get("request")
     if not isinstance(request, dict) or not request:
         raise InvalidMappingError("В моке отсутствует объект request")
@@ -85,6 +109,21 @@ async def upload_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
         "target_url": url,
         "status_code": response.status_code,
         "duration_ms": int((time.monotonic() - started) * 1000),
+    }
+
+
+async def upload_mappings(mappings: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upload every stub of a case's mock; stops at the first failure.
+
+    The result keeps the single-mapping shape (first id, last HTTP status) and
+    adds ``mapping_ids``.
+    """
+    results = [await upload_mapping(mapping) for mapping in mappings]
+    return {
+        **results[-1],
+        "mapping_id": results[0]["mapping_id"],
+        "mapping_ids": [r["mapping_id"] for r in results],
+        "duration_ms": sum(r["duration_ms"] for r in results),
     }
 
 

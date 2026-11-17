@@ -347,7 +347,7 @@ class _TurnRun:
             mock = edit.get("mock_config")
             if mock and mock.strip():
                 try:
-                    wiremock.prepare_mapping(mock)
+                    wiremock.prepare_mappings(mock)
                 except wiremock.InvalidMappingError as exc:
                     field, error = "mock_config", str(exc)
             sql = edit.get("sql_setup")
@@ -465,7 +465,7 @@ class _TurnRun:
 
 async def run_turn(store, project_slug: str, feature_name: str, turn: dict) -> tuple[dict, str | None]:
     """Answer one turn. Returns (data to store on the turn, session title for a first turn)."""
-    feature, _, shared_ctx = await _prepare_feature_context(
+    feature, _, shared_ctx, _ = await _prepare_feature_context(
         project_slug, feature_name, store, enforce_gate=False,
     )
     cases = await store.get_test_cases(project_slug, feature_name)

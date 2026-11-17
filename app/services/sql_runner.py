@@ -250,3 +250,62 @@ async def execute_sql(sql: str, *, readonly: bool = False) -> dict[str, Any]:
         "failed_statement": None,
         "duration_ms": int((time.monotonic() - started) * 1000),
     }
+
+
+async def locate_tables(tables: list[str]) -> dict[str, list[str]]:
+    """Schemas of the test DB that contain each of the given tables."""
+    if not is_configured() or not tables:
+        return {}
+    dsn = settings.test_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(
+        dsn, timeout=CONNECT_TIMEOUT, statement_cache_size=0, command_timeout=STATEMENT_TIMEOUT,
+    )
+    try:
+        rows = await conn.fetch(
+            "SELECT table_name, table_schema FROM information_schema.tables "
+            "WHERE table_name = ANY($1::text[]) AND table_schema NOT IN ('information_schema', 'pg_catalog') "
+            "ORDER BY table_name, table_schema",
+            tables,
+        )
+    finally:
+        await conn.close()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r["table_name"], []).append(r["table_schema"])
+    return out
+
+
+class _Rollback(Exception):
+    """Leaves the dry-run transaction without committing."""
+
+
+async def dry_run_scripts(scripts: list[str]) -> list[str | None]:
+    """Execute each script on the test DB and roll it back; nothing is kept.
+
+    Returns one entry per script: ``None`` if every statement ran, otherwise the
+    database error. Raises ``ConnectionError`` when the test DB is unreachable,
+    so the caller can tell "cannot check" from "the script is wrong".
+    """
+    dsn = settings.test_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    try:
+        conn = await asyncpg.connect(
+            dsn, timeout=CONNECT_TIMEOUT, statement_cache_size=0, command_timeout=STATEMENT_TIMEOUT,
+        )
+    except Exception as exc:
+        raise ConnectionError(f"Не удалось подключиться к тестовой БД: {exc}") from exc
+
+    errors: list[str | None] = []
+    try:
+        for script in scripts:
+            try:
+                async with conn.transaction():
+                    for stmt in split_sql_statements(script):
+                        await conn.execute(stmt)
+                    raise _Rollback
+            except _Rollback:
+                errors.append(None)
+            except (asyncpg.PostgresError, asyncio.TimeoutError) as exc:
+                errors.append(str(exc).strip() or f"Таймаут выполнения ({STATEMENT_TIMEOUT}с)")
+    finally:
+        await conn.close()
+    return errors

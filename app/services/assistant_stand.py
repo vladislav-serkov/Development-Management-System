@@ -289,14 +289,18 @@ class Stand:
         if wiremock.mappings_url() is None:
             return self._fail(entry, "error", "WireMock не настроен (TEST_WIREMOCK_URL)", mock_config)
         try:
-            mapping = wiremock.prepare_mapping(mock_config)
-            result = await wiremock.upload_mapping(mapping)
+            mappings = wiremock.prepare_mappings(mock_config)
+            result = await wiremock.upload_mappings(mappings)
         except (wiremock.InvalidMappingError, wiremock.WireMockError) as exc:
             return self._fail(entry, "error", str(exc), mock_config)
+        shown = mappings[0] if len(mappings) == 1 else {"mappings": mappings}
         entry.update(
-            summary=f"Мок загружен · HTTP {result['status_code']}",
+            summary=f"Мок загружен · HTTP {result['status_code']}"
+            + (f" · заглушек: {len(mappings)}" if len(mappings) > 1 else ""),
             duration_ms=result["duration_ms"],
-            detail=_clip(json.dumps(mapping, ensure_ascii=False, indent=2) + f"\n\nid: {result['mapping_id']}"),
+            detail=_clip(
+                json.dumps(shown, ensure_ascii=False, indent=2) + "\n\nid: " + ", ".join(result["mapping_ids"])
+            ),
         )
         return entry
 
