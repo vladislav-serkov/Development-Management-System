@@ -234,6 +234,8 @@ export interface SpecDepsDiff {
 export interface FeatureDiff {
   name: string
   display_name: string | null
+  /** Absent in diffs stored before titles were extracted for REST/Kafka features */
+  type?: FeatureType
   material: boolean
   identity: { field: string; old: string; new: string }[]
   summary_changed: boolean

@@ -252,13 +252,13 @@ class ConfluenceImportRequest(BaseModel):
 class DetectedFeature(BaseModel):
     """Feature detected from a spec page by the extraction call (structured output schema)."""
 
-    name: str = Field(description="Identifier: the Kafka topic name, 'METHOD /path' for REST, or a latin snake_case slug derived from the scheduled-task heading (unique within the document)")
-    display_name: str | None = Field(default=None, description="Human-readable name verbatim from the spec (Russian). Required for scheduled_task (heading of the task section). Null for kafka_consumer/rest_endpoint — UI falls back to name.")
+    name: str = Field(description="Identifier. For rest_endpoint/kafka_consumer repeat `endpoint` (the final name is assembled by code from method + endpoint); for scheduled_task a latin snake_case slug derived from the task heading (unique within the document)")
+    display_name: str | None = Field(default=None, description="Human-readable name verbatim from the spec (Russian). scheduled_task: heading of the task section (required). rest_endpoint/kafka_consumer: the line that says what the feature does, without path/method/[service]; null if the page has no such line.")
     type: FeatureType
     confidence: float = Field(ge=0.0, le=1.0)
     summary: str = Field(description="One-paragraph summary of what the feature does, in Russian")
     method: str | None = Field(default=None, description="HTTP method for REST (GET/POST/PUT/DELETE), CONSUMER for Kafka, SCHEDULED for scheduled_task")
-    endpoint: str | None = Field(default=None, description="REST path like /v1/credit-line or Kafka topic like pay-later.flp.rbo-adapter.product.return.queue. Null for scheduled_task — use `schedule` instead.")
+    endpoint: str | None = Field(default=None, description="Verbatim from the page (its title counts): REST path like /v1/credit-line, or the operation name when the page gives no path (getWallet.do); the Kafka topic the consumer reads, like pay-later.flp.rbo-adapter.product.return.queue. Null for scheduled_task — use `schedule` instead.")
     schedule: str | None = Field(default=None, description="Trigger schedule verbatim from the spec (Russian). Examples: 'Ежедневно в 19:00 МСК', 'Каждый час'. Required for scheduled_task, null otherwise.")
     dependencies: SkipJsonSchema[list[str]] = Field(default_factory=list, description="Names of used_dependencies. Derived by code.")
     source: SkipJsonSchema[SourceInfo | None] = Field(default=None, description="Provenance: pdf or code. Null for legacy records where kind is inferred from source_document presence.")

@@ -99,7 +99,7 @@ async def import_confluence_page(
         "ancestors": page.get("ancestors", []),
     }
 
-    prev_version = prev_text = None
+    prev_version = prev_text = prev_title = None
     if existing:
         # Re-import: version + source are committed by the pipeline only when
         # every feature succeeded — a failed re-import must leave the document
@@ -107,6 +107,7 @@ async def import_confluence_page(
         prev_version = existing.get("confluence_version")
         prev_source = await store.get_document_source(project_slug, doc_slug)
         prev_text = (prev_source or {}).get("markdown")
+        prev_title = (prev_source or {}).get("title")
         doc_data = await store.update_document(project_slug, doc_slug, {
             "filename": filename,
             "confluence_url": request.url,
@@ -143,6 +144,7 @@ async def import_confluence_page(
             tables=page["tables"],
             prev_confluence_version=prev_version,
             prev_text=prev_text,
+            prev_title=prev_title,
             new_version=page["version"],
             new_source=new_source,
         )

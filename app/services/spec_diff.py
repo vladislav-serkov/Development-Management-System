@@ -395,6 +395,10 @@ def diff_feature(old: dict, new: dict) -> dict | None:
     identity = []
     for key, label in (("method", "метод"), ("endpoint", "endpoint"), ("schedule", "расписание"), ("display_name", "название")):
         o, n = _norm(old.get(key)), _norm(new.get(key))
+        # A title recorded for the first time (REST/Kafka features had none before
+        # titles were extracted for them) is not a change of the spec
+        if key == "display_name" and not o:
+            continue
         if o != n:
             identity.append({"field": label, "old": o, "new": n})
 
@@ -423,6 +427,7 @@ def diff_feature(old: dict, new: dict) -> dict | None:
     return {
         "name": new.get("name") or old.get("name"),
         "display_name": new.get("display_name") or old.get("display_name"),
+        "type": new.get("type") or old.get("type"),
         "material": material,
         "identity": identity,
         "summary_changed": summary_changed,
