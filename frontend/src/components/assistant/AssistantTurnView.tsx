@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react"
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Paperclip, RotateCcw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AnimatedDots } from "@/components/dependency/AnimatedDots"
+import { StandUnreachableNotice } from "@/components/StandUnreachableNotice"
 import { useConfirm } from "@/components/ConfirmDialog"
 import { useAssistantTurnActions } from "@/hooks/useAssistant"
 import { useGenerateBug } from "@/hooks/useBugs"
@@ -167,7 +168,9 @@ function Journal({ actions, defaultOpen }: { actions: AssistantAction[]; default
   const [open, setOpen] = useState(defaultOpen)
   if (actions.length === 0) return null
   const writes = actions.filter((a) => a.write && a.status === "ok").length
+  const unreachable = actions.some((a) => a.unreachable)
   return (
+    <>
     <div className="overflow-hidden rounded-xl border">
       <button
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-[0.75rem]"
@@ -193,6 +196,8 @@ function Journal({ actions, defaultOpen }: { actions: AssistantAction[]; default
         </ol>
       )}
     </div>
+    {unreachable && <StandUnreachableNotice />}
+    </>
   )
 }
 

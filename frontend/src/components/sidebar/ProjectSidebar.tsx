@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { ExportDialog } from "@/components/project/ExportDialog"
 import { SourcesPanel } from "@/components/project/SourcesPanel"
 import { UploadZone } from "@/components/project/UploadZone"
+import { CodexLimits } from "@/components/CodexLimits"
 import { useDeleteFeature } from "@/hooks/useDocuments"
 import { useRenameProject } from "@/hooks/useDocuments"
 import { useProjectTasks } from "@/hooks/useTasks"
@@ -162,7 +163,9 @@ export function ProjectSidebar({
         </div>
       </ScrollArea>
 
-      <div className="flex gap-1.5 border-t p-3">
+      <CodexLimits className="border-t px-3.5 pt-3" />
+
+      <div className="flex gap-1.5 p-3">
         <button
           onClick={() => navigate(tasksPath(projectSlug))}
           className={cn(

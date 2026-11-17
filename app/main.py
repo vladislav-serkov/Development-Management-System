@@ -15,6 +15,7 @@ from app.routers.bugs import router as bugs_router
 from app.routers.dependencies import router as dependencies_router
 from app.routers.documents import router as documents_router
 from app.routers.gaps import router as gaps_router
+from app.routers.platform import router as platform_router
 from app.routers.projects import router as projects_router
 from app.routers.rules import router as rules_router
 from app.routers.tasks import router as tasks_router
@@ -97,6 +98,7 @@ app.include_router(tasks_router)
 app.include_router(test_db_router)
 app.include_router(test_stand_router)
 app.include_router(test_wiremock_router)
+app.include_router(platform_router)
 
 
 @app.get("/")

@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # WireMock base URL including the gateway prefix, without /__admin/mappings.
     # Empty = mock upload off.
     test_wiremock_url: str = ""
+    # Who looks after the platform: the UI says «Обратитесь к <name>» when the
+    # stand is unreachable from it, so the name is in the dative case
+    # (empty name = no contact shown).
+    support_contact_name: str = "Владиславу Серкову"
+    support_contact_url: str = "https://mm.mtsbank.ru/flext-core/messages/@vserkov"
     confluence_base_url: str = ""
     confluence_pat: str = ""
     # Jira DC integration for exporting bug reports as issues (empty = feature off).

@@ -182,6 +182,19 @@ def _format_sql_result(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+UNREACHABLE_NOTE = (
+    "Платформа не может подключиться к стенду (сеть или VPN сервера платформы). "
+    "Это не ошибка кейса: не меняй его из-за этого и не повторяй действия — "
+    "скажи тестировщику, что стенд недоступен с платформы."
+)
+
+
+def _mark_unreachable(entry: dict) -> None:
+    """The action never reached the stand; the UI shows whom to contact."""
+    entry["unreachable"] = True
+    entry["detail"] = _clip(f"{entry.get('detail') or ''}\n\n{UNREACHABLE_NOTE}".strip())
+
+
 def _first_line(text: str, limit: int = 220) -> str:
     line = text.strip().splitlines()[0] if text.strip() else ""
     return line if len(line) <= limit else line[:limit] + "…"
@@ -223,8 +236,10 @@ class Stand:
         }
 
     @staticmethod
-    def _fail(entry: dict, status: str, message: str, detail: str = "") -> dict:
+    def _fail(entry: dict, status: str, message: str, detail: str = "", *, unreachable: bool = False) -> dict:
         entry.update(status=status, summary=_first_line(message), detail=_clip((detail + "\n" + message).strip()))
+        if unreachable:
+            _mark_unreachable(entry)
         return entry
 
     async def run_sql(self, sql: str, title: str, case_id: str | None) -> dict[str, Any]:
@@ -244,6 +259,8 @@ class Stand:
             failed = result["failed_statement"]
             where = f"Ошибка в выражении {failed + 1}: " if failed is not None else "Ошибка: "
             entry.update(status="error", summary=_first_line(where + result["error"]))
+            if result.get("unreachable"):
+                _mark_unreachable(entry)
             return entry
         if writes:
             count = len(result["results"])
@@ -275,7 +292,9 @@ class Stand:
         entry["duration_ms"] = result["duration_ms"]
         request_text = f"{method} {url}" + (f"\n{body}" if body else "")
         if result["error"]:
-            return self._fail(entry, "error", result["error"], request_text)
+            return self._fail(
+                entry, "error", result["error"], request_text, unreachable=bool(result.get("unreachable")),
+            )
         entry["summary"] = f"HTTP {result['status_code']} {result['reason'] or ''}".strip()
         entry["http_status"] = result["status_code"]
         entry["detail"] = _clip(
@@ -292,7 +311,9 @@ class Stand:
             mappings = wiremock.prepare_mappings(mock_config)
             result = await wiremock.upload_mappings(mappings)
         except (wiremock.InvalidMappingError, wiremock.WireMockError) as exc:
-            return self._fail(entry, "error", str(exc), mock_config)
+            return self._fail(
+                entry, "error", str(exc), mock_config, unreachable=getattr(exc, "unreachable", False),
+            )
         shown = mappings[0] if len(mappings) == 1 else {"mappings": mappings}
         entry.update(
             summary=f"Мок загружен · HTTP {result['status_code']}"
@@ -321,7 +342,7 @@ class Stand:
                 count = result["matched_count"]
                 entry["summary"] = f"Запросов в журнале: {count}" if count else "Запросов в журнале нет"
         except wiremock.WireMockError as exc:
-            return self._fail(entry, "error", str(exc), query)
+            return self._fail(entry, "error", str(exc), query, unreachable=exc.unreachable)
         entry["detail"] = _clip(query + "\n\n" + json.dumps(result, ensure_ascii=False, indent=2))
         return entry
 

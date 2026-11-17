@@ -8,12 +8,20 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 import httpx
 
 from app.config import settings
+from app.services.stand_network import describe_http_error, http_unreachable
 
 REQUEST_TIMEOUT = 30
 
 
 class WireMockError(Exception):
-    """A mapping could not be uploaded to the test stand."""
+    """A mapping could not be uploaded to the test stand.
+
+    ``unreachable`` = the platform could not connect to the stand at all.
+    """
+
+    def __init__(self, message: str, *, unreachable: bool = False) -> None:
+        super().__init__(message)
+        self.unreachable = unreachable
 
 
 class InvalidMappingError(ValueError):
@@ -97,10 +105,8 @@ async def upload_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
             if response.status_code == 404:
                 response = await client.post(url, json=mapping)
     except httpx.HTTPError as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        if isinstance(exc, httpx.TimeoutException):
-            message = f"Таймаут запроса ({REQUEST_TIMEOUT}с)"
-        raise WireMockError(f"Не удалось загрузить мок в WireMock: {message}") from exc
+        message = describe_http_error(exc, REQUEST_TIMEOUT)
+        raise WireMockError(f"Не удалось загрузить мок в WireMock: {message}", unreachable=http_unreachable(exc)) from exc
     if not 200 <= response.status_code < 300:
         detail = response.text[:2000].strip()
         raise WireMockError(f"WireMock вернул HTTP {response.status_code}" + (f": {detail}" if detail else ""))
@@ -136,10 +142,8 @@ async def _admin_get(path: str, params: dict[str, Any] | None = None) -> dict[st
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=False) as client:
             response = await client.get(url.removesuffix("/mappings") + path, params=params)
     except httpx.HTTPError as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        if isinstance(exc, httpx.TimeoutException):
-            message = f"Таймаут запроса ({REQUEST_TIMEOUT}с)"
-        raise WireMockError(f"WireMock недоступен: {message}") from exc
+        message = describe_http_error(exc, REQUEST_TIMEOUT)
+        raise WireMockError(f"WireMock недоступен: {message}", unreachable=http_unreachable(exc)) from exc
     if not 200 <= response.status_code < 300:
         raise WireMockError(f"WireMock вернул HTTP {response.status_code}")
     try:

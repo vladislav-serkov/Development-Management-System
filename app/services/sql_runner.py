@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import asyncpg
 
 from app.config import settings
+from app.services.stand_network import describe_db_connect_error
 
 logger = logging.getLogger(__name__)
 
@@ -198,12 +199,14 @@ async def execute_sql(sql: str, *, readonly: bool = False) -> dict[str, Any]:
             command_timeout=STATEMENT_TIMEOUT,
         )
     except Exception as exc:
-        logger.warning("test-db connect failed: %s", exc)
+        reason = describe_db_connect_error(exc, CONNECT_TIMEOUT)
+        logger.warning("test-db connect failed: %s", reason)
         return {
             "results": [],
-            "error": f"Не удалось подключиться к тестовой БД: {exc}",
+            "error": f"Не удалось подключиться к тестовой БД: {reason}",
             "failed_statement": None,
             "duration_ms": int((time.monotonic() - started) * 1000),
+            "unreachable": True,
         }
 
     try:
@@ -292,7 +295,8 @@ async def dry_run_scripts(scripts: list[str]) -> list[str | None]:
             dsn, timeout=CONNECT_TIMEOUT, statement_cache_size=0, command_timeout=STATEMENT_TIMEOUT,
         )
     except Exception as exc:
-        raise ConnectionError(f"Не удалось подключиться к тестовой БД: {exc}") from exc
+        reason = describe_db_connect_error(exc, CONNECT_TIMEOUT)
+        raise ConnectionError(f"Не удалось подключиться к тестовой БД: {reason}") from exc
 
     errors: list[str | None] = []
     try:
