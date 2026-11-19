@@ -101,6 +101,18 @@ def test_sql_scope_blocks_writes_outside_the_feature(step):
         check_sql_scope(f"Сценарий: x\n  {step}", {"card_balance"}, {"платёж": "other_service.payments"})
 
 
+@pytest.mark.parametrize("step", [
+    'Допустим выполнить в БД default:\n  """\n  DELETE FROM card_balance.card_balances;\n  """',
+    'И после сценария выполнить в БД default:\n  """\n  UPDATE card_balance.card_balances SET balance = 0;\n  """',
+    'Допустим выполнить в БД default:\n  """\n  DELETE FROM card_balance.card_balances WHERE 1=1;\n  """',
+    "Тогда проверить что в БД default DELETE FROM card_balance.card_balances RETURNING id вернёт 1 строку",
+])
+def test_sql_scope_blocks_writes_to_every_row_of_the_features_own_table(step):
+    # The runner executes scenario SQL itself, so this check is all that protects the shared stand
+    with pytest.raises(RunBlocked, match="Сценарий не запущен: (DELETE|UPDATE) .*отклонён"):
+        check_sql_scope(f"Сценарий: x\n  {step}", {"card_balance"}, {})
+
+
 def test_stand_addresses_come_from_the_platform_when_the_profile_lacks_them(stand):
     assert stand_properties(SCENARIO, {}) == {
         "mocks.ewallet": "http://stand.example/wiremock",

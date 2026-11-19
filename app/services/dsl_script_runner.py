@@ -6,10 +6,12 @@ checks to the stand. The run happens in a throw-away git worktree of the
 scenario's branch, so it never touches the clone the agent switches branches in.
 
 Before anything is executed the scenario's SQL is checked in code: it may write
-only into the feature's own schemas (the same rule the test-case assistant
-follows, `assistant_stand.classify_sql`). Stand access comes from the platform's
-settings and is handed to the runner at launch (DB credentials through the
-environment, never through the command line or files).
+only into the feature's own schemas, and an UPDATE or DELETE must pick its rows
+(the same rules the test-case assistant follows, `assistant_stand.classify_sql`;
+the runner executes this SQL itself, past `sql_runner`, so this check is the only
+one between a scenario and the shared stand). Stand access comes from the
+platform's settings and is handed to the runner at launch (DB credentials
+through the environment, never through the command line or files).
 """
 
 import asyncio

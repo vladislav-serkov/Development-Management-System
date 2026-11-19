@@ -47,6 +47,18 @@ async def test_sql_must_be_bounded_dml_on_qualified_tables():
     assert any("sql_setup" in p for p in await _problems(_case(sql_setup="TRUNCATE shop.orders;")))
 
 
+async def test_sql_touching_every_row_is_reported_in_the_executors_words():
+    # The wording the stand executor refuses with, so a repair prompt and a tester see the same reason
+    for sql in (
+        "-- очистка перед кейсом\nDELETE FROM shop.orders;",
+        "DELETE FROM shop.orders WHERE 1=1;",
+        "UPDATE shop.orders SET note = 'where id = 1';",
+    ):
+        found = await _problems(_case(sql_setup=sql))
+        assert len(found) == 1 and found[0].startswith("sql_setup: ") and "отклонён" in found[0], sql
+        assert "тестовый стенд общий" in found[0]
+
+
 async def test_non_hex_uuid_reported():
     found = await _problems(_case(preconditions="заказ a1b2c3d4-zzzz-0002-0003-e5f6a7b8c9d0"))
     assert any("не-hex" in p for p in found)

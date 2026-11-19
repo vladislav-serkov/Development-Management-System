@@ -9,6 +9,9 @@ sees. Limits enforced here, not in the prompt:
 - writes are INSERT/UPDATE/DELETE into the feature's own schemas only: the
   service schema plus the schemas its test cases already write to (an adapter
   may keep its tables in another service's schema);
+- UPDATE and DELETE must pick their rows: the stand is shared, so a statement
+  without WHERE (or with one like ``1=1``) is refused — the rule lives in
+  ``sql_runner.destructive_statement`` and is repeated by the executor itself;
 - no DDL or other statements;
 - HTTP goes only to the feature's service on the stand (relative paths).
 """
@@ -111,7 +114,8 @@ def classify_sql(sql: str, write_schemas: Collection[str]) -> bool:
     """True if the script writes, False if it only reads.
 
     Raises SqlNotAllowed for anything but SELECT-like reads and
-    INSERT/UPDATE/DELETE into one of ``write_schemas``.
+    INSERT/UPDATE/DELETE into one of ``write_schemas``, and for an UPDATE or
+    DELETE that is not narrowed to particular rows.
     """
     allowed = {schema.lower() for schema in write_schemas}
     statements = _statement_bodies(sql)
@@ -147,6 +151,9 @@ def classify_sql(sql: str, write_schemas: Collection[str]) -> bool:
                     f"Запись разрешена только в {_schemas_text(allowed)}, а запрос пишет в «{'.'.join(parts)}»"
                 )
         writes = True
+    # The feature's own tables hold other people's rows too: the stand is shared
+    if refusal := sql_runner.destructive_statement(sql):
+        raise SqlNotAllowed(refusal[1])
     return writes
 
 

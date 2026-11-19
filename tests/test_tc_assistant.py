@@ -133,8 +133,8 @@ async def ask(store, text: str, *, session_id=None, attachments=None) -> dict:
     ("SELECT id FROM bnpl_payment.plan WHERE note = 'delete from x; drop table y' FOR UPDATE", False),
     ("-- cleanup\nDELETE FROM bnpl_payment.plan WHERE id = 1; INSERT INTO bnpl_payment.plan (id) VALUES (1)", True),
     ("INSERT INTO bnpl_payment.plan (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET id = 1", True),
-    ('UPDATE "bnpl_payment"."plan" SET updated_at = now()', True),
-    ("WITH gone AS (DELETE FROM bnpl_payment.plan RETURNING id) SELECT * FROM gone", True),
+    ('UPDATE "bnpl_payment"."plan" SET updated_at = now() WHERE id = 1', True),
+    ("WITH gone AS (DELETE FROM bnpl_payment.plan WHERE id = 1 RETURNING id) SELECT * FROM gone", True),
     ("INSERT INTO bnpl_payment.plan (id) VALUES (1); -- trailing note; DROP TABLE x", True),
 ])
 def test_sql_within_limits(sql, writes):
@@ -143,6 +143,11 @@ def test_sql_within_limits(sql, writes):
 
 @pytest.mark.parametrize("sql", [
     "DELETE FROM flp_order.payment",  # another team's schema
+    # the feature's own schema, but every row of a table on the shared stand
+    "DELETE FROM bnpl_payment.plan",
+    'UPDATE "bnpl_payment"."plan" SET updated_at = now()',
+    "DELETE FROM bnpl_payment.plan WHERE 1=1",
+    "WITH gone AS (DELETE FROM bnpl_payment.plan RETURNING id) SELECT * FROM gone",
     "INSERT INTO plan (id) VALUES (1)",  # no schema prefix
     "DROP TABLE bnpl_payment.plan",
     "TRUNCATE bnpl_payment.plan",
@@ -255,6 +260,23 @@ async def test_write_outside_service_schema_never_reaches_the_stand(store, agent
     assert test_db == []
     assert turn["actions"][0]["status"] == "blocked"
     assert "только в схему bnpl_payment" in turn["actions"][0]["summary"]
+
+
+async def test_delete_of_every_row_in_own_schema_never_reaches_the_stand(store, agent, test_db):
+    script, prompts = agent
+    await seed(store, [case("A")])
+    script += [
+        step(actions=[action("sql", "Очистил таблицу планов", sql="DELETE FROM bnpl_payment.plan")]),
+        step(reply="Удалять все строки на общем стенде нельзя."),
+    ]
+
+    turn = await ask(store, "Почисти данные")
+
+    assert test_db == []
+    assert turn["actions"][0]["status"] == "blocked"
+    assert "DELETE без WHERE отклонён" in turn["actions"][0]["summary"]
+    # the agent is told why, so it can narrow the statement
+    assert "стенд общий" in prompts[1]
 
 
 async def test_adapter_feature_may_write_where_its_cases_already_write(store, agent, test_db):
